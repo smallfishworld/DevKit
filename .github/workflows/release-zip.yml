@@ -1,4 +1,4 @@
-name: Build and upload Windows ZIP
+name: Build and publish Windows packages
 
 on:
   release:
@@ -6,31 +6,37 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag to upload to"
+        description: "Release tag to upload to, e.g. v0.1.2"
         required: true
-        default: "v0.1.1"
       ref:
-        description: "Git ref to build"
+        description: "Git ref to build (branch/tag/commit)"
         required: true
         default: "main"
-  # Bootstrap the workflow for the current v0.1.1 release when this file changes.
-  push:
-    branches: [main]
-    paths:
-      - ".github/workflows/release-zip.yml"
 
 permissions:
   contents: write
 
 jobs:
-  build-zip:
+  build-windows:
     runs-on: windows-latest
 
     steps:
-      - name: Checkout
+      - name: Resolve build ref
+        id: build_ref
+        shell: pwsh
+        run: |
+          if ("${{ github.event_name }}" -eq "release") {
+            "ref=${{ github.event.release.tag_name }}" >> $env:GITHUB_OUTPUT
+            "tag=${{ github.event.release.tag_name }}" >> $env:GITHUB_OUTPUT
+          } else {
+            "ref=${{ inputs.ref }}" >> $env:GITHUB_OUTPUT
+            "tag=${{ inputs.tag }}" >> $env:GITHUB_OUTPUT
+          }
+
+      - name: Checkout release source
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || '' }}
+          ref: ${{ steps.build_ref.outputs.ref }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -41,68 +47,84 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build Windows ZIP package
-        run: npm run dist:zip
+      - name: Build portable and ZIP packages
+        run: npm run dist
 
-      - name: Resolve release info
-        id: release_info
+      - name: Resolve package names
+        id: package_info
         shell: pwsh
         run: |
           $version = (Get-Content package.json | ConvertFrom-Json).version
-          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
-            $tag = "${{ inputs.tag }}"
-          } elseif ("${{ github.event_name }}" -eq "release") {
-            $tag = "${{ github.event.release.tag_name }}"
-          } else {
-            $tag = "v$version"
-          }
-          "version=$version" >> $env:GITHUB_OUTPUT
-          "tag=$tag" >> $env:GITHUB_OUTPUT
+          $portable = Join-Path "release" "DevKit-$version-portable.exe"
+          $zip = Join-Path "release" "DevKit-$version-win-x64.zip"
 
-      - name: Upload ZIP to Release
+          if (-not (Test-Path $portable)) {
+            throw "Portable package was not generated: $portable"
+          }
+          if (-not (Test-Path $zip)) {
+            throw "ZIP package was not generated: $zip"
+          }
+
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "portable=$portable" >> $env:GITHUB_OUTPUT
+          "zip=$zip" >> $env:GITHUB_OUTPUT
+
+      - name: Upload Windows packages to Release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $zip = Get-ChildItem -Path release -Filter "DevKit-*-win-x64.zip" | Select-Object -First 1
-          if (-not $zip) {
-            throw "Windows ZIP package was not generated."
-          }
-          gh release upload "${{ steps.release_info.outputs.tag }}" "$($zip.FullName)" --clobber
+          gh release upload "${{ steps.build_ref.outputs.tag }}" `
+            "${{ steps.package_info.outputs.portable }}" `
+            "${{ steps.package_info.outputs.zip }}" `
+            --clobber
 
       - name: Update Release download notes
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $tag = "${{ steps.release_info.outputs.tag }}"
-          $version = "${{ steps.release_info.outputs.version }}"
+          $tag = "${{ steps.build_ref.outputs.tag }}"
+          $version = "${{ steps.package_info.outputs.version }}"
+          $portableName = "DevKit-$version-portable.exe"
           $zipName = "DevKit-$version-win-x64.zip"
+
           $body = gh release view "$tag" --json body --jq .body
+          $lines = $body -split "`r?`n"
+          $filtered = New-Object System.Collections.Generic.List[string]
 
-          if ($body -notmatch [regex]::Escape($zipName)) {
-            $portableName = "DevKit-$version-portable.exe"
-            $zipRow = "| $zipName | Windows x64 解压版，解压后运行 DevKit.exe，推荐长期使用 |"
-            $lines = $body -split "`r?`n"
-            $result = New-Object System.Collections.Generic.List[string]
-            $inserted = $false
-
-            foreach ($line in $lines) {
-              $result.Add($line)
-              if (-not $inserted -and $line.Contains($portableName) -and $line.TrimStart().StartsWith("|")) {
-                $result.Add($zipRow)
-                $inserted = $true
-              }
+          foreach ($line in $lines) {
+            if ($line -match '^\|\s*DevKit-.*-portable\.exe\s*\|' -or
+                $line -match '^\|\s*DevKit-.*-win-x64\.zip\s*\|') {
+              continue
             }
-
-            if (-not $inserted) {
-              $result.Add("")
-              $result.Add("## ZIP 解压版")
-              $result.Add("")
-              $result.Add("- ``$zipName``：Windows x64 解压版，解压后运行 ``DevKit.exe``，推荐长期使用。")
-            }
-
-            $notesFile = Join-Path $env:RUNNER_TEMP "release-notes.md"
-            [System.IO.File]::WriteAllText($notesFile, ($result -join "`n"), [System.Text.UTF8Encoding]::new($false))
-            gh release edit "$tag" --notes-file "$notesFile"
+            $filtered.Add($line)
           }
+
+          $portableRow = "| $portableName | 单文件便携版，无需安装，下载后直接运行 |"
+          $zipRow = "| $zipName | Windows x64 解压版，解压后运行 DevKit.exe，推荐长期使用 |"
+          $inserted = $false
+          $result = New-Object System.Collections.Generic.List[string]
+
+          for ($i = 0; $i -lt $filtered.Count; $i++) {
+            $result.Add($filtered[$i])
+            if (-not $inserted -and $filtered[$i].Trim() -eq '|---|---|') {
+              $result.Add($portableRow)
+              $result.Add($zipRow)
+              $inserted = $true
+            }
+          }
+
+          if (-not $inserted) {
+            $result.Add("")
+            $result.Add("## 下载")
+            $result.Add("")
+            $result.Add("| 文件 | 说明 |")
+            $result.Add("|---|---|")
+            $result.Add($portableRow)
+            $result.Add($zipRow)
+          }
+
+          $notesFile = Join-Path $env:RUNNER_TEMP "release-notes.md"
+          [System.IO.File]::WriteAllText($notesFile, ($result -join "`n"), [System.Text.UTF8Encoding]::new($false))
+          gh release edit "$tag" --notes-file "$notesFile"
