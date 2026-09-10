@@ -138,7 +138,7 @@ src/
 │       └── stores/       # 标签页状态
 ├── shared/               # 主/渲染共享类型与纯逻辑（测试与渲染端共用）
 tests/                     # 单元测试（npm test 依次执行）
-probes/                    # 原生能力探针脚本（serialport / desktopCapturer / xterm 验证用）
+tests/probes/               # 原生能力探针脚本（serialport / desktopCapturer / xterm 验证用，不在 npm test 内）
 docs/spec.md               # 需求文档（设计目标与决策记录）
 ```
 
@@ -156,8 +156,8 @@ node tests/net-test.js       # 网络主机回环测试（17 项）
 node tests/tftp-test.js      # TFTP 协议测试（8 项）
 node tests/ymodem-test.js    # YMODEM 协议回环测试（11 项）
 node tests/zmodem-test.js    # ZMODEM 包装层回环测试（11 项）
-npx electron probes/probe-serial.js   # serialport 在 Electron 中加载探针
-npx electron probes/probe-color.js    # desktopCapturer 像素读取探针
+npx electron tests/probes/probe-serial.js   # serialport 在 Electron 中加载探针
+npx electron tests/probes/probe-color.js    # desktopCapturer 像素读取探针
 ```
 
 ## 贡献

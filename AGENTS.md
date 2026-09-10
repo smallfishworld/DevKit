@@ -5,7 +5,7 @@
 ## 项目概览
 
 - **DevKit**：Electron 44 + electron-vite 5 + Vue 3.5 + TS 5.9 + Element Plus 2.14（暗色）+ Pinia 的嵌入式开发工具箱，Windows only。
-- 目录：`src/main`（主进程服务）、`src/preload`、`src/renderer`（面板 UI）、`src/shared`（主/渲染共享类型与纯逻辑）、`tests/`（单元测试）、`probes/`（原生能力探针）。
+- 目录：`src/main`（主进程服务）、`src/preload`、`src/renderer`（面板 UI）、`src/shared`（主/渲染共享类型与纯逻辑）、`tests/`（单元测试）、`tests/probes/`（原生能力探针，不在 npm test 内）。
 
 ## 架构铁律
 
