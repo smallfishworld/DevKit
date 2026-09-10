@@ -1,0 +1,49 @@
+name: Build and upload Windows ZIP
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to upload to"
+        required: true
+        default: "v0.1.1"
+      ref:
+        description: "Git ref to build"
+        required: true
+        default: "main"
+
+permissions:
+  contents: write
+
+jobs:
+  build-zip:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Windows ZIP package
+        run: npm run dist:zip
+
+      - name: Upload ZIP to existing Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $zip = Get-ChildItem -Path release -Filter "DevKit-*-win-x64.zip" | Select-Object -First 1
+          if (-not $zip) {
+            throw "Windows ZIP package was not generated."
+          }
+          gh release upload "${{ inputs.tag }}" "$($zip.FullName)" --clobber
