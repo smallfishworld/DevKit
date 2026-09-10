@@ -11,7 +11,7 @@
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json",
     "typecheck:web": "vue-tsc --noEmit -p tsconfig.web.json",
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
-    "test": "node scripts/term-test.js && node scripts/diff-test.js && node scripts/logic-test.js && node scripts/mobamacro-test.js && node scripts/net-test.js && node scripts/tftp-test.js && node scripts/ymodem-test.js && node scripts/zmodem-test.js",
+    "test": "node tests/term-test.js && node tests/diff-test.js && node tests/logic-test.js && node tests/mobamacro-test.js && node tests/net-test.js && node tests/tftp-test.js && node tests/ymodem-test.js && node tests/zmodem-test.js",
     "dist": "npm run build && electron-builder --win",
     "dist:dir": "npm run build && electron-builder --dir"
   },

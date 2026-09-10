@@ -137,7 +137,8 @@ src/
 │       ├── tools/        # registry.ts 工具注册表
 │       └── stores/       # 标签页状态
 ├── shared/               # 主/渲染共享类型与纯逻辑（测试与渲染端共用）
-scripts/                   # 单元测试与探针脚本
+tests/                     # 单元测试（npm test 依次执行）
+probes/                    # 原生能力探针脚本（serialport / desktopCapturer / xterm 验证用）
 docs/spec.md               # 需求文档（设计目标与决策记录）
 ```
 
@@ -151,12 +152,12 @@ npm test            # 全部单测（终端交互判定 / diff / 计算器 / Mob
 协议与原生能力探针（可选，验证环境用）：
 
 ```bash
-node scripts/net-test.js       # 网络主机回环测试（17 项）
-node scripts/tftp-test.js      # TFTP 协议测试（8 项）
-node scripts/ymodem-test.js    # YMODEM 协议回环测试（11 项）
-node scripts/zmodem-test.js    # ZMODEM 包装层回环测试（11 项）
-npx electron scripts/probe-serial.js   # serialport 在 Electron 中加载探针
-npx electron scripts/probe-color.js    # desktopCapturer 像素读取探针
+node tests/net-test.js       # 网络主机回环测试（17 项）
+node tests/tftp-test.js      # TFTP 协议测试（8 项）
+node tests/ymodem-test.js    # YMODEM 协议回环测试（11 项）
+node tests/zmodem-test.js    # ZMODEM 包装层回环测试（11 项）
+npx electron probes/probe-serial.js   # serialport 在 Electron 中加载探针
+npx electron probes/probe-color.js    # desktopCapturer 像素读取探针
 ```
 
 ## 贡献

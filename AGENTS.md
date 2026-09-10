@@ -5,14 +5,14 @@
 ## 项目概览
 
 - **DevKit**：Electron 44 + electron-vite 5 + Vue 3.5 + TS 5.9 + Element Plus 2.14（暗色）+ Pinia 的嵌入式开发工具箱，Windows only。
-- 目录：`src/main`（主进程服务）、`src/preload`、`src/renderer`（面板 UI）、`src/shared`（主/渲染共享类型与纯逻辑）、`scripts/`（测试与探针）。
+- 目录：`src/main`（主进程服务）、`src/preload`、`src/renderer`（面板 UI）、`src/shared`（主/渲染共享类型与纯逻辑）、`tests/`（单元测试）、`probes/`（原生能力探针）。
 
 ## 架构铁律
 
 1. **IPC 统一走 `window.api.invoke(tool, action, panelId, payload)`** → preload `ipcRenderer.invoke('tool:invoke')` → 主进程 `services.get(tool).invoke()`。新增工具 = 注册表 `registry.ts` + `ToolService` 实现，不自开 IPC 通道。
 2. **`externalizeDepsPlugin()` 外置了 main/preload 依赖** → 运行时用到的包必须放 `dependencies`（不是 devDependencies）。
 3. **`invoke()` 是同步 switch**（返回 `Promise<unknown> | unknown`）→ case 里不能直接 `await`，需转到 `private async xxx()` 方法。
-4. **共享纯逻辑放 `src/shared/` 或组件旁 `*.ts` 纯函数模块** → 渲染组件与 `scripts/` 测试共用同一份代码（见 `components/termInput.ts` 模式）。
+4. **共享纯逻辑放 `src/shared/` 或组件旁 `*.ts` 纯函数模块** → 渲染组件与 `tests/` 测试共用同一份代码（见 `components/termInput.ts` 模式）。
 5. **Electron 44 无 `File.path`** → 拖放路径必须经 preload `webUtils.getPathForFile`（`window.api.dragPath`）。
 6. xterm.js 关键机制：
    - 复制监听必须挂在 termBox **捕获阶段**（先于 xterm 清选区）。
@@ -29,18 +29,18 @@
  → 用户确认后打包（见下）
 ```
 
-**测试要求**：新增/修改可判定的交互逻辑时，先抽成纯函数模块（参照 `termInput.ts`），并在 `scripts/` 加对应 `*-entry.js` + `*-test.js`（esbuild 打包后 node 跑，参照 `term-test.js`），再挂进 `package.json` 的 `test` 链。
+**测试要求**：新增/修改可判定的交互逻辑时，先抽成纯函数模块（参照 `termInput.ts`），并在 `tests/` 加对应 `*-entry.js` + `*-test.js`（esbuild 打包后 node 跑，参照 `term-test.js`），再挂进 `package.json` 的 `test` 链。
 
 ## 测试套件清单（`npm test` 依次执行）
 
 | 脚本 | 覆盖 |
 |---|---|
-| `term-test.js` | 终端鼠标复制粘贴 / Ctrl+C/V / 查找模式退出判定（termInput.ts） |
-| `diff-test.js` | 文本/十六进制/文件夹 diff 引擎 + io 多编码 |
-| `logic-test.js` | hexutil + 程序员计算器 |
-| `mobamacro-test.js` | MobaXterm 宏导入解析 |
-| `net-test.js` | 网络助手 TCP/UDP 回环 |
-| `tftp-test.js` / `ymodem-test.js` / `zmodem-test.js` | 传输协议 |
+| `tests/term-test.js` | 终端鼠标复制粘贴 / Ctrl+C/V / 查找模式退出判定（termInput.ts） |
+| `tests/diff-test.js` | 文本/十六进制/文件夹 diff 引擎 + io 多编码 |
+| `tests/logic-test.js` | hexutil + 程序员计算器 |
+| `tests/mobamacro-test.js` | MobaXterm 宏导入解析 |
+| `tests/net-test.js` | 网络助手 TCP/UDP 回环 |
+| `tests/tftp-test.js` / `tests/ymodem-test.js` / `tests/zmodem-test.js` | 传输协议 |
 
 ## 打包流程
 

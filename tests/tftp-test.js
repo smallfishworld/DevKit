@@ -1,7 +1,7 @@
 /* eslint-disable */
 /**
  * TFTP 协议回环测试：不依赖 Electron，esbuild 单独打包 server 后用 node 客户端测试
- * 运行：node scripts/run-tftp-test.js
+ * 运行：node tests/tftp-test.js
  */
 const { execSync } = require('child_process')
 const fs = require('fs')

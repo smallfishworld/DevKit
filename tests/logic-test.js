@@ -5,7 +5,7 @@ const path = require('node:path')
 const ROOT = path.join(__dirname, '..')
 
 execSync(
-  `npx esbuild "${path.join(ROOT, 'scripts/logic-entry.js')}" --bundle --platform=node --outfile="${path.join(__dirname, '.logic-test.cjs')}" --log-level=error`,
+  `npx esbuild "${path.join(ROOT, 'tests/logic-entry.js')}" --bundle --platform=node --outfile="${path.join(__dirname, '.logic-test.cjs')}" --log-level=error`,
   { cwd: ROOT, stdio: 'inherit' }
 )
 require('./.logic-test.cjs')

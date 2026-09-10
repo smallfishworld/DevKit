@@ -8,13 +8,10 @@ release2/
 # 个人本地配置不进仓库
 .claude/settings.local.json
 
-# 内网 lock 文件含内部 registry 地址，开源用官方源重新生成
-package-lock.json
-
 # 设计原型与本地临时文件
 design/
 *.tmp
 *.local
 
 # esbuild 测试打包临时产物
-scripts/.*.cjs
+tests/.*.cjs
