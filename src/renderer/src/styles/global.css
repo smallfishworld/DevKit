@@ -1,0 +1,318 @@
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+/* 统一 border-box：height:100% 的面板若为 content-box，padding 会撑出视口导致
+   底部发送栏被裁剪（此前后多轮「发送栏看不到」的根因） */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, 'SF Pro Text', 'Segoe UI', 'Microsoft YaHei', 'PingFang SC', system-ui, sans-serif;
+  background: var(--el-bg-color);
+  color: var(--el-text-color-primary);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+:root {
+  /* 集中 mono 字体栈（含中文回退，diff/终端内容常含中文） */
+  --font-mono: Consolas, 'Courier New', 'Microsoft YaHei', monospace;
+}
+
+/* 低饱和钢蓝主色：替代原高饱和 #0a84ff，暗底下不再刺眼 */
+html.dark {
+  --el-color-primary: #5b8ac2;
+  --el-color-primary-light-3: #8cadd4;
+  --el-color-primary-light-5: #adc5e1;
+  --el-color-primary-light-7: #cedced;
+  --el-color-primary-light-8: #dee8f4;
+  --el-color-primary-light-9: #1d2940;
+  --el-color-primary-dark-2: #496e9b;
+
+  /* diff 视图配色（Beyond Compare 默认风格）：
+     改动行 = 两侧都淡红底，行内差异字符深红；
+     插入/删除（孤儿行）= 存在侧绿色底 */
+  --dk-change-row: rgba(198, 66, 66, 0.14); /* 改动行淡红底 */
+  --dk-change-seg: rgba(229, 57, 53, 0.38); /* 行内差异字符深红 */
+  --dk-orph-row: rgba(67, 160, 71, 0.16);   /* 孤儿行绿底 */
+  --dk-add-row: var(--dk-orph-row);
+  --dk-add-seg: var(--dk-orph-row);
+  --dk-del-row: var(--dk-change-row);
+  --dk-del-seg: var(--dk-change-seg);
+  --dk-st-only-left: #7ba3cc;
+  --dk-st-only-right: #dfad72;
+  --dk-st-differ: #d99a9a;
+  --dk-st-identical: #90a4ae;
+  --dk-st-dir: #81c784;
+  --dk-st-ignored: #546e7a;
+
+  --el-border-radius-base: 6px;
+  --el-border-radius-small: 4px;
+}
+
+/* diff 视图拖放落区悬停高亮（文本/文件夹/十六进制共用类名） */
+.drop-over {
+  outline: 2px dashed var(--el-color-primary);
+  outline-offset: -2px;
+  border-radius: 6px;
+}
+
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+/* 顶栏（无边框窗口的自绘标题栏：整条可拖动，交互元素 no-drag） */
+.app-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 0 0 8px;
+  background: var(--el-bg-color-page);
+  border-bottom: 1px solid var(--el-border-color-lighter);
+  flex-shrink: 0;
+  user-select: none;
+  -webkit-app-region: drag;
+}
+
+/* 左上角图标：点击弹版本信息 */
+.app-logo {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+  outline: none;
+  transition: background 0.15s ease;
+}
+
+.app-logo:hover {
+  background: var(--el-fill-color);
+}
+
+.app-title {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+}
+
+.header-spacer {
+  flex: 1;
+  align-self: stretch;
+}
+
+/* 窗口控制按钮（VS Code 风格：宽扁、悬停填充、关闭悬停红） */
+.win-controls {
+  display: flex;
+  align-self: stretch;
+}
+
+.win-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 46px;
+  height: 100%;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: var(--el-text-color-regular);
+  cursor: pointer;
+  outline: none;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.win-btn:hover {
+  background: var(--el-fill-color-dark);
+  color: var(--el-text-color-primary);
+}
+
+.win-btn.close:hover {
+  background: #e81123;
+  color: #fff;
+}
+
+/* 标题栏版本信息弹层（el-popover 挂在 body 下，须全局样式） */
+.about-box {
+  font-size: 12px;
+  line-height: 1.9;
+}
+
+.about-box .about-name {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.about-box .about-ver {
+  color: var(--el-color-primary);
+}
+
+.about-box .about-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.about-box .about-row span:first-child {
+  color: var(--el-text-color-secondary);
+}
+
+.about-box .mono {
+  font-family: var(--font-mono);
+}
+
+.about-box .about-copy {
+  color: var(--el-text-color-secondary);
+}
+
+/* 标签栏 */
+.tab-bar {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 34px;
+  padding: 4px 8px 0;
+  background: var(--el-bg-color-page);
+  border-bottom: 1px solid var(--el-border-color-lighter);
+  overflow-x: auto;
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.tab-bar::-webkit-scrollbar {
+  height: 0;
+}
+
+.tab-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 7px 7px 0 0;
+  font-size: 13px;
+  color: var(--el-text-color-regular);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.tab-item:hover {
+  background: var(--el-fill-color-light);
+}
+
+.tab-item.active {
+  background: var(--el-bg-color);
+  border-color: var(--el-border-color-lighter);
+  color: var(--el-color-primary);
+  font-weight: 600;
+}
+
+.tab-item .tab-close {
+  display: inline-flex;
+  border-radius: 3px;
+  padding: 1px;
+  color: var(--el-text-color-secondary);
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.tab-item .tab-title {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tab-item .tab-close:hover {
+  background: var(--el-fill-color-dark);
+  color: var(--el-text-color-primary);
+}
+
+/* 内容区：所有打开的面板常驻（v-show 切换），保住工具运行状态 */
+.app-body {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+}
+
+.tab-page {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+}
+
+/* 状态栏 */
+.app-status {
+  height: 24px;
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  background: var(--el-bg-color-page);
+  border-top: 1px solid var(--el-border-color-lighter);
+  flex-shrink: 0;
+  user-select: none;
+}
+
+/* 面板通用 */
+.panel {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.panel-section {
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 10px;
+  padding: 14px 16px;
+  background: var(--el-bg-color);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+
+.panel-section h3 {
+  margin: 0 0 12px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.panel-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* 滚动条 */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--el-fill-color-dark);
+  border-radius: 5px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--el-border-color);
+}

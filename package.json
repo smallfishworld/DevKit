@@ -1,0 +1,93 @@
+{
+  "name": "dev-kit",
+  "version": "0.1.1",
+  "description": "嵌入式开发套件 —— 面向嵌入式软件开发的集成工具箱",
+  "main": "./out/main/index.js",
+  "author": "devkit",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "preview": "electron-vite preview",
+    "typecheck:node": "tsc --noEmit -p tsconfig.node.json",
+    "typecheck:web": "vue-tsc --noEmit -p tsconfig.web.json",
+    "typecheck": "npm run typecheck:node && npm run typecheck:web",
+    "test": "node scripts/term-test.js && node scripts/diff-test.js && node scripts/logic-test.js && node scripts/mobamacro-test.js && node scripts/net-test.js && node scripts/tftp-test.js && node scripts/ymodem-test.js && node scripts/zmodem-test.js",
+    "dist": "npm run build && electron-builder --win",
+    "dist:dir": "npm run build && electron-builder --dir"
+  },
+  "dependencies": {
+    "@element-plus/icons-vue": "^2.3.2",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/addon-search": "^0.16.0",
+    "@xterm/addon-webgl": "^0.19.0",
+    "@xterm/xterm": "^6.0.0",
+    "diff": "^9.0.0",
+    "element-plus": "^2.14.5",
+    "iconv-lite": "^0.7.3",
+    "koffi": "^3.2.0",
+    "pinia": "^4.0.3",
+    "serialport": "^13.0.0",
+    "ssh2": "^1.17.0",
+    "uiohook-napi": "^1.5.5",
+    "zmodem.js": "^0.1.10"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/ssh2": "^1.15.6",
+    "@vitejs/plugin-vue": "^6.0.8",
+    "electron": "^44.1.1",
+    "electron-builder": "^26.15.3",
+    "electron-vite": "^5.0.0",
+    "typescript": "^5.9.0",
+    "vite": "^7.0.0",
+    "vue": "^3.5.42",
+    "vue-tsc": "^3.3.11"
+  },
+  "build": {
+    "appId": "com.embedded.devkit",
+    "productName": "DevKit",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "out/**"
+    ],
+    "npmRebuild": false,
+    "asarUnpack": [
+      "**/*.node",
+      "node_modules/koffi/**",
+      "node_modules/@koromix/**",
+      "node_modules/uiohook-napi/**",
+      "node_modules/serialport/**",
+      "node_modules/@serialport/**"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "dir",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "portable": {
+      "artifactName": "DevKit-${version}-portable.exe"
+    }
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/smallfishworld/DevKit.git"
+  },
+  "homepage": "https://github.com/smallfishworld/DevKit",
+  "bugs": {
+    "url": "https://github.com/smallfishworld/DevKit/issues"
+  }
+}
