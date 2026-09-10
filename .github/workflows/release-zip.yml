@@ -1,6 +1,8 @@
 name: Build and upload Windows ZIP
 
 on:
+  release:
+    types: [published]
   workflow_dispatch:
     inputs:
       tag:
@@ -11,6 +13,11 @@ on:
         description: "Git ref to build"
         required: true
         default: "main"
+  # Bootstrap the workflow for the current v0.1.1 release when this file changes.
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/release-zip.yml"
 
 permissions:
   contents: write
@@ -23,7 +30,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.ref }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || '' }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -37,7 +44,22 @@ jobs:
       - name: Build Windows ZIP package
         run: npm run dist:zip
 
-      - name: Upload ZIP to existing Release
+      - name: Resolve release info
+        id: release_info
+        shell: pwsh
+        run: |
+          $version = (Get-Content package.json | ConvertFrom-Json).version
+          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+            $tag = "${{ inputs.tag }}"
+          } elseif ("${{ github.event_name }}" -eq "release") {
+            $tag = "${{ github.event.release.tag_name }}"
+          } else {
+            $tag = "v$version"
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+
+      - name: Upload ZIP to Release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -46,4 +68,41 @@ jobs:
           if (-not $zip) {
             throw "Windows ZIP package was not generated."
           }
-          gh release upload "${{ inputs.tag }}" "$($zip.FullName)" --clobber
+          gh release upload "${{ steps.release_info.outputs.tag }}" "$($zip.FullName)" --clobber
+
+      - name: Update Release download notes
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "${{ steps.release_info.outputs.tag }}"
+          $version = "${{ steps.release_info.outputs.version }}"
+          $zipName = "DevKit-$version-win-x64.zip"
+          $body = gh release view "$tag" --json body --jq .body
+
+          if ($body -notmatch [regex]::Escape($zipName)) {
+            $portableName = "DevKit-$version-portable.exe"
+            $zipRow = "| $zipName | Windows x64 解压版，解压后运行 DevKit.exe，推荐长期使用 |"
+            $lines = $body -split "`r?`n"
+            $result = New-Object System.Collections.Generic.List[string]
+            $inserted = $false
+
+            foreach ($line in $lines) {
+              $result.Add($line)
+              if (-not $inserted -and $line.Contains($portableName) -and $line.TrimStart().StartsWith("|")) {
+                $result.Add($zipRow)
+                $inserted = $true
+              }
+            }
+
+            if (-not $inserted) {
+              $result.Add("")
+              $result.Add("## ZIP 解压版")
+              $result.Add("")
+              $result.Add("- ``$zipName``：Windows x64 解压版，解压后运行 ``DevKit.exe``，推荐长期使用。")
+            }
+
+            $notesFile = Join-Path $env:RUNNER_TEMP "release-notes.md"
+            [System.IO.File]::WriteAllText($notesFile, ($result -join "`n"), [System.Text.UTF8Encoding]::new($false))
+            gh release edit "$tag" --notes-file "$notesFile"
+          }
