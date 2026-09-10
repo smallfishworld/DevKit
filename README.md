@@ -3,9 +3,9 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 ![平台](https://img.shields.io/badge/platform-Windows-blue) ![技术栈](https://img.shields.io/badge/Electron%20%2B%20Vue3%20%2B%20TS-44.x-green)
 
-面向嵌入式软件开发的集成工具箱：一个程序，面板化集成日常零散小工具，重点是**键鼠操作录制回放**，把重复的界面操作自动化。
+面向嵌入式软件开发的集成工具箱：一个程序，面板化集成日常零散小工具。两大特色功能：**键鼠操作录制回放**（把重复的界面操作自动化）与**终端快捷命令宏**（串口 / SSH 共享的多步骤命令宏库，支持录制、分组、一键回放）。
 
-English summary: DevKit is an all-in-one toolbox for embedded developers (Windows only, Electron + Vue 3 + TypeScript). It integrates a programmer's calculator, TFTP server, serial/SSH terminals, network debugging, diff tools and more — plus a distinctive **mouse & keyboard macro recorder** to automate repetitive UI operations.
+English summary: DevKit is an all-in-one toolbox for embedded developers (Windows only, Electron + Vue 3 + TypeScript). It integrates a programmer's calculator, TFTP server, serial/SSH terminals, network debugging, diff tools and more — with two standout features: a **mouse & keyboard macro recorder** to automate repetitive UI operations, and **terminal quick-command macros** — a multi-step command library shared across the serial and SSH terminals, with in-terminal recording, grouping and one-click playback.
 
 > 截图待补：主界面 / 键鼠宏回放 / 串口终端（欢迎在 PR 中补充）
 
@@ -14,7 +14,8 @@ English summary: DevKit is an all-in-one toolbox for embedded developers (Window
 | 工具 | 说明 |
 |---|---|
 | **键鼠宏** | 全局录制 / 回放 / 事件编辑 / 宏库 / 全局热键 / 等待颜色 / 截屏取点 |
-| 串口助手 | xterm 终端仿真（ANSI 彩色 / VT100 / 直接键入）、会话管理、快捷命令录制/编辑/分组、YMODEM/ZMODEM 文件收发、定时发送、DTR/RTS、自动日志 |
+| **终端快捷命令宏** | 串口 / SSH 共享的多步骤命令宏库：命令 / 延时 / 按键序列，终端内无弹窗录制、分组管理、拖拽排序、一键回放，支持导入 MobaXterm 宏 |
+| 串口助手 | xterm 终端仿真（ANSI 彩色 / VT100 / 直接键入）、会话管理、YMODEM/ZMODEM 文件收发、定时发送、DTR/RTS、自动日志 |
 | **SSH 终端** | xterm 终端 + ssh2：密码 / 私钥认证、会话管理、终端尺寸同步（vim/top 正常）、自动日志 |
 | TFTP 服务器 | RFC1350 + blksize/timeout/tsize 扩展，多实例，传输记录 |
 | 程序员计算器 | 表达式求值、进制同步转换、64 位 bit 编辑器、字节序布局 |
@@ -73,6 +74,15 @@ npm run dist
 - 回放支持 0.1~10 倍速与循环（0 = 无限），急停保证已按下按键统一抬起，避免按键卡死。
 - ⚠️ 宏文件包含键盘输入内容，**勿在录制中输入密码**。
 
+## 终端快捷命令宏要点
+
+串口助手与 SSH 终端共享同一份宏库（录制状态也互通）——在串口上录好的命令组，连 SSH 直接可用。
+
+- **步骤序列**：每条宏由「**命令**（ASCII/HEX，可追加换行）+ **延时等待** + **按键**（Enter/Esc/Tab/Ctrl+C/方向键/F1~F12 等）」组成，按顺序回放；列表点击即执行，悬停显示步骤预览。
+- **终端内录制**：点 📷 开启后不弹任何窗（仅红色指示），直接在终端敲命令或用发送栏发送；回车确认一条，特殊键（Esc/方向键/Ctrl+C 等）自动识别为按键步骤，停顿 ≥500ms 自动记为延时；停止后进编辑窗整理再保存。
+- **分组管理**：宏可建分组、拖拽移动进/出分组、拖拽排序、悬停复制（自动加 `名字 (N)` 后缀）。
+- **导入导出**：导出为 DevKit JSON；导入自动识别 DevKit JSON 或 **MobaXterm 宏文件**（`.mxtmacros` / `.ini`，GBK 编码，`SLEEPEQUAL` 延时、`RETURN` 按键等占位符均自动转换），同名覆盖、其余追加。
+
 ## 串口助手要点
 
 - 终端基于 xterm.js（与 VS Code 终端同内核）：ANSI 颜色与 VT100 光标控制完整解析。**使用 WebGL 渲染器**，刷屏高吞吐日志时不卡顿（GPU 不可用时自动回退 DOM 渲染）。
@@ -84,7 +94,7 @@ npm run dist
 - **自动保存日志**：会话期间所有收发自动落盘 `%APPDATA%/dev-kit/serial-logs/<COM>-<日期>.log`（带毫秒时间戳与 RX/TX 方向标记），可开关。
 - DTR/RTS 一键拉高拉低（部分板子进 Bootloader 用），CTS/DSR/DCD 信号灯 2s 轮询。
 - 会话（端口参数组合）保存后一键载入；发送历史下拉；定时发送（周期 ≥20ms）。
-- **快捷命令（宏式多步骤，串口 / SSH 全局共享）**：每条宏由步骤序列组成——**命令**（ASCII/HEX）、**延时等待**、**按键**，按顺序回放；支持分组、拖拽排序、复制、终端内无弹窗录制。
+- **快捷命令**：见下方「终端快捷命令宏要点」小节。
 - **导入 / 导出配置**：导出为 DevKit JSON；导入自动识别 DevKit JSON 或 **MobaXterm 宏文件**（`.mxtmacros` / `.ini`，GBK 编码），同名覆盖、其余追加。
 - **文件收发（YMODEM / ZMODEM）**：设备端运行 `ry`/`rz`（收）或 `sy`/`sz`（发）即可互传文件，进度条实时显示、可中途取消，重名自动加后缀。
 
@@ -94,6 +104,7 @@ npm run dist
 - 认证方式：密码 / 私钥文件（OpenSSH pem 等）；兼容 keyboard-interactive 认证；15s 连接超时。
 - 终端尺寸变化自动同步远端 pty，`vim` / `top` 等全屏程序布局正确。
 - **自动日志**：`%APPDATA%/dev-kit/ssh-logs/<主机>-<端口>-<日期>.log`。
+- **快捷命令宏与串口助手全局共享**（同一份宏库，录制状态也互通）：见「终端快捷命令宏要点」小节。
 - ⚠️ 密码以明文保存在本机 config.json，请勿保存生产环境密码。
 - ⚠️ 远端主机防火墙需放行 SSH 端口（默认 22）入站。
 
