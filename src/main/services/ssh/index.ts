@@ -13,6 +13,7 @@ import { emitToolEvent } from '../../ipc'
 import type { SshConfig, SshParams } from '../../../shared/ssh'
 import { DEFAULT_SSH_CONFIG } from '../../../shared/ssh'
 import { getSection, setSection } from '../macro/configStore'
+import { cleanLogBody, fileNameStamp, fmtStamp, splitTerminalLines } from '../../../shared/logtext'
 
 interface RxPiece {
   buf: Buffer
@@ -33,6 +34,8 @@ interface SshSession {
   logBuf: string[]
   /** 低流量时周期性落盘（500ms） */
   logTimer: NodeJS.Timeout | null
+  /** 日志管道的未完行尾巴（最后一个 \n 之后的内容；未完行/半个 \r\r\n 终止符/跨批 ANSI 序列滞留于此） */
+  logCarry: string
 }
 
 const sessions = new Map<string, SshSession>()
@@ -43,14 +46,9 @@ function sshLogDir(): string {
   return join(app.getPath('userData'), 'ssh-logs')
 }
 
-function fmtLogTime(t: number): string {
-  const d = new Date(t)
-  const p = (n: number, w = 2): string => n.toString().padStart(w, '0')
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}.${p(d.getMilliseconds(), 3)}`
-}
-
-function escapeCtrl(s: string): string {
-  return s.replace(/[\r\n\t]/g, (c) => ({ '\r': '\\r', '\n': '\\n', '\t': '\\t' })[c] ?? c)
+/** 日志行时间戳（与终端显示一致）：HH:MM:SS.mmm；落盘带日期（跨天可辨）：YYYY-MM-DD HH:MM:SS.mmm */
+function fmtLogTime(t: number, withDate = false): string {
+  return fmtStamp(t, withDate)
 }
 
 class SshService implements ToolService {
@@ -58,10 +56,15 @@ class SshService implements ToolService {
     emitToolEvent('ssh', panelId, type, payload)
   }
 
-  /** 日志入缓冲（真正落盘在 flushLog；写失败静默停日志，不影响收发） */
-  private appendLog(s: SshSession, dir: 'RX' | 'TX' | 'INFO', body: string): void {
-    if (!s.logHandle) return
-    s.logBuf.push(`[${fmtLogTime(Date.now())}] ${dir.padEnd(4)} ${body}\r\n`)
+  /** 日志入缓冲（真正落盘在 flushLog；写失败静默停日志，不影响收发）。
+   *  入参为已按完整行切分的原始行（不含终止符），清洗后逐行补时间戳（每行可辨；带日期，跨天可追溯）。
+   *  空行照常落盘（设备真实空行可追溯） */
+  private appendLog(s: SshSession, parts: string[]): void {
+    if (!s.logHandle || parts.length === 0) return
+    const stamp = fmtLogTime(Date.now(), true)
+    for (const part of parts) {
+      for (const line of cleanLogBody(part).split('\n')) s.logBuf.push(`[${stamp}] ${line}\r\n`)
+    }
   }
 
   /** 日志落盘：断开或缓冲超限时把缓冲一次性写入持久句柄 */
@@ -72,7 +75,8 @@ class SshService implements ToolService {
     try {
       await s.logHandle.appendFile(batch.join(''), 'utf8')
     } catch {
-      await s.logHandle.close().catch(() => {})
+      // 写失败一次即停日志，避免反复报错拖慢收发（close 须空安全：下方置空后不再引用）
+      await s.logHandle?.close().catch(() => {})
       s.logHandle = null
     }
   }
@@ -97,9 +101,15 @@ class SshService implements ToolService {
     const total = Buffer.concat(pieces.map((p) => p.buf))
     const text = s.decoder.write(total)
     if (s.logHandle) {
-      this.appendLog(s, 'RX', escapeCtrl(text))
+      // 按完整行切分：最后一个 \n 之前落盘，之后（未完行/半个 \r\r\n 终止符）留给下一批拼接，
+      // 终止符跨批不再产生幻影空行；跨批 ANSI 序列也在 carry 中
+      const { lines, carry } = splitTerminalLines(s.logCarry + text)
+      s.logCarry = carry
+      this.appendLog(s, lines)
       // 缓冲超限立即落盘，防止长时间刷屏积压内存
       if (s.logBuf.length >= 64) void this.flushLog(s)
+    } else {
+      s.logCarry = ''
     }
     this.emit(panelId, 'data', {
       text,
@@ -253,10 +263,10 @@ class SshService implements ToolService {
     let logHandle: FileHandle | null = null
     if (cfg.autoLog) {
       try {
-        await fs.mkdir(sshLogDir(), { recursive: true })
+        await fs.mkdir(cfg.logDir || sshLogDir(), { recursive: true })
         const logPath = join(
-          sshLogDir(),
-          `${params.host.replace(/[^a-zA-Z0-9]/g, '')}-${params.port}-${new Date().toISOString().slice(0, 10)}.log`
+          cfg.logDir || sshLogDir(),
+          `${params.host.replace(/[^a-zA-Z0-9]/g, '')}-${params.port}-${fileNameStamp()}.log`
         )
         logHandle = await fs.open(logPath, 'a')
         await logHandle.appendFile(
@@ -279,7 +289,8 @@ class SshService implements ToolService {
       flushTimer: null,
       logHandle,
       logBuf: [],
-      logTimer: null
+      logTimer: null,
+      logCarry: ''
     }
     sessions.set(panelId, session)
     // 低流量场景：周期性把日志缓冲落盘
@@ -326,7 +337,11 @@ class SshService implements ToolService {
       s.flushTimer = null
     }
     this.flush(panelId)
-    this.appendLog(s, 'INFO', '===== 断开 =====')
+    // 冲出未完行尾巴（提示符等；纯 \r 残留尾巴跳过，避免落盘多余空行）
+    const tail = s.logCarry
+    s.logCarry = ''
+    if (tail.replace(/\r/g, '')) this.appendLog(s, [tail])
+    this.appendLog(s, ['===== 断开 ====='])
     // 日志：清定时器、冲缓冲、关句柄
     if (s.logTimer) {
       clearInterval(s.logTimer)
@@ -355,7 +370,7 @@ class SshService implements ToolService {
     const buf = Buffer.from(text, 'utf8')
     s.stream.write(buf)
     s.txBytes += buf.length
-    this.appendLog(s, 'TX', escapeCtrl(text))
+    this.appendLog(s, [text])
     this.emit(panelId, 'tx', {
       text,
       bytes: buf.length,
@@ -411,11 +426,13 @@ class SshService implements ToolService {
     if (canceled || !filePath) return { ok: false, error: '已取消' }
     try {
       await fs.writeFile(filePath, p.content, 'utf8')
-      // 记住本次保存目录，下次默认打开这里（重启记忆）
+      // 记住本次保存目录，下次默认打开这里（重启记忆）；
+      // 同时让打开中的会话自动日志立刻轮转到新目录
       const dir = dirname(filePath)
       if (dir && dir !== cfg.logDir) {
         cfg.logDir = dir
         await setSection('ssh', cfg)
+        await this.rotateSessions(cfg.logDir)
       }
       return { ok: true }
     } catch (err) {
@@ -434,7 +451,30 @@ class SshService implements ToolService {
     if (canceled || !filePaths[0]) return { ok: false, error: '已取消' }
     cfg.logDir = filePaths[0]
     await setSection('ssh', cfg)
+    await this.rotateSessions(cfg.logDir)
     return { ok: true, dir: filePaths[0] }
+  }
+
+  /** 更换日志目录时：对打开中的会话立刻轮转 —— 冲掉旧句柄并在新目录重开新文件（时间戳以轮转时刻为准） */
+  private async rotateSessions(dir: string): Promise<void> {
+    for (const s of sessions.values()) {
+      if (!s.logHandle) continue
+      // 冲缓冲、关旧句柄（flushLog 写失败时会把句柄置空，须空安全）
+      await this.flushLog(s)
+      await s.logHandle?.close().catch(() => {})
+      s.logHandle = null
+      if (!s.logTimer) continue
+      try {
+        await fs.mkdir(dir, { recursive: true })
+        const logPath = join(dir, `${s.params.host.replace(/[^a-zA-Z0-9]/g, '')}-${s.params.port}-${fileNameStamp()}.log`)
+        s.logHandle = await fs.open(logPath, 'a')
+        await s.logHandle.appendFile(`\r\n[${fmtLogTime(Date.now())}] INFO ===== 日志目录切换，续写至 ${dir} =====\r\n`, 'utf8')
+      } catch {
+        s.logHandle = null
+        clearInterval(s.logTimer)
+        s.logTimer = null
+      }
+    }
   }
 }
 

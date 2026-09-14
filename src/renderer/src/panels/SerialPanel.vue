@@ -16,6 +16,7 @@ import TerminalView from '@renderer/components/TerminalView.vue'
 import QuickCmdManager from '@renderer/components/QuickCmdManager.vue'
 import type { SerialConfig, SerialParams, SerialTransferEvt, TransferProtocol } from '../../../shared/serial'
 import { BAUD_RATES } from '../../../shared/serial'
+import { cleanLogBody, estimateBytes, fileNameStamp, fmtStamp, splitTerminalLines } from '../../../shared/logtext'
 import type { QuickCmdStep } from '../../../shared/term-macro'
 import { useTermMacros } from '../composables/useTermMacros'
 import { useSidebarDrag } from '../composables/useSidebarDrag'
@@ -74,13 +75,19 @@ const localEcho = ref(false)
 const termFont = ref('Consolas')
 const termFontSize = ref(13)
 const TERM_SIZES = [10, 11, 12, 13, 14, 15, 16, 17, 18, 20, 22, 24, 26, 28]
-/** 原始收发流水（供「存日志」导出；完整落盘由主进程自动日志负责） */
+/** 原始收发流水（供「存日志」导出；完整落盘由主进程自动日志负责）
+ *  MobaXterm 式全量内存日志：不截断条数，按字节上限管理；超限弹窗并停止记录/显示，清屏后恢复 */
 interface RawPiece {
   time: number
-  dir: 'RX' | 'TX'
+  /** 清洗后文本（剥 ANSI/归一行），与主进程落盘内容一致 */
   text: string
 }
 const ringBuf: RawPiece[] = []
+/** 内存日志上限（字节，按 UTF-16 估算）。500MB 上限与 MobaXterm 类似 */
+const LOG_MEM_LIMIT = 500 * 1024 * 1024
+let logBytes = 0
+/** 超限后置位：停止记录与终端显示，清屏（或重开串口）后恢复 */
+let logOverflow = false
 
 /** 键盘直入：原样发串口（Enter 发 \r，与真实终端一致）；录制时同步记录 */
 function onTermData(data: string): void {
@@ -91,9 +98,29 @@ function onTermData(data: string): void {
     .catch(() => {})
 }
 
-function pushRaw(dir: RawPiece['dir'], text: string): void {
-  ringBuf.push({ time: Date.now(), dir, text })
-  if (ringBuf.length > 5000) ringBuf.splice(0, ringBuf.length - 5000)
+/** 日志管道的未完行尾巴（与主进程同一套按完整行切分，保证存日志与落盘一致） */
+let lineCarry = ''
+
+function pushRaw(text: string): void {
+  if (logOverflow) return
+  // 按完整行切分：最后一个 \n 之前才是完整行，之后（未完行/半个 \r\r\n 终止符）留给下一批，
+  // 终止符跨批不产生幻影空行；行间空串 = 设备真实空行，照常保留
+  const { lines, carry } = splitTerminalLines(lineCarry + text)
+  lineCarry = carry
+  if (lines.length === 0) return
+  const cleaned = lines.map((l) => cleanLogBody(l)).join('\n')
+  ringBuf.push({ time: Date.now(), text: cleaned })
+  logBytes += estimateBytes(cleaned)
+  if (logBytes > LOG_MEM_LIMIT) {
+    // 内存日志超限：告知用户并停止记录/显示，清屏后恢复（MobaXterm 同款行为）
+    logOverflow = true
+    void ElMessageBox.alert(
+      `会话内存日志已达上限（约 ${Math.round(LOG_MEM_LIMIT / 1024 / 1024)}MB）。已停止记录与显示，` +
+        `清空终端后继续。请先「存日志」保留已收内容。`,
+      '内存日志已满',
+      { confirmButtonText: '知道了', type: 'warning' }
+    ).catch(() => {})
+  }
 }
 
 const sendMode = ref<'ascii' | 'hex'>('ascii')
@@ -114,6 +141,8 @@ const { onMouseDown: onSidebarResize } = useSidebarDrag(sidebarWidth, () => void
 
 /** 自动日志开关（会话期间收发自动落盘，默认开启；重启记忆） */
 const autoLog = ref(true)
+/** 终端时间戳显示（每批数据前插 [HH:MM:SS.mmm]，与日志格式一致；重启记忆） */
+const showTime = ref(false)
 
 let unsubs: Array<() => void> = []
 let signalTimer: ReturnType<typeof setInterval> | null = null
@@ -243,13 +272,13 @@ onMounted(async () => {
     window.api.on('serial', props.panelId, 'data', (p) => {
       const d = p as DataEvt
       updateBytesThrottled(d.rxBytes, d.txBytes)
-      pushRaw('RX', d.text)
-      termView.value?.write(d.text)
+      pushRaw(d.text)
+      if (!logOverflow) termView.value?.write(d.text)
     }),
     window.api.on('serial', props.panelId, 'tx', (p) => {
       const d = p as DataEvt
       updateBytesThrottled(d.rxBytes, d.txBytes)
-      pushRaw('TX', d.text)
+      pushRaw(d.text)
     }),
     window.api.on('serial', props.panelId, 'status', (p) => {
       const s = p as { open: boolean; error?: string }
@@ -276,6 +305,7 @@ onMounted(async () => {
   termFontSize.value = config.value.termFontSize || 13
   xferProtocol.value = config.value.xferProtocol || 'ymodem'
   autoLog.value = config.value.autoLog !== false
+  showTime.value = config.value.showTime === true
   if (config.value.sidebarWidth) sidebarWidth.value = config.value.sidebarWidth
   termView.value?.info('就绪。选择串口后点击「打开」，终端内可直接输入命令。')
   await refreshPorts()
@@ -311,6 +341,11 @@ async function openPort(): Promise<void> {
     open.value = true
     dtrOn.value = true
     rtsOn.value = true
+    // 重开串口 = 新会话：解除内存日志溢出锁定并清流水（旧缓冲已达上限时会立刻再次锁死）
+    ringBuf.length = 0
+    logBytes = 0
+    logOverflow = false
+    lineCarry = ''
     // 真正拉高 DTR/RTS（仅改 UI 状态不下发时，部分需要复位才能工作的设备会卡住）
     await window.api.invoke('serial', 'dtr', props.panelId, { on: true }).catch(() => {})
     await window.api.invoke('serial', 'rts', props.panelId, { on: true }).catch(() => {})
@@ -418,28 +453,27 @@ function stopLoop(): void {
 
 // ---------- 终端 ----------
 function clearTerm(): void {
+  // 清屏同时清内存流水并解除溢出锁定（先存日志再清，否则清掉的内容不可再导出）
   ringBuf.length = 0
+  logBytes = 0
+  logOverflow = false
+  lineCarry = ''
   termView.value?.clear()
 }
 
-function fmtTime(t: number): string {
-  const d = new Date(t)
-  const p = (n: number, w = 2): string => n.toString().padStart(w, '0')
-  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}.${p(d.getMilliseconds(), 3)}`
-}
-
 function saveLog(): void {
-  const content = ringBuf
-    .map(
-      (r) =>
-        `[${fmtTime(r.time)}] ${r.dir.padEnd(4)} ${r.text.replace(/[\r\n\t]/g, (c) => ({ '\r': '\\r', '\n': '\\n', '\t': '\\t' })[c] ?? c)}`
-    )
-    .join('\r\n')
-  // 文件名带时分秒，以创建时间为准（主进程按此默认名弹出保存框，目录重启记忆）
-  const now = new Date()
-  const p = (n: number, w = 2): string => n.toString().padStart(w, '0')
+  // 内容与主进程自动落盘同格式：每行 [YYYY-MM-DD HH:MM:SS.mmm] 清洗后内容。
+  // 每段 text 为按完整行切分的若干行（\n 分隔，无结尾终止符），按行重组逐行补戳
+  const lines: string[] = []
+  for (const r of ringBuf) {
+    const stamp = fmtStamp(r.time, true)
+    const body = r.text.endsWith('\n') ? r.text.slice(0, -1) : r.text
+    for (const line of body.split('\n')) lines.push(`[${stamp}] ${line}`)
+  }
+  const content = lines.join('\r\n') + (lines.length ? '\r\n' : '')
+  // 文件名 serial-<COM>-<创建时刻 YYYYMMDD-HHMMSS>.log（主进程按此默认名弹保存框，目录重启记忆）
   const safeName = params.path.replace(/[\\/:*?"<>|]/g, '_') || 'com'
-  const name = `serial-${safeName}-${p(now.getMonth() + 1)}${p(now.getDate())}-${p(now.getHours())}${p(now.getMinutes())}${p(now.getSeconds())}.log`
+  const name = `serial-${safeName}-${fileNameStamp()}.log`
   void window.api
     .invoke('serial', 'log:save', props.panelId, { content, name })
     .then((res) => {
@@ -468,6 +502,7 @@ async function persistConfig(): Promise<void> {
   config.value.termFont = termFont.value
   config.value.termFontSize = termFontSize.value
   config.value.autoLog = autoLog.value
+  config.value.showTime = showTime.value
   config.value.sidebarWidth = sidebarWidth.value
   await window.api.invoke('serial', 'config:set', props.panelId, JSON.parse(JSON.stringify(config.value)))
 }
@@ -556,7 +591,7 @@ async function deleteSession(idx: number): Promise<void> {
           </el-button>
         </template>
         <template v-else>
-          <el-tag type="success" size="large" class="com-badge" effect="dark">
+          <el-tag type="success" size="default" class="com-badge" effect="dark">
             {{ params.path }}
           </el-tag>
           <el-button type="danger" size="small" :icon="CircleClose" @click="closePort">
@@ -643,6 +678,9 @@ async function deleteSession(idx: number): Promise<void> {
           <el-tooltip content="设备不回显的裸模块勾选后，终端可看到自己敲入的字符" placement="top">
             <el-checkbox v-model="localEcho" size="small">本地回显</el-checkbox>
           </el-tooltip>
+          <el-tooltip content="每行前显示本地时间 [HH:MM:SS.mmm]，与日志落盘格式一致" placement="top">
+            <el-checkbox v-model="showTime" size="small" @change="persistConfig">时间戳</el-checkbox>
+          </el-tooltip>
           <el-button size="small" text @click="clearTerm">清空</el-button>
           <el-button size="small" text :icon="Download" @click="saveLog">存日志</el-button>
           <el-dropdown trigger="click" @command="(cmd: string) => (cmd === 'set' ? setLogDir() : openLogDir())">
@@ -700,6 +738,7 @@ async function deleteSession(idx: number): Promise<void> {
           v-model:font-size="termFontSize"
           :font="termFont"
           :local-echo="localEcho"
+          :show-time="showTime"
           @data="onTermData"
         />
 
@@ -923,7 +962,7 @@ async function deleteSession(idx: number): Promise<void> {
 
 .com-badge {
   font-family: var(--font-mono);
-  font-size: 14px;
+  font-size: 13px;
   letter-spacing: 0.5px;
 }
 

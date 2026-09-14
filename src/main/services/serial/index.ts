@@ -15,6 +15,7 @@ import { DEFAULT_SERIAL_CONFIG } from '../../../shared/serial'
 import { getSection, setSection } from '../macro/configStore'
 import { ByteQueue, TransferCancelled, ymodemRecv, ymodemSend } from './ymodem'
 import { zmodemRecv, zmodemSend } from './zmodem'
+import { cleanLogBody, fileNameStamp, fmtStamp, splitTerminalLines } from '../../../shared/logtext'
 
 interface RxPiece {
   buf: Buffer
@@ -36,6 +37,8 @@ interface SerialSession {
   logTimer: NodeJS.Timeout | null
   /** 文件传输占用时的原始消费方（绕过 80ms 批量通道） */
   rawConsumer: ((chunk: Buffer) => void) | null
+  /** 日志管道的未完行尾巴（最后一个 \n 之后的内容；未完行/半个 \r\r\n 终止符/跨批 ANSI 序列滞留于此） */
+  logCarry: string
 }
 
 /** 进行中的传输（每面板最多一个） */
@@ -55,10 +58,9 @@ function serialLogDir(): string {
   return join(app.getPath('userData'), 'serial-logs')
 }
 
-function fmtLogTime(t: number): string {
-  const d = new Date(t)
-  const p = (n: number, w = 2): string => n.toString().padStart(w, '0')
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}.${p(d.getMilliseconds(), 3)}`
+/** 日志行时间戳（与终端显示一致）：HH:MM:SS.mmm；落盘带日期（跨天可辨）：YYYY-MM-DD HH:MM:SS.mmm */
+function fmtLogTime(t: number, withDate = false): string {
+  return fmtStamp(t, withDate)
 }
 
 class SerialService implements ToolService {
@@ -66,10 +68,15 @@ class SerialService implements ToolService {
     emitToolEvent('serial', panelId, type, payload)
   }
 
-  /** 日志入缓冲（真正落盘在 flushLog；写失败静默停日志，不影响收发） */
-  private appendLog(s: SerialSession, dir: 'RX' | 'TX' | 'INFO', body: string): void {
-    if (!s.logHandle) return
-    s.logBuf.push(`[${fmtLogTime(Date.now())}] ${dir.padEnd(4)} ${body}\r\n`)
+  /** 日志入缓冲（真正落盘在 flushLog；写失败静默停日志，不影响收发）。
+   *  入参为已按完整行切分的原始行（不含终止符），清洗后逐行补时间戳（每行可辨；带日期，跨天可追溯）。
+   *  空行照常落盘（设备真实空行可追溯） */
+  private appendLog(s: SerialSession, parts: string[]): void {
+    if (!s.logHandle || parts.length === 0) return
+    const stamp = fmtLogTime(Date.now(), true)
+    for (const part of parts) {
+      for (const line of cleanLogBody(part).split('\n')) s.logBuf.push(`[${stamp}] ${line}\r\n`)
+    }
   }
 
   /** 日志落盘：串口会话断开或缓冲超限时把缓冲一次性写入持久句柄 */
@@ -106,10 +113,16 @@ class SerialService implements ToolService {
     const total = Buffer.concat(pieces.map((p) => p.buf))
     const text = s.decoder.write(total)
     if (s.logHandle) {
-      // 转义只在日志开启时做（关闭时不白白跑正则）
-      this.appendLog(s, 'RX', text.replace(/[\r\n\t]/g, (c) => ({ '\r': '\\r', '\n': '\\n', '\t': '\\t' })[c] ?? c))
+      // 剥 ANSI/归一行只在日志开启时做（关闭时不白白跑正则）。
+      // 按完整行切分：最后一个 \n 之前落盘，之后（未完行/半个 \r\r\n 终止符）留给下一批拼接，
+      // 终止符跨批不再产生幻影空行；跨批 ANSI 序列也在 carry 中
+      const { lines, carry } = splitTerminalLines(s.logCarry + text)
+      s.logCarry = carry
+      this.appendLog(s, lines)
       // 缓冲超过 64 行立即落盘，防止长时间刷屏积压内存
       if (s.logBuf.length >= 64) void this.flushLog(s)
+    } else {
+      s.logCarry = ''
     }
     this.emit(panelId, 'data', {
       text,
@@ -118,6 +131,29 @@ class SerialService implements ToolService {
       rxBytes: s.rxBytes,
       txBytes: s.txBytes
     })
+  }
+
+  /** 更换日志目录时：对打开中的会话立刻轮转 —— 冲掉旧句柄并在新目录重开新文件（时间戳以轮转时刻为准） */
+  private async rotateLogs(dir: string): Promise<void> {
+    for (const s of sessions.values()) {
+      if (!s.logHandle) continue
+      // 冲缓冲、关旧句柄（flushLog 写失败时会把句柄置空，须空安全）
+      await this.flushLog(s)
+      await s.logHandle?.close().catch(() => {})
+      s.logHandle = null
+      if (!s.logTimer) continue
+      // 新目录重开
+      try {
+        await fs.mkdir(dir, { recursive: true })
+        const logPath = join(dir, `${s.params.path.replace(/[^a-zA-Z0-9]/g, '')}-${fileNameStamp()}.log`)
+        s.logHandle = await fs.open(logPath, 'a')
+        await s.logHandle.appendFile(`\r\n[${fmtLogTime(Date.now())}] INFO ===== 日志目录切换，续写至 ${dir} =====\r\n`, 'utf8')
+      } catch {
+        s.logHandle = null
+        clearInterval(s.logTimer!)
+        s.logTimer = null
+      }
+    }
   }
 
   invoke(panelId: string, action: string, payload: unknown): Promise<unknown> | unknown {
@@ -233,15 +269,16 @@ class SerialService implements ToolService {
           resolve(err)
           return
         }
-        // 自动日志：userData/serial-logs/<COM>-<日期>.log，持久句柄 + 批量落盘
-        // （每周期 fs.appendFile 会反复 open/close 触发杀毒扫描，拖垮高吞吐刷屏）
+        // 自动日志：<配置目录 或 userData/serial-logs>/<COM>-<创建时刻 YYYYMMDD-HHMMSS>.log
+        // 持久句柄 + 批量落盘（每周期 fs.appendFile 会反复 open/close 触发杀毒扫描，拖垮高吞吐刷屏）
         let logHandle: FileHandle | null = null
         if (cfg.autoLog) {
           try {
-            await fs.mkdir(serialLogDir(), { recursive: true })
+            const logDir = cfg.logDir || serialLogDir()
+            await fs.mkdir(logDir, { recursive: true })
             const logPath = join(
-              serialLogDir(),
-              `${params.path.replace(/[^a-zA-Z0-9]/g, '')}-${new Date().toISOString().slice(0, 10)}.log`
+              logDir,
+              `${params.path.replace(/[^a-zA-Z0-9]/g, '')}-${fileNameStamp()}.log`
             )
             logHandle = await fs.open(logPath, 'a')
             await logHandle.appendFile(
@@ -264,7 +301,8 @@ class SerialService implements ToolService {
           logHandle,
           logBuf: [],
           logTimer: null,
-          rawConsumer: null
+          rawConsumer: null,
+          logCarry: ''
         })
         // 低流量场景：周期性把日志缓冲落盘
         if (logHandle) {
@@ -353,7 +391,11 @@ class SerialService implements ToolService {
       s.flushTimer = null
     }
     this.flush(panelId)
-    this.appendLog(s, 'INFO', '===== 断开 =====')
+    // 冲出未完行尾巴（提示符等；纯 \r 残留尾巴跳过，避免落盘多余空行）
+    const tail = s.logCarry
+    s.logCarry = ''
+    if (tail.replace(/\r/g, '')) this.appendLog(s, [tail])
+    this.appendLog(s, ['===== 断开 ====='])
     // 日志：清定时器、冲掉缓冲并关闭句柄（会话结束后不再有数据）
     if (s.logTimer) {
       clearInterval(s.logTimer)
@@ -391,7 +433,8 @@ class SerialService implements ToolService {
     if (buf.length === 0) return { ok: false, error: '发送内容为空' }
     s.port.write(buf)
     s.txBytes += buf.length
-    this.appendLog(s, 'TX', buf.toString('utf8').replace(/[\r\n\t]/g, (c) => ({ '\r': '\\r', '\n': '\\n', '\t': '\\t' })[c] ?? c))
+    // HEX 发送按字节审计记录（二进制过 toString('utf8') 会把 0x1b 当 ANSI 剥掉、非法字节变 U+FFFD）
+    this.appendLog(s, [p.mode === 'hex' ? buf.toString('hex').replace(/../g, '$& ').trim() : buf.toString('utf8')])
     this.emit(panelId, 'tx', {
       text: buf.toString('utf8'),
       bytes: buf.length,
@@ -441,11 +484,13 @@ class SerialService implements ToolService {
     if (canceled || !filePath) return { ok: false, error: '已取消' }
     try {
       await fs.writeFile(filePath, p.content, 'utf8')
-      // 记住本次保存目录，下次默认打开这里（重启记忆）
+      // 记住本次保存目录，下次默认打开这里（重启记忆）；
+      // 同时让打开中的会话自动日志立刻轮转到新目录
       const dir = dirname(filePath)
       if (dir && dir !== cfg.logDir) {
         cfg.logDir = dir
         await setSection('serial', cfg)
+        await this.rotateLogs(cfg.logDir)
       }
       return { ok: true }
     } catch (err) {
@@ -464,6 +509,8 @@ class SerialService implements ToolService {
     if (canceled || !filePaths[0]) return { ok: false, error: '已取消' }
     cfg.logDir = filePaths[0]
     await setSection('serial', cfg)
+    // 打开中的会话立刻轮转到新目录（新文件马上出现在新路径下）
+    await this.rotateLogs(cfg.logDir)
     return { ok: true, dir: filePaths[0] }
   }
 

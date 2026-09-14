@@ -1,0 +1,29 @@
+# .understandignore — 从分析中排除的文件/目录
+# 语法同 .gitignore（glob、# 注释、! 取反、目录尾 /）
+#
+# 内置默认排除：node_modules/、.git/、dist/、build/、obj/、*.lock、*.min.js 等
+# （始终排除，除非用 ! 显式取反）
+
+# --- 构建与产物（配合内置默认） ---
+release/
+release2/
+out/
+*.log
+
+# --- 个人本地配置 ---
+.claude/settings.local.json
+*.local
+*.tmp
+
+# --- esbuild 测试打包临时产物 ---
+tests/.*.cjs
+
+# --- 需求文档（非代码清单，分析价值低） ---
+docs/
+
+# --- 设计原型 ---
+design/
+
+# --- 知识图谱自身产物（不重复分析） ---
+.ua/
+.understand-anything/

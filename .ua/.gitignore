@@ -1,0 +1,5 @@
+# Understand-Anything 数据 —— 只跟踪有意义的分析产物，排除瞬态/中间/已删残留
+# 知识图谱 knowledge-graph.json、指纹 fingerprints.json、元数据 meta.json 保留入库
+.trash-*/
+intermediate/
+understand-anything/

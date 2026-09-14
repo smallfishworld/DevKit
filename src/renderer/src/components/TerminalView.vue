@@ -13,6 +13,7 @@ import { SearchAddon } from '@xterm/addon-search'
 import { WebglAddon } from '@xterm/addon-webgl'
 import '@xterm/xterm/css/xterm.css'
 import { resolveGlobalKey, resolveMouseDown, resolveTermKey } from './termInput'
+import { fmtStamp, stampLines } from '../../../shared/logtext'
 
 const props = withDefaults(
   defineProps<{
@@ -22,8 +23,10 @@ const props = withDefaults(
     fontSize?: number
     /** 本地回显：远端不回显时勾选可看到自己敲入的字符 */
     localEcho?: boolean
+    /** 显示时间戳：每批接收数据前插灰色本地时间 [HH:MM:SS.mmm]（与日志落盘格式一致） */
+    showTime?: boolean
   }>(),
-  { font: 'Consolas', fontSize: 13, localEcho: false }
+  { font: 'Consolas', fontSize: 13, localEcho: false, showTime: false }
 )
 
 const emit = defineEmits<{
@@ -106,7 +109,10 @@ onMounted(() => {
   document.addEventListener('visibilitychange', onVisibilityChange)
   // 键盘直入：xterm 捕获按键后交给父组件发送
   term.onData((data) => {
-    if (props.localEcho) term?.write(data)
+    if (props.localEcho) {
+      term?.write(data)
+      midLine = !/[\r\n]$/.test(data)
+    }
     emit('data', data)
   })
   term.onResize(({ cols, rows }) => emit('resize', { cols, rows }))
@@ -386,20 +392,31 @@ async function onSearchContextmenu(e: MouseEvent): Promise<void> {
   })
 }
 
-/** 灌入远端输出（ANSI/VT100 由内核解析） */
+/** 时间戳逐行补戳逻辑见 shared/logtext.ts 的 stampLines（纯函数，可单测） */
+let midLine = false
 function write(text: string): void {
-  term?.write(text)
+  if (!text) return
+  if (!props.showTime) {
+    term?.write(text)
+    midLine = !/[\r\n]$/.test(text)
+    return
+  }
+  const r = stampLines(text, `\x1b[90m[${fmtStamp()}]\x1b[0m `, midLine)
+  term?.write(r.out)
+  midLine = r.midLine
 }
 
 /** 灌入本地灰色提示行 */
 function info(text: string): void {
   term?.write(`\x1b[90m[DevKit] ${text}\x1b[0m\r\n`)
+  midLine = false
 }
 
-/** 清屏（含滚动缓冲区） */
+/** 清屏（含滚动缓冲区）；清屏后光标回到行首 */
 function clear(): void {
   term?.clear()
   term?.write('\x1b[2J\x1b[H')
+  midLine = false
 }
 
 function focus(): void {

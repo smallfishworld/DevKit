@@ -39,6 +39,8 @@ export interface SshConfig {
   logDir: string
   /** 自动日志开关（连接期间收发自动落盘；默认开启） */
   autoLog: boolean
+  /** 终端显示时间戳（每批接收数据前插本地时间 [HH:MM:SS.mmm]，与日志格式一致） */
+  showTime: boolean
   /** 左侧会话栏宽度（拖动分隔条调整，重启记忆） */
   sidebarWidth: number
 }
@@ -50,5 +52,6 @@ export const DEFAULT_SSH_CONFIG: SshConfig = {
   termFontSize: 13,
   logDir: '',
   autoLog: true,
+  showTime: false,
   sidebarWidth: 210
 }

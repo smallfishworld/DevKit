@@ -364,15 +364,18 @@ export class TftpServer extends EventEmitter {
   private sessions = new Set<Session>()
   public root = ''
   public port = 0
+  /** 实际绑定的本机地址（0.0.0.0 表示全部网卡） */
+  public address = '0.0.0.0'
 
   get running(): boolean {
     return this.socket !== null
   }
 
-  async start(port: number, root: string): Promise<void> {
+  async start(port: number, root: string, address = '0.0.0.0'): Promise<void> {
     if (this.socket) throw new Error('服务器已在运行')
     this.root = resolve(root)
     this.port = port
+    this.address = address
     await fs.mkdir(this.root, { recursive: true })
 
     const sock = createSocket('udp4')
@@ -383,9 +386,12 @@ export class TftpServer extends EventEmitter {
     })
     await new Promise<void>((res, rej) => {
       sock.once('error', rej)
-      sock.bind(port, () => res())
+      sock.bind(port, address, () => res())
     })
-    this.emit('log', `TFTP 服务器已启动: ${this.root} (UDP :${port})`)
+    this.emit(
+      'log',
+      `TFTP 服务器已启动: ${this.root} (UDP ${address}:${port})`
+    )
   }
 
   private async onRequest(msg: Buffer, rinfo: RemoteInfo): Promise<void> {

@@ -13,6 +13,9 @@ const FIREWALL_HINT =
 
 const port = ref(69)
 const root = ref('')
+/** 绑定的本机 IP（0.0.0.0 = 全部网卡） */
+const address = ref('0.0.0.0')
+const ipOptions = ref<Array<{ address: string; name: string }>>([])
 const running = ref(false)
 const starting = ref(false)
 const logs = ref<{ line: string; time: number }[]>([])
@@ -20,19 +23,27 @@ const transfers = ref<TransferInfo[]>([])
 const transferMap = new Map<number, TransferInfo>()
 
 onMounted(async () => {
-  // 读取上次使用的端口/根目录（无保存记录时服务端返回默认值）
+  // 读取上次使用的端口/根目录/绑定 IP（无保存记录时服务端返回默认值）
   const res = (await window.api.invoke('tftp', 'config:get', props.panelId)) as {
     port: number
     root: string
+    address?: string
   }
   if (Number.isFinite(res.port) && res.port >= 1 && res.port <= 65535) port.value = res.port
   root.value = res.root
+  if (res.address) address.value = res.address
+  // 本机 IPv4 列表（选择监听网卡用）；顺带校验持久化的绑定 IP 是否仍有效
+  await refreshIps()
 })
 
-/** 端口+根目录持久化：启动成功与选择目录时各回写一次 */
+/** 端口+根目录+绑定 IP 持久化：启动成功与选择目录时各回写一次 */
 function persistConfig(): void {
   void window.api
-    .invoke('tftp', 'config:set', props.panelId, { port: port.value, root: root.value })
+    .invoke('tftp', 'config:set', props.panelId, {
+      port: port.value,
+      root: root.value,
+      address: address.value
+    })
     .catch(() => {})
 }
 
@@ -58,8 +69,22 @@ function upsertTransfer(info: TransferInfo): void {
 
 let unsubList: Array<() => void> = []
 
+/** 拉取本机 IPv4 列表；校验当前绑定 IP 是否仍存在（网卡可能已消失），不存在回落 0.0.0.0 */
+async function refreshIps(): Promise<void> {
+  const ips = (await window.api.invoke('tftp', 'list-ips', props.panelId)) as {
+    ips: Array<{ address: string; name: string }>
+  }
+  ipOptions.value = ips.ips ?? []
+  if (address.value !== '0.0.0.0' && !ipOptions.value.some((ip) => ip.address === address.value)) {
+    address.value = '0.0.0.0'
+    ElMessage.warning('记忆的绑定 IP 已不在本机网卡上，已回落到全部网卡 (0.0.0.0)')
+  }
+}
+
 async function startServer(): Promise<void> {
   starting.value = true
+  // 启动前刷新网卡列表并校验绑定 IP（持久化的 IP 可能因 VPN 断开/换网卡而失效）
+  await refreshIps()
   unsubList.forEach((u) => u())
   unsubList = [
     window.api.on('tftp', props.panelId, 'log', (payload) => {
@@ -76,13 +101,15 @@ async function startServer(): Promise<void> {
   ]
   const res = (await window.api.invoke('tftp', 'start', props.panelId, {
     port: port.value,
-    root: root.value
-  })) as { ok: boolean; error?: string }
+    root: root.value,
+    address: address.value
+  })) as { ok: boolean; error?: string; address?: string }
   starting.value = false
   if (res.ok) {
     running.value = true
     persistConfig()
-    ElMessage.success(`TFTP 服务器已启动 :${port.value}`)
+    const shown = res.address ?? address.value
+    ElMessage.success(`TFTP 服务器已启动 ${shown}:${port.value}`)
   } else {
     ElMessage.error(`启动失败: ${res.error}`)
   }
@@ -102,6 +129,11 @@ function openDir(): void {
   void window.api.invoke('tftp', 'open-dir', props.panelId, { root: root.value })
 }
 
+/** 复制服务器地址到剪贴板（点击 IP 标签） */
+function copyIp(text: string): void {
+  void window.api.win.writeClipboard(text).then(() => ElMessage.success(`已复制 ${text}`))
+}
+
 onUnmounted(() => {
   unsubList.forEach((u) => u())
   window.api.invoke('tftp', 'dispose', props.panelId).catch(() => {})
@@ -116,6 +148,16 @@ onUnmounted(() => {
       <div class="panel-row">
         <span>端口</span>
         <el-input-number v-model="port" :min="1" :max="65535" :disabled="running" size="small" />
+        <span>本机 IP</span>
+        <el-select v-model="address" :disabled="running" size="small" style="width: 210px">
+          <el-option value="0.0.0.0" label="全部网卡 (0.0.0.0)" />
+          <el-option
+            v-for="ip in ipOptions"
+            :key="ip.address"
+            :value="ip.address"
+            :label="`${ip.address}（${ip.name}）`"
+          />
+        </el-select>
         <span>根目录</span>
         <el-input
           v-model="root"
@@ -139,8 +181,31 @@ onUnmounted(() => {
         </el-button>
         <el-button v-else type="danger" size="small" @click="stopServer">停止</el-button>
         <el-tag :type="running ? 'success' : 'info'">
-          {{ running ? `运行中 UDP :${port}` : '已停止' }}
+          {{ running ? `运行中 ${address}:${port}` : '已停止' }}
         </el-tag>
+      </div>
+      <!-- 运行中提示设备端可用的服务器地址（绑定全部网卡时列出每个 IP） -->
+      <div v-if="running" class="server-ip-row">
+        <template v-if="address === '0.0.0.0'">
+          设备端服务器地址：
+          <el-tag
+            v-for="ip in ipOptions"
+            :key="ip.address"
+            size="small"
+            class="ip-tag"
+            title="点击复制"
+            @click="copyIp(`${ip.address}:${port}`)"
+          >
+            {{ ip.address }}:{{ port }}
+          </el-tag>
+          <span v-if="ipOptions.length === 0" class="ip-none">未检测到可用网卡</span>
+        </template>
+        <template v-else>
+          设备端服务器地址：
+          <el-tag size="small" class="ip-tag" title="点击复制" @click="copyIp(`${address}:${port}`)">
+            {{ address }}:{{ port }}
+          </el-tag>
+        </template>
       </div>
       <el-alert
         type="info"
@@ -206,6 +271,20 @@ onUnmounted(() => {
 <style scoped>
 .mono {
   font-family: var(--font-mono);
+}
+
+.server-ip-row {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--el-text-color-regular);
+}
+
+.ip-tag {
+  cursor: pointer;
 }
 
 .log-box {

@@ -1,0 +1,4523 @@
+{
+  "version": "1.0.0",
+  "gitCommitHash": "73114d121c51f18e1bdbc587da4019d55c5fdeb5",
+  "generatedAt": "2026-09-11T08:36:08.544Z",
+  "files": {
+    ".claude/settings.json": {
+      "filePath": ".claude/settings.json",
+      "contentHash": "a83eed836ad7be19e465c0369570e9cc30918c537a3fafc09aa19ddedc024d38",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 6,
+      "hasStructuralAnalysis": false
+    },
+    ".npmrc": {
+      "filePath": ".npmrc",
+      "contentHash": "c24fed5b425b74ff015f1a33cd923d9459c47200efb3d2892de7d4af466095a9",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 7,
+      "hasStructuralAnalysis": false
+    },
+    "AGENTS.md": {
+      "filePath": "AGENTS.md",
+      "contentHash": "0038f3383cd7865f719dd18ec096e8bc31fbc204a079c41493228c615dcec00e",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 69,
+      "hasStructuralAnalysis": false
+    },
+    "README.md": {
+      "filePath": "README.md",
+      "contentHash": "07f87f70b5d8d4f77831298812ea079f44c0b132a2ec6efbcd7eab12a2999e48",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 181,
+      "hasStructuralAnalysis": false
+    },
+    "electron.vite.config.ts": {
+      "filePath": "electron.vite.config.ts",
+      "contentHash": "a1364f3f5902718448e3110352539a0ddd2aa6cc4fe6ceb462df8581663b9013",
+      "functions": [],
+      "classes": [],
+      "imports": [
+        {
+          "source": "path",
+          "specifiers": [
+            "resolve"
+          ]
+        },
+        {
+          "source": "electron-vite",
+          "specifiers": [
+            "defineConfig",
+            "externalizeDepsPlugin"
+          ]
+        },
+        {
+          "source": "@vitejs/plugin-vue",
+          "specifiers": [
+            "vue"
+          ]
+        }
+      ],
+      "exports": [],
+      "totalLines": 21,
+      "hasStructuralAnalysis": true
+    },
+    "package.json": {
+      "filePath": "package.json",
+      "contentHash": "185696d49a03f806af9be95d8b9a0cef0676cd66ba9fd9a99c2947c4c9dce88c",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 94,
+      "hasStructuralAnalysis": false
+    },
+    "src/main/index.ts": {
+      "filePath": "src/main/index.ts",
+      "contentHash": "14211bf90fe993e429060df9f0449155dec1a53c395e2e8e0f569754ff810194",
+      "functions": [
+        {
+          "name": "registerWindowIpc",
+          "params": [],
+          "returnType": "void",
+          "exported": false,
+          "lineCount": 21
+        },
+        {
+          "name": "createWindow",
+          "params": [],
+          "returnType": "void",
+          "exported": false,
+          "lineCount": 46
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "electron",
+          "specifiers": [
+            "BrowserWindow",
+            "Menu",
+            "app",
+            "clipboard",
+            "ipcMain",
+            "screen"
+          ]
+        },
+        {
+          "source": "node:path",
+          "specifiers": [
+            "join"
+          ]
+        },
+        {
+          "source": "./ipc",
+          "specifiers": [
+            "disposeAllPanels",
+            "registerService",
+            "registerToolIpc",
+            "setMainWindow"
+          ]
+        },
+        {
+          "source": "./services/input",
+          "specifiers": [
+            "inputService",
+            "fullSelfTest"
+          ]
+        },
+        {
+          "source": "./services/tftp",
+          "specifiers": [
+            "tftpService"
+          ]
+        },
+        {
+          "source": "./services/macro",
+          "specifiers": [
+            "macroService"
+          ]
+        },
+        {
+          "source": "./services/serial",
+          "specifiers": [
+            "serialService"
+          ]
+        },
+        {
+          "source": "./services/ssh",
+          "specifiers": [
+            "sshService"
+          ]
+        },
+        {
+          "source": "./services/quickcmds",
+          "specifiers": [
+            "quickCmdsService"
+          ]
+        },
+        {
+          "source": "./services/net",
+          "specifiers": [
+            "netService"
+          ]
+        },
+        {
+          "source": "./services/color",
+          "specifiers": [
+            "colorService"
+          ]
+        },
+        {
+          "source": "./services/diff",
+          "specifiers": [
+            "diffService"
+          ]
+        },
+        {
+          "source": "./services/codec",
+          "specifiers": [
+            "codecService"
+          ]
+        }
+      ],
+      "exports": [],
+      "totalLines": 131,
+      "hasStructuralAnalysis": true
+    },
+    "src/main/ipc.ts": {
+      "filePath": "src/main/ipc.ts",
+      "contentHash": "1b637e2fe9bd7e4b1097f0034c45b356ae61b79e6ce07f08ec884016dbf6fb5c",
+      "functions": [
+        {
+          "name": "setMainWindow",
+          "params": [
+            "win"
+          ],
+          "returnType": "void",
+          "exported": true,
+          "lineCount": 3
+        },
+        {
+          "name": "registerService",
+          "params": [
+            "tool",
+            "service"
+          ],
+          "returnType": "void",
+          "exported": true,
+          "lineCount": 3
+        },
+        {
+          "name": "emitToolEvent",
+          "params": [
+            "tool",
+            "panelId",
+            "type",
+            "payload"
+          ],
+          "returnType": "void",
+          "exported": true,
+          "lineCount": 5
+        },
+        {
+          "name": "registerToolIpc",
+          "params": [],
+          "returnType": "void",
+          "exported": true,
+          "lineCount": 16
+        },
+        {
+          "name": "disposeAllPanels",
+          "params": [],
+          "returnType": "void",
+          "exported": true,
+          "lineCount": 3
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "electron",
+          "specifiers": [
+            "BrowserWindow",
+            "ipcMain"
+          ]
+        },
+        {
+          "source": "../shared/types",
+          "specifiers": [
+            "ToolEvent",
+            "ToolInvoke"
+          ]
+        }
+      ],
+      "exports": [
+        "setMainWindow",
+        "registerService",
+        "emitToolEvent",
+        "registerToolIpc",
+        "disposeAllPanels"
+      ],
+      "totalLines": 49,
+      "hasStructuralAnalysis": true
+    },
+    "src/main/services/codec/index.ts": {
+      "filePath": "src/main/services/codec/index.ts",
+      "contentHash": "c756fe7e37db04320c376d1b8fab2142a65f1e639a7a9db410259d41fb8a16f2",
+      "functions": [],
+      "classes": [
+        {
+          "name": "CodecService",
+          "methods": [
+            "invoke"
+          ],
+          "properties": [],
+          "exported": false,
+          "lineCount": 23
+        }
+      ],
+      "imports": [
+        {
+          "source": "iconv-lite",
+          "specifiers": [
+            "* as iconv"
+          ]
+        },
+        {
+          "source": "../../ipc",
+          "specifiers": [
+            "ToolService"
+          ]
+        }
+      ],
+      "exports": [
+        "codecService"
+      ],
+      "totalLines": 30,
+      "hasStructuralAnalysis": true
+    },
+    "src/main/services/color/index.ts": {
+      "filePath": "src/main/services/color/index.ts",
+      "contentHash": "5afd8af6791b9446b4331e647b91dec03d8b541b8cccc9f495eb1286770e6ed5",
+      "functions": [],
+      "classes": [
+        {
+          "name": "ColorService",
+          "methods": [
+            "invoke"
+          ],
+          "properties": [],
+          "exported": false,
+          "lineCount": 10
+        }
+      ],
+      "imports": [
+        {
+          "source": "../../ipc",
+          "specifiers": [
+            "ToolService"
+          ]
+        },
+        {
+          "source": "../macro/picker",
+          "specifiers": [
+            "pickPoint"
+          ]
+        }
+      ],
+      "exports": [
+        "colorService"
+      ],
+      "totalLines": 17,
+      "hasStructuralAnalysis": true
+    },
+    "src/main/services/diff/folder.ts": {
+      "filePath": "src/main/services/diff/folder.ts",
+      "contentHash": "fde6f6a2004b5fd2e133dff10202b1e60c685d087580b9d370dbe046403eeada",
+      "functions": [
+        {
+          "name": "ignoreSet",
+          "params": [
+            "filter"
+          ],
+          "returnType": "Set<string>",
+          "exported": false,
+          "lineCount": 8
+        },
+        {
+          "name": "scanFolder",
+          "params": [
+            "req"
+          ],
+          "returnType": "Promise<FolderScanRes>",
+          "exported": true,
+          "lineCount": 51
+        },
+        {
+          "name": "mk",
+          "params": [
+            "res",
+            "rel",
+            "isDir",
+            "status",
+            "l",
+            "r"
+          ],
+          "returnType": "FolderEntry",
+          "exported": false,
+          "lineCount": 14
+        },
+        {
+          "name": "dirStatus",
+          "params": [
+            "l",
+            "r"
+          ],
+          "returnType": "FolderStatus",
+          "exported": false,
+          "lineCount": 4
+        },
+        {
+          "name": "indexDir",
+          "params": [
+            "root",
+            "ignore"
+          ],
+          "returnType": "Promise<Map<string, Ent>>",
+          "exported": false,
+          "lineCount": 26
+        },
+        {
+          "name": "isIgnored",
+          "params": [
+            "filename",
+            "ignore"
+          ],
+          "returnType": "boolean",
+          "exported": false,
+          "lineCount": 5
+        },
+        {
+          "name": "equalsFile",
+          "params": [
+            "l",
+            "r"
+          ],
+          "returnType": "Promise<boolean>",
+          "exported": false,
+          "lineCount": 24
+        },
+        {
+          "name": "syncFolderItem",
+          "params": [
+            "req"
+          ],
+          "returnType": "Promise<FolderSyncRes>",
+          "exported": true,
+          "lineCount": 26
+        },
+        {
+          "name": "safeRel",
+          "params": [
+            "rel"
+          ],
+          "returnType": "boolean",
+          "exported": false,
+          "lineCount": 9
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "node:fs",
+          "specifiers": [
+            "fs"
+          ]
+        },
+        {
+          "source": "node:path",
+          "specifiers": [
+            "* as path"
+          ]
+        },
+        {
+          "source": "../../../shared/diff",
+          "specifiers": [
+            "FolderEntry",
+            "FolderFilter",
+            "FolderScanReq",
+            "FolderScanRes",
+            "FolderStatus",
+            "FolderSyncReq",
+            "FolderSyncRes"
+          ]
+        }
+      ],
+      "exports": [
+        "scanFolder",
+        "syncFolderItem"
+      ],
+      "totalLines": 207,
+      "hasStructuralAnalysis": true
+    },
+    "src/main/services/diff/hexdiff.ts": {
+      "filePath": "src/main/services/diff/hexdiff.ts",
+      "contentHash": "223ec0c2e0a48b6ea0a0bd474a84d445fba0b40bf3a2454d5f54e03334609c23",
+      "functions": [
+        {
+          "name": "hexDiff",
+          "params": [
+            "req"
+          ],
+          "returnType": "HexDiffRes",
+          "exported": true,
+          "lineCount": 32
+        },
+        {
+          "name": "fmtRow",
+          "params": [
+            "bytes"
+          ],
+          "returnType": "string",
+          "exported": false,
+          "lineCount": 3
+        },
+        {
+          "name": "classify",
+          "params": [
+            "l",
+            "r"
+          ],
+          "returnType": "HexRowType",
+          "exported": false,
+          "lineCount": 12
+        },
+        {
+          "name": "hexToBytes",
+          "params": [
+            "hex"
+          ],
+          "returnType": "number[]",
+          "exported": false,
+          "lineCount": 8
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "../../../shared/diff",
+          "specifiers": [
+            "HexDiffReq",
+            "HexDiffRes",
+            "HexRow",
+            "HexRowType"
+          ]
+        }
+      ],
+      "exports": [
+        "hexDiff"
+      ],
+      "totalLines": 69,
+      "hasStructuralAnalysis": true
+    },
+    "src/main/services/diff/index.ts": {
+      "filePath": "src/main/services/diff/index.ts",
+      "contentHash": "4400c3a958bbe4d39c485dbb238a4e8c905e04661b2a0283c49e6d45574356bd",
+      "functions": [],
+      "classes": [
+        {
+          "name": "DiffService",
+          "methods": [
+            "pick",
+            "invoke",
+            "diffText",
+            "statPath"
+          ],
+          "properties": [],
+          "exported": false,
+          "lineCount": 51
+        }
+      ],
+      "imports": [
+        {
+          "source": "electron",
+          "specifiers": [
+            "dialog"
+          ]
+        },
+        {
+          "source": "node:fs",
+          "specifiers": [
+            "fs"
+          ]
+        },
+        {
+          "source": "../../ipc",
+          "specifiers": [
+            "ToolService"
+          ]
+        },
+        {
+          "source": "../../../shared/diff",
+          "specifiers": [
+            "FileReadReq",
+            "FileWriteReq",
+            "FolderScanReq",
+            "FolderSyncReq",
+            "HexDiffReq",
+            "HexDiffRes",
+            "TextDiffPayload",
+            "TextDiffRes"
+          ]
+        },
+        {
+          "source": "./io",
+          "specifiers": [
+            "readFileRes",
+            "writeFileRes"
+          ]
+        },
+        {
+          "source": "./textdiff",
+          "specifiers": [
+            "textDiff"
+          ]
+        },
+        {
+          "source": "./hexdiff",
+          "specifiers": [
+            "hexDiff"
+          ]
+        },
+        {
+          "source": "./folder",
+          "specifiers": [
+            "scanFolder",
+            "syncFolderItem"
+          ]
+        }
+      ],
+      "exports": [
+        "diffService"
+      ],
+      "totalLines": 75,
+      "hasStructuralAnalysis": true
+    },
+    "src/main/services/diff/io.ts": {
+      "filePath": "src/main/services/diff/io.ts",
+      "contentHash": "f1b9db0d6581543c227cd8227e22ad0134722ceaa899c79b7704210df892f418",
+      "functions": [
+        {
+          "name": "readFileRes",
+          "params": [
+            "req"
+          ],
+          "returnType": "Promise<FileReadRes>",
+          "exported": true,
+          "lineCount": 56
+        },
+        {
+          "name": "containsNul",
+          "params": [
+            "buf"
+          ],
+          "returnType": "boolean",
+          "exported": false,
+          "lineCount": 6
+        },
+        {
+          "name": "decode",
+          "params": [
+            "buf",
+            "encoding"
+          ],
+          "returnType": "string",
+          "exported": true,
+          "lineCount": 3
+        },
+        {
+          "name": "writeFileRes",
+          "params": [
+            "req"
+          ],
+          "returnType": "Promise<FileWriteRes>",
+          "exported": true,
+          "lineCount": 9
+        },
+        {
+          "name": "isTextUnder",
+          "params": [
+            "buf",
+            "encoding"
+          ],
+          "returnType": "boolean",
+          "exported": false,
+          "lineCount": 27
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "node:fs",
+          "specifiers": [
+            "fs"
+          ]
+        },
+        {
+          "source": "iconv-lite",
+          "specifiers": [
+            "iconv"
+          ]
+        },
+        {
+          "source": "../../../shared/diff",
+          "specifiers": [
+            "BinDetect",
+            "DiffEncoding",
+            "FileReadReq",
+            "FileReadRes",
+            "FileWriteReq",
+            "FileWriteRes"
+          ]
+        },
+        {
+          "source": "../../../shared/hexutil",
+          "specifiers": [
+            "toHex"
+          ]
+        }
+      ],
+      "exports": [
+        "TEXT_LIMIT",
+        "readFileRes",
+        "decode",
+        "writeFileRes"
+      ],
+      "totalLines": 134,
+      "hasStructuralAnalysis": true
+    },
+    "src/main/services/diff/textdiff.ts": {
+      "filePath": "src/main/services/diff/textdiff.ts",
+      "contentHash": "1b0cbe8fe02c4fdb8b52f663bf80306cc485b542e2b29794bf59f4945ee7f3c0",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [
+        "textDiff",
+        "normalizeLine",
+        "inlineSegs",
+        "splitLines"
+      ],
+      "totalLines": 6,
+      "hasStructuralAnalysis": true
+    },
+    "src/main/services/input/capture.ts": {
+      "filePath": "src/main/services/input/capture.ts",
+      "contentHash": "6a39dfca2fd8615e8a01d9c57bee9254828eb420955d2651859f17cd15b2c1df",
+      "functions": [
+        {
+          "name": "handleEvent",
+          "params": [
+            "e"
+          ],
+          "returnType": "void",
+          "exported": false,
+          "lineCount": 50
+        },
+        {
+          "name": "ensureHook",
+          "params": [],
+          "returnType": "void",
+          "exported": false,
+          "lineCount": 6
+        },
+        {
+          "name": "releaseHook",
+          "params": [],
+          "returnType": "void",
+          "exported": false,
+          "lineCount": 5
+        },
+        {
+          "name": "startCapture",
+          "params": [
+            "panelId",
+            "opts"
+          ],
+          "returnType": "void",
+          "exported": true,
+          "lineCount": 5
+        },
+        {
+          "name": "stopCapture",
+          "params": [
+            "panelId"
+          ],
+          "returnType": "void",
+          "exported": true,
+          "lineCount": 4
+        },
+        {
+          "name": "isCapturing",
+          "params": [],
+          "returnType": "boolean",
+          "exported": true,
+          "lineCount": 3
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "uiohook-napi",
+          "specifiers": [
+            "uIOhook",
+            "EventType",
+            "WheelDirection"
+          ]
+        },
+        {
+          "source": "uiohook-napi",
+          "specifiers": [
+            "UiohookKeyboardEvent",
+            "UiohookMouseEvent",
+            "UiohookWheelEvent"
+          ]
+        },
+        {
+          "source": "node:events",
+          "specifiers": [
+            "EventEmitter"
+          ]
+        },
+        {
+          "source": "./keycodes",
+          "specifiers": [
+            "uioToVk"
+          ]
+        },
+        {
+          "source": "../../ipc",
+          "specifiers": [
+            "emitToolEvent"
+          ]
+        },
+        {
+          "source": "../../../shared/types",
+          "specifiers": [
+            "InputEventData",
+            "MouseButton"
+          ]
+        }
+      ],
+      "exports": [
+        "captureBus",
+        "startCapture",
+        "stopCapture",
+        "isCapturing"
+      ],
+      "totalLines": 106,
+      "hasStructuralAnalysis": true
+    },
+    "src/main/services/input/index.ts": {
+      "filePath": "src/main/services/input/index.ts",
+      "contentHash": "ea9eb7edb13c7acd8a3a27aa84203e8abc7c54f0e4c6c13b1c667f97d0e9d424",
+      "functions": [
+        {
+          "name": "fullSelfTest",
+          "params": [],
+          "returnType": "InputSelfTest",
+          "exported": true,
+          "lineCount": 5
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "../../ipc",
+          "specifiers": [
+            "ToolService"
+          ]
+        },
+        {
+          "source": "../../../shared/types",
+          "specifiers": [
+            "InputSelfTest",
+            "MouseButton"
+          ]
+        },
+        {
+          "source": "./capture",
+          "specifiers": [
+            "startCapture",
+            "stopCapture",
+            "isCapturing"
+          ]
+        },
+        {
+          "source": "./inject",
+          "specifiers": [
+            "injectMouseMove",
+            "injectMouseClick",
+            "injectKeyTap",
+            "injectText",
+            "injectSelfTest"
+          ]
+        },
+        {
+          "source": "uiohook-napi",
+          "specifiers": [
+            "uIOhook"
+          ]
+        }
+      ],
+      "exports": [
+        "fullSelfTest",
+        "inputService"
+      ],
+      "totalLines": 77,
+      "hasStructuralAnalysis": true
+    },
+    "src/main/services/input/inject.ts": {
+      "filePath": "src/main/services/input/inject.ts",
+      "contentHash": "ec37ab1932339aabe72b9b9bace1dae5687d2055d3f350f5517e9868bae86257",
+      "functions": [
+        {
+          "name": "getVirtualScreen",
+          "params": [],
+          "returnType": "VirtualScreen",
+          "exported": false,
+          "lineCount": 11
+        },
+        {
+          "name": "toAbsolute",
+          "params": [
+            "x",
+            "y"
+          ],
+          "returnType": "{ ax: number; ay: number }",
+          "exported": false,
+          "lineCount": 6
+        },
+        {
+          "name": "sendMouse",
+          "params": [
+            "dwFlags",
+            "dx",
+            "dy",
+            "mouseData"
+          ],
+          "returnType": "boolean",
+          "exported": false,
+          "lineCount": 7
+        },
+        {
+          "name": "sendKey",
+          "params": [
+            "wVk",
+            "wScan",
+            "dwFlags"
+          ],
+          "returnType": "boolean",
+          "exported": false,
+          "lineCount": 7
+        },
+        {
+          "name": "injectMouseMove",
+          "params": [
+            "x",
+            "y"
+          ],
+          "returnType": "boolean",
+          "exported": true,
+          "lineCount": 4
+        },
+        {
+          "name": "injectMouseClick",
+          "params": [
+            "x",
+            "y",
+            "button"
+          ],
+          "returnType": "boolean",
+          "exported": true,
+          "lineCount": 7
+        },
+        {
+          "name": "injectMouseButton",
+          "params": [
+            "button",
+            "isDown"
+          ],
+          "returnType": "boolean",
+          "exported": true,
+          "lineCount": 4
+        },
+        {
+          "name": "injectWheel",
+          "params": [
+            "x",
+            "y",
+            "delta"
+          ],
+          "returnType": "boolean",
+          "exported": true,
+          "lineCount": 4
+        },
+        {
+          "name": "injectKey",
+          "params": [
+            "vk",
+            "isDown"
+          ],
+          "returnType": "boolean",
+          "exported": true,
+          "lineCount": 3
+        },
+        {
+          "name": "injectKeyTap",
+          "params": [
+            "vk"
+          ],
+          "returnType": "boolean",
+          "exported": true,
+          "lineCount": 5
+        },
+        {
+          "name": "injectText",
+          "params": [
+            "text"
+          ],
+          "returnType": "boolean",
+          "exported": true,
+          "lineCount": 11
+        },
+        {
+          "name": "inputSelfTest",
+          "params": [],
+          "returnType": "InputSelfTest",
+          "exported": true,
+          "lineCount": 9
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "koffi",
+          "specifiers": [
+            "koffi"
+          ]
+        },
+        {
+          "source": "../../../shared/types",
+          "specifiers": [
+            "InputSelfTest",
+            "MouseButton"
+          ]
+        }
+      ],
+      "exports": [
+        "injectMouseMove",
+        "injectMouseClick",
+        "injectMouseButton",
+        "injectWheel",
+        "injectKey",
+        "injectKeyTap",
+        "injectText",
+        "inputSelfTest"
+      ],
+      "totalLines": 185,
+      "hasStructuralAnalysis": true
+    },
+    "src/main/services/input/keycodes.ts": {
+      "filePath": "src/main/services/input/keycodes.ts",
+      "contentHash": "6ffe371bfdf631e0482cde25dc8fe7744a5886a84d5010dbf94f4fc3c71c0d86",
+      "functions": [
+        {
+          "name": "uioToVk",
+          "params": [
+            "uioCode"
+          ],
+          "returnType": "number | null",
+          "exported": true,
+          "lineCount": 3
+        }
+      ],
+      "classes": [],
+      "imports": [],
+      "exports": [
+        "uioToVk"
+      ],
+      "totalLines": 37,
+      "hasStructuralAnalysis": true
+    },
+    "src/main/services/macro/color.ts": {
+      "filePath": "src/main/services/macro/color.ts",
+      "contentHash": "42277487e5afbda0c069fdf5c208626c3d922b3856899cd2735b2570923e113c",
+      "functions": [
+        {
+          "name": "hexToRgb",
+          "params": [
+            "hex"
+          ],
+          "returnType": "PixelResult",
+          "exported": false,
+          "lineCount": 6
+        },
+        {
+          "name": "pixelAt",
+          "params": [
+            "img",
+            "px",
+            "py"
+          ],
+          "returnType": "PixelResult",
+          "exported": false,
+          "lineCount": 7
+        },
+        {
+          "name": "within",
+          "params": [
+            "target",
+            "actual",
+            "tolerance"
+          ],
+          "returnType": "boolean",
+          "exported": false,
+          "lineCount": 7
+        },
+        {
+          "name": "locateDisplay",
+          "params": [
+            "x",
+            "y"
+          ],
+          "returnType": "DisplayHit",
+          "exported": false,
+          "lineCount": 14
+        },
+        {
+          "name": "grabPixel",
+          "params": [
+            "x",
+            "y"
+          ],
+          "returnType": "Promise<PixelResult>",
+          "exported": false,
+          "lineCount": 14
+        },
+        {
+          "name": "waitColor",
+          "params": [
+            "spec",
+            "shouldStop",
+            "onTick"
+          ],
+          "returnType": "Promise<boolean>",
+          "exported": true,
+          "lineCount": 19
+        },
+        {
+          "name": "grabScreenPng",
+          "params": [],
+          "returnType": "Promise<{\n  png: Buffer\n  width: number\n  height: number\n  offsetX: number\n  offsetY: number\n  /** 图像局部坐标取色，返回 '#RRGGBB' */\n  sample: (localX: number, localY: number) => string\n}>",
+          "exported": true,
+          "lineCount": 31
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "electron",
+          "specifiers": [
+            "desktopCapturer",
+            "screen"
+          ]
+        },
+        {
+          "source": "../../../shared/macro",
+          "specifiers": [
+            "WaitColorSpec"
+          ]
+        }
+      ],
+      "exports": [
+        "waitColor",
+        "grabScreenPng"
+      ],
+      "totalLines": 128,
+      "hasStructuralAnalysis": true
+    },
+    "src/main/services/macro/configStore.ts": {
+      "filePath": "src/main/services/macro/configStore.ts",
+      "contentHash": "e9a83cf66466b07ac48e34e9a2d2c861ba2c03d40441ee9ca6aee57923fcaa2a",
+      "functions": [
+        {
+          "name": "CONFIG_FILE",
+          "params": [],
+          "exported": false,
+          "lineCount": 1
+        },
+        {
+          "name": "loadConfig",
+          "params": [],
+          "returnType": "Promise<Record<string, unknown>>",
+          "exported": true,
+          "lineCount": 10
+        },
+        {
+          "name": "saveConfig",
+          "params": [
+            "data"
+          ],
+          "returnType": "Promise<void>",
+          "exported": true,
+          "lineCount": 5
+        },
+        {
+          "name": "loadMacroSettings",
+          "params": [],
+          "returnType": "Promise<MacroSettings>",
+          "exported": true,
+          "lineCount": 4
+        },
+        {
+          "name": "saveMacroSettings",
+          "params": [
+            "settings"
+          ],
+          "returnType": "Promise<void>",
+          "exported": true,
+          "lineCount": 5
+        },
+        {
+          "name": "getSection",
+          "params": [
+            "key",
+            "defaults"
+          ],
+          "returnType": "Promise<T>",
+          "exported": true,
+          "lineCount": 4
+        },
+        {
+          "name": "setSection",
+          "params": [
+            "key",
+            "value"
+          ],
+          "returnType": "Promise<void>",
+          "exported": true,
+          "lineCount": 5
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "electron",
+          "specifiers": [
+            "app"
+          ]
+        },
+        {
+          "source": "node:fs",
+          "specifiers": [
+            "fs"
+          ]
+        },
+        {
+          "source": "node:path",
+          "specifiers": [
+            "join"
+          ]
+        },
+        {
+          "source": "../../../shared/macro",
+          "specifiers": [
+            "DEFAULT_MACRO_SETTINGS",
+            "MacroSettings"
+          ]
+        }
+      ],
+      "exports": [
+        "loadConfig",
+        "saveConfig",
+        "loadMacroSettings",
+        "saveMacroSettings",
+        "getSection",
+        "setSection"
+      ],
+      "totalLines": 50,
+      "hasStructuralAnalysis": true
+    },
+    "src/main/services/macro/hotkeys.ts": {
+      "filePath": "src/main/services/macro/hotkeys.ts",
+      "contentHash": "c80a34035bbee8d79ced1691cb947a63b8213900aa07a729ac03c0225c57444e",
+      "functions": [
+        {
+          "name": "FKEY_VK",
+          "params": [
+            "n"
+          ],
+          "returnType": "number",
+          "exported": false,
+          "lineCount": 1
+        },
+        {
+          "name": "keyToVk",
+          "params": [
+            "key"
+          ],
+          "returnType": "number | null",
+          "exported": false,
+          "lineCount": 27
+        },
+        {
+          "name": "parseAccelerator",
+          "params": [
+            "acc"
+          ],
+          "returnType": "HotkeyBinding | null",
+          "exported": true,
+          "lineCount": 18
+        },
+        {
+          "name": "registerHotkey",
+          "params": [
+            "id",
+            "accelerator",
+            "handler"
+          ],
+          "returnType": "RegisterResult",
+          "exported": true,
+          "lineCount": 13
+        },
+        {
+          "name": "unregisterHotkey",
+          "params": [
+            "id"
+          ],
+          "returnType": "void",
+          "exported": true,
+          "lineCount": 7
+        },
+        {
+          "name": "unregisterAll",
+          "params": [],
+          "returnType": "void",
+          "exported": true,
+          "lineCount": 4
+        },
+        {
+          "name": "getRegistered",
+          "params": [],
+          "returnType": "HotkeyEntry[]",
+          "exported": true,
+          "lineCount": 3
+        },
+        {
+          "name": "matchesAnyHotkey",
+          "params": [
+            "e"
+          ],
+          "returnType": "boolean",
+          "exported": true,
+          "lineCount": 10
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "electron",
+          "specifiers": [
+            "globalShortcut"
+          ]
+        },
+        {
+          "source": "../../../shared/types",
+          "specifiers": [
+            "KeyEventData"
+          ]
+        }
+      ],
+      "exports": [
+        "parseAccelerator",
+        "registerHotkey",
+        "unregisterHotkey",
+        "unregisterAll",
+        "getRegistered",
+        "matchesAnyHotkey"
+      ],
+      "totalLines": 124,
+      "hasStructuralAnalysis": true
+    },
+    "src/main/services/macro/hud.ts": {
+      "filePath": "src/main/services/macro/hud.ts",
+      "contentHash": "9e61285c0442ec6acd97f2d5be8a4f1de3d31614f6a08e091958b418903d1700",
+      "functions": [
+        {
+          "name": "ensureHud",
+          "params": [],
+          "returnType": "BrowserWindow",
+          "exported": false,
+          "lineCount": 27
+        },
+        {
+          "name": "showHud",
+          "params": [
+            "text",
+            "recording"
+          ],
+          "returnType": "void",
+          "exported": true,
+          "lineCount": 11
+        },
+        {
+          "name": "hideHud",
+          "params": [],
+          "returnType": "void",
+          "exported": true,
+          "lineCount": 6
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "electron",
+          "specifiers": [
+            "BrowserWindow",
+            "screen"
+          ]
+        }
+      ],
+      "exports": [
+        "showHud",
+        "hideHud"
+      ],
+      "totalLines": 59,
+      "hasStructuralAnalysis": true
+    },
+    "src/main/services/macro/index.ts": {
+      "filePath": "src/main/services/macro/index.ts",
+      "contentHash": "c645f01cfa8fc3e28c602a589947ab2b70dc9facbfb115f3f28fae73c01e00f7",
+      "functions": [
+        {
+          "name": "nextStepId",
+          "params": [],
+          "returnType": "string",
+          "exported": false,
+          "lineCount": 1
+        },
+        {
+          "name": "rawToSteps",
+          "params": [
+            "raw"
+          ],
+          "returnType": "MacroStep[]",
+          "exported": false,
+          "lineCount": 17
+        }
+      ],
+      "classes": [
+        {
+          "name": "MacroService",
+          "methods": [
+            "emit",
+            "init",
+            "applyHotkeys",
+            "beginRecord",
+            "finishRecord",
+            "playCurrent",
+            "invoke",
+            "dispose"
+          ],
+          "properties": [
+            "settings",
+            "attachedPanel",
+            "currentMacro"
+          ],
+          "exported": false,
+          "lineCount": 249
+        }
+      ],
+      "imports": [
+        {
+          "source": "electron",
+          "specifiers": [
+            "dialog"
+          ]
+        },
+        {
+          "source": "node:fs",
+          "specifiers": [
+            "fs"
+          ]
+        },
+        {
+          "source": "../../ipc",
+          "specifiers": [
+            "ToolService"
+          ]
+        },
+        {
+          "source": "../../ipc",
+          "specifiers": [
+            "emitToolEvent"
+          ]
+        },
+        {
+          "source": "../../../shared/types",
+          "specifiers": [
+            "InputEventData"
+          ]
+        },
+        {
+          "source": "../../../shared/macro",
+          "specifiers": [
+            "MacroFile",
+            "MacroSettings",
+            "MacroStep",
+            "WaitColorSpec"
+          ]
+        },
+        {
+          "source": "./recorder",
+          "specifiers": [
+            "startRecording",
+            "stopRecording",
+            "isRecording"
+          ]
+        },
+        {
+          "source": "./player",
+          "specifiers": [
+            "player",
+            "PlayProgress",
+            "PlayResult"
+          ]
+        },
+        {
+          "source": "./picker",
+          "specifiers": [
+            "pickPoint"
+          ]
+        },
+        {
+          "source": "./hud",
+          "specifiers": [
+            "showHud",
+            "hideHud"
+          ]
+        },
+        {
+          "source": "./configStore",
+          "specifiers": [
+            "loadMacroSettings",
+            "saveMacroSettings"
+          ]
+        },
+        {
+          "source": "./hotkeys",
+          "specifiers": [
+            "registerHotkey",
+            "unregisterAll",
+            "unregisterHotkey"
+          ]
+        },
+        {
+          "source": "./store",
+          "specifiers": [
+            "deleteMacro",
+            "listMacros",
+            "saveMacro"
+          ]
+        }
+      ],
+      "exports": [
+        "macroService",
+        "MacroFile",
+        "MacroSettings",
+        "MacroStep",
+        "WaitColorSpec"
+      ],
+      "totalLines": 301,
+      "hasStructuralAnalysis": true
+    },
+    "src/main/services/macro/picker.ts": {
+      "filePath": "src/main/services/macro/picker.ts",
+      "contentHash": "58c142311a868d6bdc14beeee2352d953a40e22c96b15d8fb22f42a8af80278e",
+      "functions": [
+        {
+          "name": "pickPoint",
+          "params": [],
+          "returnType": "Promise<PickResult | null>",
+          "exported": true,
+          "lineCount": 60
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "electron",
+          "specifiers": [
+            "BrowserWindow",
+            "ipcMain",
+            "screen"
+          ]
+        },
+        {
+          "source": "node:fs",
+          "specifiers": [
+            "fs"
+          ]
+        },
+        {
+          "source": "node:path",
+          "specifiers": [
+            "join"
+          ]
+        },
+        {
+          "source": "node:os",
+          "specifiers": [
+            "tmpdir"
+          ]
+        },
+        {
+          "source": "./color",
+          "specifiers": [
+            "grabScreenPng"
+          ]
+        }
+      ],
+      "exports": [
+        "pickPoint"
+      ],
+      "totalLines": 99,
+      "hasStructuralAnalysis": true
+    },
+    "src/main/services/macro/player.ts": {
+      "filePath": "src/main/services/macro/player.ts",
+      "contentHash": "65e78d2074e02321c485a36407128d397040000fba8d8def97d0eb0739fa4033",
+      "functions": [],
+      "classes": [
+        {
+          "name": "Player",
+          "methods": [
+            "isPlaying",
+            "requestStop",
+            "sleepInterruptible",
+            "injectInput",
+            "injectKeyData",
+            "injectMouseData",
+            "releaseHeldKeys",
+            "start"
+          ],
+          "properties": [
+            "stopFlag",
+            "playing",
+            "heldKeys"
+          ],
+          "exported": false,
+          "lineCount": 140
+        }
+      ],
+      "imports": [
+        {
+          "source": "../input/inject",
+          "specifiers": [
+            "injectKey",
+            "injectMouseMove",
+            "injectMouseButton",
+            "injectWheel",
+            "injectText"
+          ]
+        },
+        {
+          "source": "./color",
+          "specifiers": [
+            "waitColor"
+          ]
+        },
+        {
+          "source": "../../../shared/types",
+          "specifiers": [
+            "InputEventData",
+            "KeyEventData",
+            "MouseEventData",
+            "WheelEventData"
+          ]
+        },
+        {
+          "source": "../../../shared/macro",
+          "specifiers": [
+            "MacroFile",
+            "MacroStep"
+          ]
+        }
+      ],
+      "exports": [
+        "player"
+      ],
+      "totalLines": 174,
+      "hasStructuralAnalysis": true
+    },
+    "src/main/services/macro/recorder.ts": {
+      "filePath": "src/main/services/macro/recorder.ts",
+      "contentHash": "7c5d5233024e1c34b838a62143bbeb71d930aff97e6cd160c63f55ee696f6b90",
+      "functions": [
+        {
+          "name": "listener",
+          "params": [
+            "data"
+          ],
+          "returnType": "void",
+          "exported": false,
+          "lineCount": 20
+        },
+        {
+          "name": "startRecording",
+          "params": [
+            "s",
+            "cb"
+          ],
+          "returnType": "boolean",
+          "exported": true,
+          "lineCount": 11
+        },
+        {
+          "name": "stopRecording",
+          "params": [],
+          "returnType": "{ data: InputEventData; time: number }[]",
+          "exported": true,
+          "lineCount": 11
+        },
+        {
+          "name": "isRecording",
+          "params": [],
+          "returnType": "boolean",
+          "exported": true,
+          "lineCount": 3
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "../input/capture",
+          "specifiers": [
+            "captureBus",
+            "startCapture",
+            "stopCapture"
+          ]
+        },
+        {
+          "source": "./hotkeys",
+          "specifiers": [
+            "matchesAnyHotkey"
+          ]
+        },
+        {
+          "source": "../../../shared/types",
+          "specifiers": [
+            "InputEventData",
+            "KeyEventData"
+          ]
+        },
+        {
+          "source": "../../../shared/macro",
+          "specifiers": [
+            "MacroSettings"
+          ]
+        }
+      ],
+      "exports": [
+        "startRecording",
+        "stopRecording",
+        "isRecording"
+      ],
+      "totalLines": 72,
+      "hasStructuralAnalysis": true
+    },
+    "src/main/services/macro/store.ts": {
+      "filePath": "src/main/services/macro/store.ts",
+      "contentHash": "8e7fd5f00dccd23509aa4ffe03bcbbfec354c7916f8c8888e49b9d4ef0a11137",
+      "functions": [
+        {
+          "name": "macroDir",
+          "params": [],
+          "returnType": "string",
+          "exported": false,
+          "lineCount": 3
+        },
+        {
+          "name": "fileNameOf",
+          "params": [
+            "name"
+          ],
+          "returnType": "string",
+          "exported": false,
+          "lineCount": 5
+        },
+        {
+          "name": "ensureDir",
+          "params": [],
+          "returnType": "Promise<void>",
+          "exported": true,
+          "lineCount": 3
+        },
+        {
+          "name": "listMacros",
+          "params": [],
+          "returnType": "Promise<{ filename: string; macro: MacroFile }[]>",
+          "exported": true,
+          "lineCount": 19
+        },
+        {
+          "name": "saveMacro",
+          "params": [
+            "macro",
+            "originalName"
+          ],
+          "returnType": "Promise<string>",
+          "exported": true,
+          "lineCount": 9
+        },
+        {
+          "name": "deleteMacro",
+          "params": [
+            "filename"
+          ],
+          "returnType": "Promise<void>",
+          "exported": true,
+          "lineCount": 3
+        },
+        {
+          "name": "macroPathOf",
+          "params": [
+            "filename"
+          ],
+          "returnType": "string",
+          "exported": true,
+          "lineCount": 3
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "electron",
+          "specifiers": [
+            "app"
+          ]
+        },
+        {
+          "source": "node:fs",
+          "specifiers": [
+            "fs"
+          ]
+        },
+        {
+          "source": "node:path",
+          "specifiers": [
+            "join"
+          ]
+        },
+        {
+          "source": "../../../shared/macro",
+          "specifiers": [
+            "MacroFile"
+          ]
+        }
+      ],
+      "exports": [
+        "ensureDir",
+        "listMacros",
+        "saveMacro",
+        "deleteMacro",
+        "macroPathOf"
+      ],
+      "totalLines": 58,
+      "hasStructuralAnalysis": true
+    },
+    "src/main/services/net/hosts.ts": {
+      "filePath": "src/main/services/net/hosts.ts",
+      "contentHash": "a4670349faf690aa165058a730985cbde7c1f79d3b8cedb526f4fd9fcabbc8ad",
+      "functions": [
+        {
+          "name": "nextConnId",
+          "params": [],
+          "returnType": "string",
+          "exported": false,
+          "lineCount": 1
+        },
+        {
+          "name": "createHost",
+          "params": [
+            "mode",
+            "handlers"
+          ],
+          "returnType": "NetHost",
+          "exported": true,
+          "lineCount": 10
+        }
+      ],
+      "classes": [
+        {
+          "name": "TcpServerHost",
+          "methods": [
+            "constructor",
+            "clientList",
+            "start",
+            "send",
+            "stop"
+          ],
+          "properties": [
+            "mode",
+            "server",
+            "clients"
+          ],
+          "exported": true,
+          "lineCount": 61
+        },
+        {
+          "name": "TcpClientHost",
+          "methods": [
+            "constructor",
+            "start",
+            "send",
+            "stop"
+          ],
+          "properties": [
+            "mode",
+            "socket"
+          ],
+          "exported": true,
+          "lineCount": 50
+        },
+        {
+          "name": "UdpHost",
+          "methods": [
+            "constructor",
+            "start",
+            "send",
+            "stop"
+          ],
+          "properties": [
+            "mode",
+            "socket",
+            "params"
+          ],
+          "exported": true,
+          "lineCount": 51
+        }
+      ],
+      "imports": [
+        {
+          "source": "node:net",
+          "specifiers": [
+            "* as net"
+          ]
+        },
+        {
+          "source": "node:dgram",
+          "specifiers": [
+            "* as dgram"
+          ]
+        },
+        {
+          "source": "../../../shared/net",
+          "specifiers": [
+            "NetMode",
+            "NetParams"
+          ]
+        }
+      ],
+      "exports": [
+        "TcpServerHost",
+        "TcpClientHost",
+        "UdpHost",
+        "createHost"
+      ],
+      "totalLines": 211,
+      "hasStructuralAnalysis": true
+    },
+    "src/main/services/net/index.ts": {
+      "filePath": "src/main/services/net/index.ts",
+      "contentHash": "44d740aad67224bbb9ddc09112db16a5d7a522383b30ab7fd5885f750a57365b",
+      "functions": [],
+      "classes": [
+        {
+          "name": "NetService",
+          "methods": [
+            "emit",
+            "emitStatus",
+            "flush",
+            "invoke",
+            "start",
+            "stop",
+            "send",
+            "dispose"
+          ],
+          "properties": [],
+          "exported": false,
+          "lineCount": 171
+        }
+      ],
+      "imports": [
+        {
+          "source": "../../ipc",
+          "specifiers": [
+            "ToolService"
+          ]
+        },
+        {
+          "source": "../../ipc",
+          "specifiers": [
+            "emitToolEvent"
+          ]
+        },
+        {
+          "source": "../../../shared/net",
+          "specifiers": [
+            "NetConfig",
+            "NetParams"
+          ]
+        },
+        {
+          "source": "../../../shared/net",
+          "specifiers": [
+            "DEFAULT_NET_CONFIG"
+          ]
+        },
+        {
+          "source": "../macro/configStore",
+          "specifiers": [
+            "getSection",
+            "setSection"
+          ]
+        },
+        {
+          "source": "./hosts",
+          "specifiers": [
+            "createHost",
+            "NetHost",
+            "PeerInfo"
+          ]
+        }
+      ],
+      "exports": [
+        "netService"
+      ],
+      "totalLines": 204,
+      "hasStructuralAnalysis": true
+    },
+    "src/main/services/quickcmds/index.ts": {
+      "filePath": "src/main/services/quickcmds/index.ts",
+      "contentHash": "129cff27e859f4398a9c9a6bdfe581052528026e70d1d35b6f0dce4f7615fa72",
+      "functions": [],
+      "classes": [
+        {
+          "name": "QuickCmdsService",
+          "methods": [
+            "invoke",
+            "getConfig",
+            "exportConfig",
+            "importConfig"
+          ],
+          "properties": [],
+          "exported": false,
+          "lineCount": 98
+        }
+      ],
+      "imports": [
+        {
+          "source": "electron",
+          "specifiers": [
+            "dialog"
+          ]
+        },
+        {
+          "source": "node:fs",
+          "specifiers": [
+            "fs"
+          ]
+        },
+        {
+          "source": "iconv-lite",
+          "specifiers": [
+            "iconv"
+          ]
+        },
+        {
+          "source": "../../ipc",
+          "specifiers": [
+            "ToolService"
+          ]
+        },
+        {
+          "source": "../../../shared/term-macro",
+          "specifiers": [
+            "QuickCmdsConfig",
+            "DEFAULT_QUICKCMDS_CONFIG",
+            "QuickCmd",
+            "migrateQuickCmd",
+            "parseMobaMacros"
+          ]
+        },
+        {
+          "source": "../macro/configStore",
+          "specifiers": [
+            "getSection",
+            "setSection"
+          ]
+        }
+      ],
+      "exports": [
+        "quickCmdsService"
+      ],
+      "totalLines": 119,
+      "hasStructuralAnalysis": true
+    },
+    "src/main/services/serial/index.ts": {
+      "filePath": "src/main/services/serial/index.ts",
+      "contentHash": "8ff4fc3118e52cb1bde79a583ebbbeb08119c2ea46dbf7f9a65dad3d5968e0b7",
+      "functions": [
+        {
+          "name": "serialLogDir",
+          "params": [],
+          "returnType": "string",
+          "exported": false,
+          "lineCount": 3
+        },
+        {
+          "name": "fmtLogTime",
+          "params": [
+            "t"
+          ],
+          "returnType": "string",
+          "exported": false,
+          "lineCount": 5
+        }
+      ],
+      "classes": [
+        {
+          "name": "SerialService",
+          "methods": [
+            "emit",
+            "appendLog",
+            "flushLog",
+            "emitStatus",
+            "flush",
+            "invoke",
+            "dispose",
+            "open",
+            "tryOpen",
+            "probeReset",
+            "close",
+            "write",
+            "setFlow",
+            "signals",
+            "saveLog",
+            "setLogDir",
+            "pickFile",
+            "pickDir",
+            "tr",
+            "fileSend",
+            "fileRecv",
+            "fileCancel"
+          ],
+          "properties": [],
+          "exported": false,
+          "lineCount": 606
+        }
+      ],
+      "imports": [
+        {
+          "source": "serialport",
+          "specifiers": [
+            "SerialPort"
+          ]
+        },
+        {
+          "source": "node:string_decoder",
+          "specifiers": [
+            "StringDecoder"
+          ]
+        },
+        {
+          "source": "electron",
+          "specifiers": [
+            "dialog",
+            "app",
+            "shell"
+          ]
+        },
+        {
+          "source": "node:fs",
+          "specifiers": [
+            "fs"
+          ]
+        },
+        {
+          "source": "node:fs/promises",
+          "specifiers": [
+            "FileHandle"
+          ]
+        },
+        {
+          "source": "node:path",
+          "specifiers": [
+            "basename",
+            "dirname",
+            "join"
+          ]
+        },
+        {
+          "source": "../../ipc",
+          "specifiers": [
+            "ToolService"
+          ]
+        },
+        {
+          "source": "../../ipc",
+          "specifiers": [
+            "emitToolEvent"
+          ]
+        },
+        {
+          "source": "../../../shared/serial",
+          "specifiers": [
+            "SerialConfig",
+            "SerialParams",
+            "SerialTransferEvt",
+            "TransferProtocol"
+          ]
+        },
+        {
+          "source": "../../../shared/serial",
+          "specifiers": [
+            "DEFAULT_SERIAL_CONFIG"
+          ]
+        },
+        {
+          "source": "../macro/configStore",
+          "specifiers": [
+            "getSection",
+            "setSection"
+          ]
+        },
+        {
+          "source": "./ymodem",
+          "specifiers": [
+            "ByteQueue",
+            "TransferCancelled",
+            "ymodemRecv",
+            "ymodemSend"
+          ]
+        },
+        {
+          "source": "./zmodem",
+          "specifiers": [
+            "zmodemRecv",
+            "zmodemSend"
+          ]
+        }
+      ],
+      "exports": [
+        "serialService"
+      ],
+      "totalLines": 672,
+      "hasStructuralAnalysis": true
+    },
+    "src/main/services/serial/ymodem.ts": {
+      "filePath": "src/main/services/serial/ymodem.ts",
+      "contentHash": "5584b517bb279ab2fecd8b7b0d9d9ab9352cc4842c47cd64b6e628d1ad274ba2",
+      "functions": [
+        {
+          "name": "crc16",
+          "params": [
+            "buf",
+            "start",
+            "end"
+          ],
+          "returnType": "number",
+          "exported": true,
+          "lineCount": 10
+        },
+        {
+          "name": "block",
+          "params": [
+            "type",
+            "seq",
+            "data",
+            "pad"
+          ],
+          "returnType": "Buffer",
+          "exported": false,
+          "lineCount": 6
+        },
+        {
+          "name": "ymodemSend",
+          "params": [
+            "q",
+            "write",
+            "fileName",
+            "data",
+            "onProgress"
+          ],
+          "returnType": "Promise<void>",
+          "exported": true,
+          "lineCount": 45
+        },
+        {
+          "name": "ymodemRecv",
+          "params": [
+            "q",
+            "write",
+            "onProgress"
+          ],
+          "returnType": "Promise<YmodemIncomingFile[]>",
+          "exported": true,
+          "lineCount": 117
+        }
+      ],
+      "classes": [
+        {
+          "name": "TransferCancelled",
+          "methods": [
+            "constructor"
+          ],
+          "properties": [],
+          "exported": true,
+          "lineCount": 6
+        },
+        {
+          "name": "ByteQueue",
+          "methods": [
+            "feed",
+            "cancel",
+            "waitData",
+            "readByte",
+            "expect",
+            "drain"
+          ],
+          "properties": [
+            "chunks",
+            "waiter",
+            "cancelled"
+          ],
+          "exported": true,
+          "lineCount": 68
+        }
+      ],
+      "imports": [],
+      "exports": [
+        "crc16",
+        "TransferCancelled",
+        "ByteQueue",
+        "ymodemSend",
+        "ymodemRecv"
+      ],
+      "totalLines": 301,
+      "hasStructuralAnalysis": true
+    },
+    "src/main/services/serial/zmodem.ts": {
+      "filePath": "src/main/services/serial/zmodem.ts",
+      "contentHash": "9e8d614512f6d64850e74941cfcf66d89ac52081eb6fdc6fd92413347f3286e9",
+      "functions": [
+        {
+          "name": "waitSession",
+          "params": [
+            "feed",
+            "write",
+            "role",
+            "extra"
+          ],
+          "returnType": "Promise<{ session: any; sentry: any }>",
+          "exported": false,
+          "lineCount": 27
+        },
+        {
+          "name": "zmodemSend",
+          "params": [
+            "feed",
+            "write",
+            "fileName",
+            "data",
+            "onProgress"
+          ],
+          "returnType": "Promise<void>",
+          "exported": true,
+          "lineCount": 36
+        },
+        {
+          "name": "zmodemRecv",
+          "params": [
+            "feed",
+            "write",
+            "onProgress"
+          ],
+          "returnType": "Promise<ZFile[]>",
+          "exported": true,
+          "lineCount": 56
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "zmodem.js",
+          "specifiers": [
+            "Zmodem"
+          ]
+        }
+      ],
+      "exports": [
+        "zmodemSend",
+        "zmodemRecv"
+      ],
+      "totalLines": 149,
+      "hasStructuralAnalysis": true
+    },
+    "src/main/services/ssh/index.ts": {
+      "filePath": "src/main/services/ssh/index.ts",
+      "contentHash": "959c71558f4dc6fa2553b077e3cd0ed8ed1e8c791602c4429a1d8dea70e177b0",
+      "functions": [
+        {
+          "name": "sshLogDir",
+          "params": [],
+          "returnType": "string",
+          "exported": false,
+          "lineCount": 3
+        },
+        {
+          "name": "fmtLogTime",
+          "params": [
+            "t"
+          ],
+          "returnType": "string",
+          "exported": false,
+          "lineCount": 5
+        },
+        {
+          "name": "escapeCtrl",
+          "params": [
+            "s"
+          ],
+          "returnType": "string",
+          "exported": false,
+          "lineCount": 3
+        }
+      ],
+      "classes": [
+        {
+          "name": "SshService",
+          "methods": [
+            "emit",
+            "appendLog",
+            "flushLog",
+            "emitStatus",
+            "flush",
+            "invoke",
+            "dispose",
+            "connect",
+            "setupSession",
+            "close",
+            "write",
+            "resize",
+            "pickKeyFile",
+            "saveLog",
+            "setLogDir"
+          ],
+          "properties": [],
+          "exported": false,
+          "lineCount": 384
+        }
+      ],
+      "imports": [
+        {
+          "source": "ssh2",
+          "specifiers": [
+            "Client",
+            "ClientChannel"
+          ]
+        },
+        {
+          "source": "node:string_decoder",
+          "specifiers": [
+            "StringDecoder"
+          ]
+        },
+        {
+          "source": "electron",
+          "specifiers": [
+            "app",
+            "dialog",
+            "shell"
+          ]
+        },
+        {
+          "source": "node:fs",
+          "specifiers": [
+            "fs"
+          ]
+        },
+        {
+          "source": "node:fs/promises",
+          "specifiers": [
+            "FileHandle"
+          ]
+        },
+        {
+          "source": "node:path",
+          "specifiers": [
+            "dirname",
+            "join"
+          ]
+        },
+        {
+          "source": "../../ipc",
+          "specifiers": [
+            "ToolService"
+          ]
+        },
+        {
+          "source": "../../ipc",
+          "specifiers": [
+            "emitToolEvent"
+          ]
+        },
+        {
+          "source": "../../../shared/ssh",
+          "specifiers": [
+            "SshConfig",
+            "SshParams"
+          ]
+        },
+        {
+          "source": "../../../shared/ssh",
+          "specifiers": [
+            "DEFAULT_SSH_CONFIG"
+          ]
+        },
+        {
+          "source": "../macro/configStore",
+          "specifiers": [
+            "getSection",
+            "setSection"
+          ]
+        }
+      ],
+      "exports": [
+        "sshService"
+      ],
+      "totalLines": 442,
+      "hasStructuralAnalysis": true
+    },
+    "src/main/services/tftp/index.ts": {
+      "filePath": "src/main/services/tftp/index.ts",
+      "contentHash": "a8672910900fac15ca68ae97c1a9bc6dee42552c797d051f2e49835d7cfd67ab",
+      "functions": [
+        {
+          "name": "defaultTftpRoot",
+          "params": [],
+          "returnType": "string",
+          "exported": true,
+          "lineCount": 3
+        },
+        {
+          "name": "defaultConfig",
+          "params": [],
+          "returnType": "TftpConfig",
+          "exported": false,
+          "lineCount": 3
+        }
+      ],
+      "classes": [
+        {
+          "name": "TftpService",
+          "methods": [
+            "bindEvents",
+            "invoke",
+            "dispose"
+          ],
+          "properties": [
+            "servers"
+          ],
+          "exported": false,
+          "lineCount": 75
+        }
+      ],
+      "imports": [
+        {
+          "source": "electron",
+          "specifiers": [
+            "app",
+            "dialog",
+            "shell"
+          ]
+        },
+        {
+          "source": "node:path",
+          "specifiers": [
+            "join"
+          ]
+        },
+        {
+          "source": "../../ipc",
+          "specifiers": [
+            "ToolService"
+          ]
+        },
+        {
+          "source": "../../ipc",
+          "specifiers": [
+            "emitToolEvent"
+          ]
+        },
+        {
+          "source": "../macro/configStore",
+          "specifiers": [
+            "getSection",
+            "setSection"
+          ]
+        },
+        {
+          "source": "./server",
+          "specifiers": [
+            "TftpServer",
+            "TransferInfo"
+          ]
+        }
+      ],
+      "exports": [
+        "defaultTftpRoot",
+        "tftpService"
+      ],
+      "totalLines": 106,
+      "hasStructuralAnalysis": true
+    },
+    "src/main/services/tftp/server.ts": {
+      "filePath": "src/main/services/tftp/server.ts",
+      "contentHash": "b883c4165ad6d6b275158a6c9a55baad2b64f31cb45d35ba00e418422d5bd720",
+      "functions": [
+        {
+          "name": "parseCString",
+          "params": [
+            "buf",
+            "offset"
+          ],
+          "returnType": "{ value: string; next: number } | null",
+          "exported": false,
+          "lineCount": 5
+        },
+        {
+          "name": "parseRequest",
+          "params": [
+            "buf"
+          ],
+          "returnType": "{\n  filename: string\n  mode: string\n  options: Map<string, string>\n} | null",
+          "exported": false,
+          "lineCount": 24
+        },
+        {
+          "name": "safePath",
+          "params": [
+            "root",
+            "filename"
+          ],
+          "returnType": "string | null",
+          "exported": false,
+          "lineCount": 7
+        }
+      ],
+      "classes": [
+        {
+          "name": "Session",
+          "methods": [
+            "constructor",
+            "clampBlksize",
+            "clampTimeout",
+            "start",
+            "onMessage",
+            "onAck",
+            "onData",
+            "sendData",
+            "sendAck",
+            "sendWait",
+            "armTimer",
+            "stopTimer",
+            "complete",
+            "fail",
+            "abort",
+            "cleanup"
+          ],
+          "properties": [
+            "socket",
+            "timer",
+            "retries",
+            "lastPacket",
+            "fd",
+            "blockNum",
+            "transferred",
+            "finished",
+            "info",
+            "blksize",
+            "timeoutMs",
+            "lastSentWasFinal"
+          ],
+          "exported": false,
+          "lineCount": 286
+        },
+        {
+          "name": "TftpServer",
+          "methods": [
+            "running",
+            "start",
+            "onRequest",
+            "stop"
+          ],
+          "properties": [
+            "socket",
+            "sessions",
+            "root",
+            "port"
+          ],
+          "exported": true,
+          "lineCount": 79
+        }
+      ],
+      "imports": [
+        {
+          "source": "dgram",
+          "specifiers": [
+            "createSocket",
+            "RemoteInfo",
+            "Socket"
+          ]
+        },
+        {
+          "source": "node:events",
+          "specifiers": [
+            "EventEmitter"
+          ]
+        },
+        {
+          "source": "node:fs",
+          "specifiers": [
+            "fs"
+          ]
+        },
+        {
+          "source": "node:path",
+          "specifiers": [
+            "resolve",
+            "sep"
+          ]
+        },
+        {
+          "source": "../../../shared/types",
+          "specifiers": [
+            "TransferDir",
+            "TransferInfo"
+          ]
+        }
+      ],
+      "exports": [
+        "TransferDir",
+        "TransferInfo",
+        "TftpServer"
+      ],
+      "totalLines": 441,
+      "hasStructuralAnalysis": true
+    },
+    "src/preload/index.d.ts": {
+      "filePath": "src/preload/index.d.ts",
+      "contentHash": "d8b01a9f361fe3af1f763b8eb143795fae2deecc7a14236090a950746de64a66",
+      "functions": [],
+      "classes": [],
+      "imports": [
+        {
+          "source": "./index",
+          "specifiers": [
+            "DevKitApi"
+          ]
+        }
+      ],
+      "exports": [],
+      "totalLines": 10,
+      "hasStructuralAnalysis": true
+    },
+    "src/preload/index.ts": {
+      "filePath": "src/preload/index.ts",
+      "contentHash": "f0c3b37d61a62f3a74ba68f4fa359aafd9a74e4131856636fe197474c3d6f3e5",
+      "functions": [],
+      "classes": [],
+      "imports": [
+        {
+          "source": "electron",
+          "specifiers": [
+            "contextBridge",
+            "ipcRenderer",
+            "webUtils"
+          ]
+        },
+        {
+          "source": "electron",
+          "specifiers": [
+            "IpcRendererEvent"
+          ]
+        },
+        {
+          "source": "../shared/types",
+          "specifiers": [
+            "ToolEvent",
+            "WinInfo"
+          ]
+        }
+      ],
+      "exports": [],
+      "totalLines": 56,
+      "hasStructuralAnalysis": true
+    },
+    "src/renderer/index.html": {
+      "filePath": "src/renderer/index.html",
+      "contentHash": "d79a2afb6d23ba877c62d3c61252c5f504e0c78e368324252d9028ffef0c4254",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 16,
+      "hasStructuralAnalysis": false
+    },
+    "src/renderer/src/App.vue": {
+      "filePath": "src/renderer/src/App.vue",
+      "contentHash": "e7f9b7c8b5bd002def13d8b444b8b4d37a28a6c41b155a62b508b6e3c1461e82",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 92,
+      "hasStructuralAnalysis": false
+    },
+    "src/renderer/src/components/HomePanel.vue": {
+      "filePath": "src/renderer/src/components/HomePanel.vue",
+      "contentHash": "ad512b7fd8da42560ce0c26dd0c51cf087c8a633b59884b1696d542cb7ad58ae",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 117,
+      "hasStructuralAnalysis": false
+    },
+    "src/renderer/src/components/QuickCmdManager.vue": {
+      "filePath": "src/renderer/src/components/QuickCmdManager.vue",
+      "contentHash": "4bea07af376f37772698b64f9187e6db0f8af457b40dbb73bf5fd11f35a995dd",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 773,
+      "hasStructuralAnalysis": false
+    },
+    "src/renderer/src/components/TabBar.vue": {
+      "filePath": "src/renderer/src/components/TabBar.vue",
+      "contentHash": "580cfe00f374aaa249032be8a503e4643a295a6b280b5a4a3dd4d9d47cb1bb37",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 25,
+      "hasStructuralAnalysis": false
+    },
+    "src/renderer/src/components/TerminalView.vue": {
+      "filePath": "src/renderer/src/components/TerminalView.vue",
+      "contentHash": "1d53606355e30b56fbb44fc8947a94a10d40e935c9fbec384c8e8d37e20d8533",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 515,
+      "hasStructuralAnalysis": false
+    },
+    "src/renderer/src/components/diff/FolderCompareView.vue": {
+      "filePath": "src/renderer/src/components/diff/FolderCompareView.vue",
+      "contentHash": "bf63019159200b35231b724edc5e21935426ff17aaefd0287b72d1f9488ff7b0",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 563,
+      "hasStructuralAnalysis": false
+    },
+    "src/renderer/src/components/diff/HexCompareView.vue": {
+      "filePath": "src/renderer/src/components/diff/HexCompareView.vue",
+      "contentHash": "276eda83450023b85f70d5db643e776888dc912820aab78d5f9095ee39fa0842",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 331,
+      "hasStructuralAnalysis": false
+    },
+    "src/renderer/src/components/diff/TextCompareView.vue": {
+      "filePath": "src/renderer/src/components/diff/TextCompareView.vue",
+      "contentHash": "5c831e9135c198cc9c944eca09bdd48d805a8c3481998d04ca4668383388a94a",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 947,
+      "hasStructuralAnalysis": false
+    },
+    "src/renderer/src/components/diff/folderAlign.ts": {
+      "filePath": "src/renderer/src/components/diff/folderAlign.ts",
+      "contentHash": "0d7f237040777b4956616a05dcf046276b0c75ccc4d0f51356255f5715771ca9",
+      "functions": [
+        {
+          "name": "buildTree",
+          "params": [
+            "entries"
+          ],
+          "returnType": "FolderNode[]",
+          "exported": true,
+          "lineCount": 64
+        },
+        {
+          "name": "flattenTree",
+          "params": [
+            "roots",
+            "collapsed",
+            "onlyDiff"
+          ],
+          "returnType": "FolderNode[]",
+          "exported": true,
+          "lineCount": 26
+        },
+        {
+          "name": "countDescendants",
+          "params": [
+            "n"
+          ],
+          "returnType": "number",
+          "exported": true,
+          "lineCount": 8
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "../../../../shared/diff",
+          "specifiers": [
+            "FolderEntry",
+            "FolderStatus"
+          ]
+        }
+      ],
+      "exports": [
+        "buildTree",
+        "flattenTree",
+        "countDescendants"
+      ],
+      "totalLines": 125,
+      "hasStructuralAnalysis": true
+    },
+    "src/renderer/src/components/termInput.ts": {
+      "filePath": "src/renderer/src/components/termInput.ts",
+      "contentHash": "01065f01ef4484fded18801b465e235641daf8dcf18fe3d3b5284ff173bb7697",
+      "functions": [
+        {
+          "name": "resolveMouseDown",
+          "params": [
+            "p"
+          ],
+          "returnType": "MouseAction",
+          "exported": true,
+          "lineCount": 10
+        },
+        {
+          "name": "resolveTermKey",
+          "params": [
+            "p"
+          ],
+          "returnType": "TermKeyAction",
+          "exported": true,
+          "lineCount": 29
+        },
+        {
+          "name": "resolveGlobalKey",
+          "params": [
+            "p"
+          ],
+          "returnType": "GlobalKeyAction",
+          "exported": true,
+          "lineCount": 15
+        }
+      ],
+      "classes": [],
+      "imports": [],
+      "exports": [
+        "resolveMouseDown",
+        "resolveTermKey",
+        "resolveGlobalKey"
+      ],
+      "totalLines": 100,
+      "hasStructuralAnalysis": true
+    },
+    "src/renderer/src/composables/useDiff.ts": {
+      "filePath": "src/renderer/src/composables/useDiff.ts",
+      "contentHash": "690bba4a7a7af901e1632e01092fbd0f8fee664e2c8035d067df90186ba7522b",
+      "functions": [
+        {
+          "name": "call",
+          "params": [
+            "action",
+            "payload"
+          ],
+          "returnType": "Promise<T>",
+          "exported": false,
+          "lineCount": 3
+        },
+        {
+          "name": "useDiff",
+          "params": [],
+          "exported": true,
+          "lineCount": 17
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "../../../shared/diff",
+          "specifiers": [
+            "DiffEncoding",
+            "FileReadReq",
+            "FileReadRes",
+            "FileWriteReq",
+            "FileWriteRes",
+            "FolderScanReq",
+            "FolderScanRes",
+            "FolderSyncReq",
+            "FolderSyncRes",
+            "HexDiffReq",
+            "HexDiffRes",
+            "TextDiffPayload",
+            "TextDiffRes"
+          ]
+        }
+      ],
+      "exports": [
+        "useDiff",
+        "ENCODINGS"
+      ],
+      "totalLines": 53,
+      "hasStructuralAnalysis": true
+    },
+    "src/renderer/src/composables/useDiffDrop.ts": {
+      "filePath": "src/renderer/src/composables/useDiffDrop.ts",
+      "contentHash": "3525d4bd007b5ddd6116c86e953415c3547dca692cb479b918ec93a72b559a2a",
+      "functions": [
+        {
+          "name": "hasFiles",
+          "params": [
+            "e"
+          ],
+          "returnType": "boolean",
+          "exported": false,
+          "lineCount": 3
+        },
+        {
+          "name": "extractPaths",
+          "params": [
+            "e"
+          ],
+          "returnType": "string[]",
+          "exported": false,
+          "lineCount": 17
+        },
+        {
+          "name": "useDropSides",
+          "params": [
+            "handle"
+          ],
+          "exported": true,
+          "lineCount": 30
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "vue",
+          "specifiers": [
+            "ref"
+          ]
+        }
+      ],
+      "exports": [
+        "useDropSides"
+      ],
+      "totalLines": 70,
+      "hasStructuralAnalysis": true
+    },
+    "src/renderer/src/composables/useSidebarDrag.ts": {
+      "filePath": "src/renderer/src/composables/useSidebarDrag.ts",
+      "contentHash": "e0635ab31564689e0060369e2e890f648126a43862f266d13c5ee9e022692244",
+      "functions": [
+        {
+          "name": "useSidebarDrag",
+          "params": [
+            "width",
+            "onCommit"
+          ],
+          "exported": true,
+          "lineCount": 47
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "vue",
+          "specifiers": [
+            "onMounted",
+            "onUnmounted",
+            "Ref"
+          ]
+        }
+      ],
+      "exports": [
+        "useSidebarDrag"
+      ],
+      "totalLines": 53,
+      "hasStructuralAnalysis": true
+    },
+    "src/renderer/src/composables/useTermMacros.ts": {
+      "filePath": "src/renderer/src/composables/useTermMacros.ts",
+      "contentHash": "bfc1edab7a1a1b098603785f8e18a6a7ba37ea7c0da2dd707e054d2c70f1f074",
+      "functions": [
+        {
+          "name": "useTermMacros",
+          "params": [],
+          "exported": true,
+          "lineCount": 306
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "vue",
+          "specifiers": [
+            "ref"
+          ]
+        },
+        {
+          "source": "../../../shared/term-macro",
+          "specifiers": [
+            "QuickCmd",
+            "QuickCmdStep",
+            "QuickCmdsConfig"
+          ]
+        },
+        {
+          "source": "../../../shared/term-macro",
+          "specifiers": [
+            "DEFAULT_QUICKCMDS_CONFIG",
+            "migrateQuickCmd"
+          ]
+        }
+      ],
+      "exports": [
+        "useTermMacros"
+      ],
+      "totalLines": 332,
+      "hasStructuralAnalysis": true
+    },
+    "src/renderer/src/env.d.ts": {
+      "filePath": "src/renderer/src/env.d.ts",
+      "contentHash": "dfd466b68a9b4caefc0a5e56037553c956b42bf6a4ea8ffd9f9515cd7077040a",
+      "functions": [],
+      "classes": [],
+      "imports": [
+        {
+          "source": "../../preload/index",
+          "specifiers": [
+            "DevKitApi"
+          ]
+        }
+      ],
+      "exports": [],
+      "totalLines": 10,
+      "hasStructuralAnalysis": true
+    },
+    "src/renderer/src/main.ts": {
+      "filePath": "src/renderer/src/main.ts",
+      "contentHash": "2417e97df15b8bdc3750affa267a506641e97db378f549225cd3f99737839f99",
+      "functions": [],
+      "classes": [],
+      "imports": [
+        {
+          "source": "vue",
+          "specifiers": [
+            "createApp"
+          ]
+        },
+        {
+          "source": "pinia",
+          "specifiers": [
+            "createPinia"
+          ]
+        },
+        {
+          "source": "element-plus",
+          "specifiers": [
+            "ElementPlus"
+          ]
+        },
+        {
+          "source": "element-plus/es/locale/lang/zh-cn",
+          "specifiers": [
+            "zhCn"
+          ]
+        },
+        {
+          "source": "@element-plus/icons-vue",
+          "specifiers": [
+            "* as Icons"
+          ]
+        },
+        {
+          "source": "element-plus/dist/index.css",
+          "specifiers": []
+        },
+        {
+          "source": "element-plus/theme-chalk/dark/css-vars.css",
+          "specifiers": []
+        },
+        {
+          "source": "./App.vue",
+          "specifiers": [
+            "App"
+          ]
+        },
+        {
+          "source": "./styles/global.css",
+          "specifiers": []
+        }
+      ],
+      "exports": [],
+      "totalLines": 23,
+      "hasStructuralAnalysis": true
+    },
+    "src/renderer/src/panels/CalculatorPanel.vue": {
+      "filePath": "src/renderer/src/panels/CalculatorPanel.vue",
+      "contentHash": "01b301bcb5474e0aca8578fcecadcc86afde0ebca7ca5ef1b0a70c7b73a0c5f1",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 385,
+      "hasStructuralAnalysis": false
+    },
+    "src/renderer/src/panels/ColorPanel.vue": {
+      "filePath": "src/renderer/src/panels/ColorPanel.vue",
+      "contentHash": "17cdacbadb1fa294bf1acf506de9eed1f5ed67fd24133331f85a4afdc3ac3352",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 155,
+      "hasStructuralAnalysis": false
+    },
+    "src/renderer/src/panels/DiffPanel.vue": {
+      "filePath": "src/renderer/src/panels/DiffPanel.vue",
+      "contentHash": "5b1ce75c9090e0d87cb36700145e1203f6365f5d55b5c4d76555969d597e8793",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 114,
+      "hasStructuralAnalysis": false
+    },
+    "src/renderer/src/panels/EncodingPanel.vue": {
+      "filePath": "src/renderer/src/panels/EncodingPanel.vue",
+      "contentHash": "14545be41457ac17de306fe44d1dbb8724ab27b18e43ee0c3ff090cfd37d8570",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 241,
+      "hasStructuralAnalysis": false
+    },
+    "src/renderer/src/panels/EndianPanel.vue": {
+      "filePath": "src/renderer/src/panels/EndianPanel.vue",
+      "contentHash": "8ffec8d87ea1823a0cf28c2a98c6c7966642edc5c86bfdce1079600e544ae1af",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 267,
+      "hasStructuralAnalysis": false
+    },
+    "src/renderer/src/panels/InputTestPanel.vue": {
+      "filePath": "src/renderer/src/panels/InputTestPanel.vue",
+      "contentHash": "54534467714cf52753330bbf90101728fc94e14c13bb25556bf1804ed5d15af7",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 210,
+      "hasStructuralAnalysis": false
+    },
+    "src/renderer/src/panels/MacroPanel.vue": {
+      "filePath": "src/renderer/src/panels/MacroPanel.vue",
+      "contentHash": "fd56af9d77c20a89c66666a8b6656bf297442bedf2add018b752ddacd20043f0",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 1028,
+      "hasStructuralAnalysis": false
+    },
+    "src/renderer/src/panels/NetPanel.vue": {
+      "filePath": "src/renderer/src/panels/NetPanel.vue",
+      "contentHash": "8351e2c66a6146f8551d014f04f628ececcdd808e35ce62318f2d52e12bde739",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 471,
+      "hasStructuralAnalysis": false
+    },
+    "src/renderer/src/panels/SerialPanel.vue": {
+      "filePath": "src/renderer/src/panels/SerialPanel.vue",
+      "contentHash": "73f990201d19b2e3b11051280d9039c405a3f8ddb1240dbcf62ba509d54bf5d6",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 1001,
+      "hasStructuralAnalysis": false
+    },
+    "src/renderer/src/panels/SshPanel.vue": {
+      "filePath": "src/renderer/src/panels/SshPanel.vue",
+      "contentHash": "5039eae031bd384d2063c5d7ea3403a853ca55bd2482811b82a18ec1e0e072ed",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 574,
+      "hasStructuralAnalysis": false
+    },
+    "src/renderer/src/panels/TftpPanel.vue": {
+      "filePath": "src/renderer/src/panels/TftpPanel.vue",
+      "contentHash": "52b35eb4343e85f6aa0bb54b886836b62942fa3029179e68c148229f0bca3a87",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 235,
+      "hasStructuralAnalysis": false
+    },
+    "src/renderer/src/panels/TimestampPanel.vue": {
+      "filePath": "src/renderer/src/panels/TimestampPanel.vue",
+      "contentHash": "367c1667dbd8fce0742a5abb502bea3b477ddd44731e6a715c04b064b8f649e4",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 236,
+      "hasStructuralAnalysis": false
+    },
+    "src/renderer/src/stores/tabs.ts": {
+      "filePath": "src/renderer/src/stores/tabs.ts",
+      "contentHash": "3fad3d510ec2a5ddac521ae6ee2495261bc782427e4159962a5fbaa577fb20ea",
+      "functions": [],
+      "classes": [],
+      "imports": [
+        {
+          "source": "pinia",
+          "specifiers": [
+            "defineStore"
+          ]
+        },
+        {
+          "source": "@renderer/tools/registry",
+          "specifiers": [
+            "ToolDef"
+          ]
+        }
+      ],
+      "exports": [
+        "useTabStore"
+      ],
+      "totalLines": 56,
+      "hasStructuralAnalysis": true
+    },
+    "src/renderer/src/styles/global.css": {
+      "filePath": "src/renderer/src/styles/global.css",
+      "contentHash": "68d3a99660642e52ff236beea5c9d9f1ad1870cf5fc426ceb1fa1de0f0a97955",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 319,
+      "hasStructuralAnalysis": false
+    },
+    "src/renderer/src/tools/calc/engine.ts": {
+      "filePath": "src/renderer/src/tools/calc/engine.ts",
+      "contentHash": "056d07d25c1b2943bad2b7f162620918de84572cb01a745b1f5a45d2d8ad9840",
+      "functions": [
+        {
+          "name": "maskOf",
+          "params": [
+            "width"
+          ],
+          "returnType": "bigint",
+          "exported": true,
+          "lineCount": 3
+        },
+        {
+          "name": "toSigned",
+          "params": [
+            "value",
+            "width"
+          ],
+          "returnType": "bigint",
+          "exported": true,
+          "lineCount": 6
+        },
+        {
+          "name": "toUnsigned",
+          "params": [
+            "value",
+            "width"
+          ],
+          "returnType": "bigint",
+          "exported": true,
+          "lineCount": 3
+        },
+        {
+          "name": "tokenize",
+          "params": [
+            "src"
+          ],
+          "returnType": "Token[]",
+          "exported": false,
+          "lineCount": 65
+        },
+        {
+          "name": "evalExpr",
+          "params": [
+            "src",
+            "width"
+          ],
+          "returnType": "EvalResult",
+          "exported": true,
+          "lineCount": 15
+        },
+        {
+          "name": "fmtHex",
+          "params": [
+            "v",
+            "width"
+          ],
+          "returnType": "string",
+          "exported": true,
+          "lineCount": 8
+        },
+        {
+          "name": "fmtDec",
+          "params": [
+            "v",
+            "width",
+            "signed"
+          ],
+          "returnType": "string",
+          "exported": true,
+          "lineCount": 3
+        },
+        {
+          "name": "fmtOct",
+          "params": [
+            "v",
+            "width"
+          ],
+          "returnType": "string",
+          "exported": true,
+          "lineCount": 3
+        },
+        {
+          "name": "fmtBin",
+          "params": [
+            "v",
+            "width"
+          ],
+          "returnType": "string",
+          "exported": true,
+          "lineCount": 4
+        },
+        {
+          "name": "byteLayout",
+          "params": [
+            "v",
+            "width"
+          ],
+          "returnType": "{ be: string[]; le: string[] }",
+          "exported": true,
+          "lineCount": 12
+        }
+      ],
+      "classes": [
+        {
+          "name": "Parser",
+          "methods": [
+            "constructor",
+            "peek",
+            "next",
+            "parse",
+            "parseOr",
+            "parseXor",
+            "parseAnd",
+            "parseShift",
+            "parseAdd",
+            "parseMul",
+            "parseUnary",
+            "parsePrimary",
+            "isOp"
+          ],
+          "properties": [
+            "pos"
+          ],
+          "exported": false,
+          "lineCount": 127
+        }
+      ],
+      "imports": [],
+      "exports": [
+        "maskOf",
+        "toSigned",
+        "toUnsigned",
+        "evalExpr",
+        "fmtHex",
+        "fmtDec",
+        "fmtOct",
+        "fmtBin",
+        "byteLayout"
+      ],
+      "totalLines": 296,
+      "hasStructuralAnalysis": true
+    },
+    "src/renderer/src/tools/registry.ts": {
+      "filePath": "src/renderer/src/tools/registry.ts",
+      "contentHash": "d9699b3ae04acc96e8c747800f4e34e225281f914e3da6a4682ddf57c6ab140b",
+      "functions": [
+        {
+          "name": "toolById",
+          "params": [
+            "id"
+          ],
+          "returnType": "ToolDef | undefined",
+          "exported": true,
+          "lineCount": 3
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "vue",
+          "specifiers": [
+            "markRaw"
+          ]
+        },
+        {
+          "source": "vue",
+          "specifiers": [
+            "Component"
+          ]
+        },
+        {
+          "source": "@renderer/panels/InputTestPanel.vue",
+          "specifiers": [
+            "InputTestPanel"
+          ]
+        },
+        {
+          "source": "@renderer/panels/CalculatorPanel.vue",
+          "specifiers": [
+            "CalculatorPanel"
+          ]
+        },
+        {
+          "source": "@renderer/panels/TftpPanel.vue",
+          "specifiers": [
+            "TftpPanel"
+          ]
+        },
+        {
+          "source": "@renderer/panels/MacroPanel.vue",
+          "specifiers": [
+            "MacroPanel"
+          ]
+        },
+        {
+          "source": "@renderer/panels/SerialPanel.vue",
+          "specifiers": [
+            "SerialPanel"
+          ]
+        },
+        {
+          "source": "@renderer/panels/SshPanel.vue",
+          "specifiers": [
+            "SshPanel"
+          ]
+        },
+        {
+          "source": "@renderer/panels/NetPanel.vue",
+          "specifiers": [
+            "NetPanel"
+          ]
+        },
+        {
+          "source": "@renderer/panels/TimestampPanel.vue",
+          "specifiers": [
+            "TimestampPanel"
+          ]
+        },
+        {
+          "source": "@renderer/panels/EncodingPanel.vue",
+          "specifiers": [
+            "EncodingPanel"
+          ]
+        },
+        {
+          "source": "@renderer/panels/EndianPanel.vue",
+          "specifiers": [
+            "EndianPanel"
+          ]
+        },
+        {
+          "source": "@renderer/panels/DiffPanel.vue",
+          "specifiers": [
+            "DiffPanel"
+          ]
+        },
+        {
+          "source": "@renderer/panels/ColorPanel.vue",
+          "specifiers": [
+            "ColorPanel"
+          ]
+        }
+      ],
+      "exports": [
+        "TOOLS",
+        "toolById"
+      ],
+      "totalLines": 166,
+      "hasStructuralAnalysis": true
+    },
+    "src/shared/diff.ts": {
+      "filePath": "src/shared/diff.ts",
+      "contentHash": "40128c6456cf27add94aa15b100c4bc139dd94d03f434c9e83f239a6d73a0493",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 178,
+      "hasStructuralAnalysis": true
+    },
+    "src/shared/hexutil.ts": {
+      "filePath": "src/shared/hexutil.ts",
+      "contentHash": "5acce987c82952a50cd450af06cbcf7a756af7e438a7fa4251349ef3c43f1a1c",
+      "functions": [
+        {
+          "name": "toHex",
+          "params": [
+            "buf"
+          ],
+          "returnType": "string",
+          "exported": true,
+          "lineCount": 5
+        },
+        {
+          "name": "parseHex",
+          "params": [
+            "text"
+          ],
+          "returnType": "Uint8Array | null",
+          "exported": true,
+          "lineCount": 16
+        },
+        {
+          "name": "newlineBytes",
+          "params": [
+            "mode"
+          ],
+          "returnType": "Uint8Array",
+          "exported": true,
+          "lineCount": 12
+        },
+        {
+          "name": "buildPayload",
+          "params": [
+            "mode",
+            "text",
+            "newline"
+          ],
+          "returnType": "Uint8Array | null",
+          "exported": true,
+          "lineCount": 21
+        }
+      ],
+      "classes": [],
+      "imports": [],
+      "exports": [
+        "toHex",
+        "parseHex",
+        "newlineBytes",
+        "buildPayload"
+      ],
+      "totalLines": 69,
+      "hasStructuralAnalysis": true
+    },
+    "src/shared/keynames.ts": {
+      "filePath": "src/shared/keynames.ts",
+      "contentHash": "10563d906b5ab0d7be7ffcf4bd3e31243cf0a8e39a05bafe587e7e525d21542d",
+      "functions": [
+        {
+          "name": "vkName",
+          "params": [
+            "vk"
+          ],
+          "returnType": "string",
+          "exported": true,
+          "lineCount": 6
+        }
+      ],
+      "classes": [],
+      "imports": [],
+      "exports": [
+        "vkName"
+      ],
+      "totalLines": 23,
+      "hasStructuralAnalysis": true
+    },
+    "src/shared/macro.ts": {
+      "filePath": "src/shared/macro.ts",
+      "contentHash": "19dd5e32fa8328e1ebd2ee62965ffbe1eaa6857725fa9890970d31d5e4cdfb27",
+      "functions": [],
+      "classes": [],
+      "imports": [
+        {
+          "source": "./types",
+          "specifiers": [
+            "InputEventData"
+          ]
+        }
+      ],
+      "exports": [
+        "DEFAULT_MACRO_SETTINGS"
+      ],
+      "totalLines": 77,
+      "hasStructuralAnalysis": true
+    },
+    "src/shared/net.ts": {
+      "filePath": "src/shared/net.ts",
+      "contentHash": "d8c045010fd1d65ac3b7520636e6b6bc0bb66f9a7a701ecffa6c2b0cd7edb9a7",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [
+        "DEFAULT_NET_PARAMS",
+        "DEFAULT_NET_CONFIG"
+      ],
+      "totalLines": 34,
+      "hasStructuralAnalysis": true
+    },
+    "src/shared/serial.ts": {
+      "filePath": "src/shared/serial.ts",
+      "contentHash": "28562a957cb6c5689778bd426b7ae0935432675b0bf7ef95ff33ada7602c819a",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [
+        "DEFAULT_SERIAL_PARAMS",
+        "BAUD_RATES",
+        "DEFAULT_SERIAL_CONFIG"
+      ],
+      "totalLines": 75,
+      "hasStructuralAnalysis": true
+    },
+    "src/shared/ssh.ts": {
+      "filePath": "src/shared/ssh.ts",
+      "contentHash": "a5df2571065c235e858e2c6d56c372d0a33b0a71fda47f7881ed0e7f63202cb1",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [
+        "DEFAULT_SSH_PARAMS",
+        "DEFAULT_SSH_CONFIG"
+      ],
+      "totalLines": 55,
+      "hasStructuralAnalysis": true
+    },
+    "src/shared/term-macro.ts": {
+      "filePath": "src/shared/term-macro.ts",
+      "contentHash": "fdbc3fb5b47232cef3dc7419ae40d09cafc961d5f8cd7e828f504a6fdcc76759",
+      "functions": [
+        {
+          "name": "keyName",
+          "params": [
+            "seq"
+          ],
+          "returnType": "string",
+          "exported": true,
+          "lineCount": 3
+        },
+        {
+          "name": "stepPreview",
+          "params": [
+            "st"
+          ],
+          "returnType": "string",
+          "exported": true,
+          "lineCount": 5
+        },
+        {
+          "name": "migrateQuickCmd",
+          "params": [
+            "c"
+          ],
+          "returnType": "QuickCmd",
+          "exported": true,
+          "lineCount": 18
+        },
+        {
+          "name": "unescapeMoba",
+          "params": [
+            "text"
+          ],
+          "returnType": "string",
+          "exported": false,
+          "lineCount": 3
+        },
+        {
+          "name": "parseMobaMacros",
+          "params": [
+            "raw",
+            "group"
+          ],
+          "returnType": "QuickCmd[]",
+          "exported": true,
+          "lineCount": 23
+        },
+        {
+          "name": "parseMobaSteps",
+          "params": [
+            "value"
+          ],
+          "returnType": "QuickCmdStep[]",
+          "exported": false,
+          "lineCount": 37
+        }
+      ],
+      "classes": [],
+      "imports": [],
+      "exports": [
+        "TERM_KEYS",
+        "keyName",
+        "stepPreview",
+        "migrateQuickCmd",
+        "parseMobaMacros",
+        "DEFAULT_QUICKCMDS_CONFIG"
+      ],
+      "totalLines": 224,
+      "hasStructuralAnalysis": true
+    },
+    "src/shared/textdiff.ts": {
+      "filePath": "src/shared/textdiff.ts",
+      "contentHash": "875102a7470f85c67686a80a6444fb20b606b1f923ca42ee3b4481209ac63aea",
+      "functions": [
+        {
+          "name": "normalizeLine",
+          "params": [
+            "line",
+            "opts"
+          ],
+          "returnType": "string",
+          "exported": true,
+          "lineCount": 6
+        },
+        {
+          "name": "isMinorDiff",
+          "params": [
+            "l",
+            "r"
+          ],
+          "returnType": "boolean",
+          "exported": false,
+          "lineCount": 3
+        },
+        {
+          "name": "textDiff",
+          "params": [
+            "a",
+            "b",
+            "opts"
+          ],
+          "returnType": "TextDiffRes",
+          "exported": true,
+          "lineCount": 97
+        },
+        {
+          "name": "inlineSegs",
+          "params": [
+            "left",
+            "right",
+            "opts"
+          ],
+          "returnType": "InlineSeg[]",
+          "exported": true,
+          "lineCount": 17
+        },
+        {
+          "name": "splitLines",
+          "params": [
+            "text"
+          ],
+          "returnType": "string[]",
+          "exported": true,
+          "lineCount": 7
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "diff",
+          "specifiers": [
+            "* as jsdiff"
+          ]
+        },
+        {
+          "source": "./diff",
+          "specifiers": [
+            "DiffOpts",
+            "InlineSeg",
+            "TextDiffRes",
+            "AlignRow"
+          ]
+        }
+      ],
+      "exports": [
+        "normalizeLine",
+        "textDiff",
+        "inlineSegs",
+        "splitLines"
+      ],
+      "totalLines": 160,
+      "hasStructuralAnalysis": true
+    },
+    "src/shared/types.ts": {
+      "filePath": "src/shared/types.ts",
+      "contentHash": "2e2ed6dde754558540656fcc3bd80f0f5bc977cb55e389106de8b72b683930d7",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 108,
+      "hasStructuralAnalysis": true
+    },
+    "src/shared/zmodem-js.d.ts": {
+      "filePath": "src/shared/zmodem-js.d.ts",
+      "contentHash": "9f79d5bbf66f548ae24f67b70498e25a300ae74acbc628b0ac58dfa0e3a37a5b",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 20,
+      "hasStructuralAnalysis": true
+    },
+    "tests/diff-entry.js": {
+      "filePath": "tests/diff-entry.js",
+      "contentHash": "616f597a252507a9326f8a96306d483d20b91de48bcbdbbdbf62da93a1ab404f",
+      "functions": [
+        {
+          "name": "newRoot",
+          "params": [],
+          "exported": false,
+          "lineCount": 5
+        },
+        {
+          "name": "check",
+          "params": [
+            "name",
+            "cond"
+          ],
+          "exported": false,
+          "lineCount": 8
+        },
+        {
+          "name": "stats",
+          "params": [
+            "t"
+          ],
+          "exported": false,
+          "lineCount": 3
+        },
+        {
+          "name": "ioTest",
+          "params": [],
+          "exported": false,
+          "lineCount": 21
+        },
+        {
+          "name": "folderTest",
+          "params": [],
+          "exported": false,
+          "lineCount": 47
+        },
+        {
+          "name": "main",
+          "params": [],
+          "exported": false,
+          "lineCount": 7
+        }
+      ],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 175,
+      "hasStructuralAnalysis": true
+    },
+    "tests/diff-test.js": {
+      "filePath": "tests/diff-test.js",
+      "contentHash": "58b2a8fa87f6f85f79eab6e05c9711d6d435d7672ab641521be2695468381f20",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 11,
+      "hasStructuralAnalysis": true
+    },
+    "tests/logic-entry.js": {
+      "filePath": "tests/logic-entry.js",
+      "contentHash": "21fee45d6bda2bf6a93669baa4966f17adc4255428f1c91754f22206811d9fb6",
+      "functions": [
+        {
+          "name": "check",
+          "params": [
+            "name",
+            "cond"
+          ],
+          "exported": false,
+          "lineCount": 8
+        },
+        {
+          "name": "eqArr",
+          "params": [
+            "a",
+            "b"
+          ],
+          "exported": false,
+          "lineCount": 3
+        }
+      ],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 64,
+      "hasStructuralAnalysis": true
+    },
+    "tests/logic-test.js": {
+      "filePath": "tests/logic-test.js",
+      "contentHash": "1e66c57321c7b2b3d21e7f5cd55455e20531cbd5120372bd74abb50d81ee24f8",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 12,
+      "hasStructuralAnalysis": true
+    },
+    "tests/mobamacro-test.js": {
+      "filePath": "tests/mobamacro-test.js",
+      "contentHash": "45106c5bc8744c211ead5c506409bfe81f6f20d5e3d8f5dd2212c6b4f39a17ec",
+      "functions": [
+        {
+          "name": "check",
+          "params": [
+            "name",
+            "cond"
+          ],
+          "exported": false,
+          "lineCount": 4
+        }
+      ],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 86,
+      "hasStructuralAnalysis": true
+    },
+    "tests/net-test.js": {
+      "filePath": "tests/net-test.js",
+      "contentHash": "80063a0e3b6833c2613fb0fc4da8e2d7a2ade9e93ad08116d15e095079736312",
+      "functions": [
+        {
+          "name": "sleep",
+          "params": [
+            "ms"
+          ],
+          "exported": false,
+          "lineCount": 1
+        },
+        {
+          "name": "check",
+          "params": [
+            "name",
+            "cond"
+          ],
+          "exported": false,
+          "lineCount": 9
+        },
+        {
+          "name": "testTcpServer",
+          "params": [],
+          "exported": false,
+          "lineCount": 47
+        },
+        {
+          "name": "testTcpClient",
+          "params": [],
+          "exported": false,
+          "lineCount": 28
+        },
+        {
+          "name": "testUdp",
+          "params": [],
+          "exported": false,
+          "lineCount": 22
+        },
+        {
+          "name": "testFactory",
+          "params": [],
+          "exported": false,
+          "lineCount": 7
+        },
+        {
+          "name": "main",
+          "params": [],
+          "exported": false,
+          "lineCount": 8
+        }
+      ],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 153,
+      "hasStructuralAnalysis": true
+    },
+    "tests/probes/probe-color.js": {
+      "filePath": "tests/probes/probe-color.js",
+      "contentHash": "7728cb7fe9fe482ad5f2569c90de857725ce0478cad50d3a676b1b1b4ea4f8ba",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 52,
+      "hasStructuralAnalysis": true
+    },
+    "tests/probes/probe-copy-paste.js": {
+      "filePath": "tests/probes/probe-copy-paste.js",
+      "contentHash": "af07d384779f60f12bf8d02597d5d3faf4ed066943c5448cf2400f48ebd03e96",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 86,
+      "hasStructuralAnalysis": true
+    },
+    "tests/probes/probe-ctrl-c.js": {
+      "filePath": "tests/probes/probe-ctrl-c.js",
+      "contentHash": "10268985ab0385dfe1d9f7895479dbfd47daa28122c0dd7d3c23ff41b5a2892f",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 27,
+      "hasStructuralAnalysis": true
+    },
+    "tests/probes/probe-inject.js": {
+      "filePath": "tests/probes/probe-inject.js",
+      "contentHash": "54d4aeabac4d13e5eeafac7da7b39df1ec639a34bbdc9909596aac1a062b94fa",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 64,
+      "hasStructuralAnalysis": true
+    },
+    "tests/probes/probe-serial-main.ts": {
+      "filePath": "tests/probes/probe-serial-main.ts",
+      "contentHash": "0708432ed098c54b4c3cb9bbd7113f51f7cc5b0dc460c40b4c5a24302048a068",
+      "functions": [
+        {
+          "name": "main",
+          "params": [],
+          "returnType": "Promise<void>",
+          "exported": false,
+          "lineCount": 57
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "electron",
+          "specifiers": [
+            "app"
+          ]
+        },
+        {
+          "source": "../src/main/services/serial/index",
+          "specifiers": [
+            "serialService"
+          ]
+        }
+      ],
+      "exports": [],
+      "totalLines": 67,
+      "hasStructuralAnalysis": true
+    },
+    "tests/probes/probe-serial-open.js": {
+      "filePath": "tests/probes/probe-serial-open.js",
+      "contentHash": "f4e2d269e8fededb4c76bdd4d9a9b458bcd629e769bf28b4535fc85e0cb336d0",
+      "functions": [
+        {
+          "name": "withTimeout",
+          "params": [
+            "promise",
+            "ms",
+            "label"
+          ],
+          "exported": false,
+          "lineCount": 6
+        },
+        {
+          "name": "openPort",
+          "params": [
+            "opts"
+          ],
+          "exported": false,
+          "lineCount": 13
+        },
+        {
+          "name": "main",
+          "params": [],
+          "exported": false,
+          "lineCount": 47
+        }
+      ],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 77,
+      "hasStructuralAnalysis": true
+    },
+    "tests/probes/probe-serial.js": {
+      "filePath": "tests/probes/probe-serial.js",
+      "contentHash": "8ffdf3c3e46109b3913318fcda257d9eb8363639ebe238eb00f42b80e61295a4",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 28,
+      "hasStructuralAnalysis": true
+    },
+    "tests/probes/probe-xterm-search.js": {
+      "filePath": "tests/probes/probe-xterm-search.js",
+      "contentHash": "3f62fa23132620dd0b39fc715562ffb89a900d34576935846fca96dbc39f09e3",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 55,
+      "hasStructuralAnalysis": true
+    },
+    "tests/term-entry.js": {
+      "filePath": "tests/term-entry.js",
+      "contentHash": "8d95c1fe8fcd40832dc099da96eb50efce3847ff91285ed23c98bc0a53362c6b",
+      "functions": [
+        {
+          "name": "check",
+          "params": [
+            "name",
+            "cond"
+          ],
+          "exported": false,
+          "lineCount": 8
+        }
+      ],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 70,
+      "hasStructuralAnalysis": true
+    },
+    "tests/term-test.js": {
+      "filePath": "tests/term-test.js",
+      "contentHash": "5215491c4a11d28c10940db95cf8391fded099e490f3249924a1c671e433215b",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 12,
+      "hasStructuralAnalysis": true
+    },
+    "tests/tftp-test.js": {
+      "filePath": "tests/tftp-test.js",
+      "contentHash": "3bae2a2656a46a9e75404511eaf5ca24afa8ffd4cc2c318a6680a884b19431bc",
+      "functions": [
+        {
+          "name": "assert",
+          "params": [
+            "cond",
+            "msg"
+          ],
+          "exported": false,
+          "lineCount": 7
+        },
+        {
+          "name": "makeClient",
+          "params": [],
+          "exported": false,
+          "lineCount": 3
+        },
+        {
+          "name": "send",
+          "params": [
+            "sock",
+            "buf"
+          ],
+          "exported": false,
+          "lineCount": 3
+        },
+        {
+          "name": "rrqWithOpts",
+          "params": [
+            "filename",
+            "blksize"
+          ],
+          "exported": false,
+          "lineCount": 6
+        },
+        {
+          "name": "rrqPlain",
+          "params": [
+            "filename"
+          ],
+          "exported": false,
+          "lineCount": 3
+        },
+        {
+          "name": "wrqWithOpts",
+          "params": [
+            "filename",
+            "blksize",
+            "tsize"
+          ],
+          "exported": false,
+          "lineCount": 6
+        },
+        {
+          "name": "download",
+          "params": [
+            "filename",
+            "blksize"
+          ],
+          "exported": false,
+          "lineCount": 38
+        },
+        {
+          "name": "upload",
+          "params": [
+            "filename",
+            "data",
+            "blksize"
+          ],
+          "exported": false,
+          "lineCount": 49
+        },
+        {
+          "name": "main",
+          "params": [],
+          "exported": false,
+          "lineCount": 56
+        }
+      ],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 212,
+      "hasStructuralAnalysis": true
+    },
+    "tests/ymodem-test.js": {
+      "filePath": "tests/ymodem-test.js",
+      "contentHash": "fa6b6d2de6f28eaac721139896c2a5078e00f3b955ae4b9575d6fecac4800ed2",
+      "functions": [
+        {
+          "name": "check",
+          "params": [
+            "name",
+            "cond"
+          ],
+          "exported": false,
+          "lineCount": 4
+        },
+        {
+          "name": "buildBlock",
+          "params": [
+            "type",
+            "seq",
+            "data",
+            "pad"
+          ],
+          "exported": false,
+          "lineCount": 13
+        },
+        {
+          "name": "sleep",
+          "params": [
+            "ms"
+          ],
+          "exported": false,
+          "lineCount": 1
+        },
+        {
+          "name": "testCrc",
+          "params": [],
+          "exported": false,
+          "lineCount": 5
+        },
+        {
+          "name": "testSend",
+          "params": [],
+          "exported": false,
+          "lineCount": 49
+        },
+        {
+          "name": "testRecv",
+          "params": [],
+          "exported": false,
+          "lineCount": 60
+        },
+        {
+          "name": "testCancel",
+          "params": [],
+          "exported": false,
+          "lineCount": 12
+        }
+      ],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 181,
+      "hasStructuralAnalysis": true
+    },
+    "tests/zmodem-test.js": {
+      "filePath": "tests/zmodem-test.js",
+      "contentHash": "aaca27fb431d9f170a955fe63f5e6962c1fcbde6eee0c88200c58a8e1a401aa7",
+      "functions": [
+        {
+          "name": "check",
+          "params": [
+            "name",
+            "cond"
+          ],
+          "exported": false,
+          "lineCount": 4
+        },
+        {
+          "name": "makePipe",
+          "params": [],
+          "exported": false,
+          "lineCount": 14
+        },
+        {
+          "name": "toU8",
+          "params": [
+            "buf"
+          ],
+          "exported": false,
+          "lineCount": 1
+        },
+        {
+          "name": "toArr",
+          "params": [
+            "buf"
+          ],
+          "exported": false,
+          "lineCount": 1
+        },
+        {
+          "name": "testSend",
+          "params": [],
+          "exported": false,
+          "lineCount": 33
+        },
+        {
+          "name": "testRecv",
+          "params": [],
+          "exported": false,
+          "lineCount": 45
+        },
+        {
+          "name": "testRecvMulti",
+          "params": [],
+          "exported": false,
+          "lineCount": 42
+        }
+      ],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 178,
+      "hasStructuralAnalysis": true
+    },
+    "tsconfig.json": {
+      "filePath": "tsconfig.json",
+      "contentHash": "7d31dbb684d8fb3e73507969f42c0b8518ec710ffd64c1a43f401fc78ca1b775",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 8,
+      "hasStructuralAnalysis": false
+    },
+    "tsconfig.node.json": {
+      "filePath": "tsconfig.node.json",
+      "contentHash": "17ad94b20f31f283a772a8a97e629aedae633f85cfe07a34ec84b2e6f8f4034e",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 17,
+      "hasStructuralAnalysis": false
+    },
+    "tsconfig.web.json": {
+      "filePath": "tsconfig.web.json",
+      "contentHash": "cdc8c475b30e9122a7c36448572d4378079cc452ae5772d2aba83d0b1a239e0c",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 23,
+      "hasStructuralAnalysis": false
+    }
+  }
+}

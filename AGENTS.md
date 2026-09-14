@@ -29,6 +29,8 @@
  → 用户确认后打包（见下）
 ```
 
+**同步 `docs/spec.md`**：每次新增或修改了功能需求 / 非功能需求，必须同步修正 `docs/spec.md`（对照当前设计检查过时条目，递增文档版本号与日期），再进入 typecheck/打包流程。改代码但没改需求的（纯 bug 修复、重构、性能优化）不用动 spec。
+
 **测试要求**：新增/修改可判定的交互逻辑时，先抽成纯函数模块（参照 `termInput.ts`），并在 `tests/` 加对应 `*-entry.js` + `*-test.js`（esbuild 打包后 node 跑，参照 `term-test.js`），再挂进 `package.json` 的 `test` 链。
 
 ## 测试套件清单（`npm test` 依次执行）
@@ -36,6 +38,7 @@
 | 脚本 | 覆盖 |
 |---|---|
 | `tests/term-test.js` | 终端鼠标复制粘贴 / Ctrl+C/V / 查找模式退出判定（termInput.ts） |
+| `tests/logtext-test.js` | 日志文本清洗（logtext.ts：剥 ANSI / 换行归一 / 跨批 ESC 切分 / 时间戳） |
 | `tests/diff-test.js` | 文本/十六进制/文件夹 diff 引擎 + io 多编码 |
 | `tests/logic-test.js` | hexutil + 程序员计算器 |
 | `tests/mobamacro-test.js` | MobaXterm 宏导入解析 |

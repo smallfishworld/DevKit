@@ -179,7 +179,7 @@ npx electron tests/probes/probe-color.js    # desktopCapturer 像素读取探针
 
 ## 贡献
 
-欢迎 issue / PR。改动请保证 `npm run typecheck` 与 `npm test` 通过；涉及 UI 交互的改动请附操作说明或截图。
+欢迎 issue / PR。改动请保证 `npm run typecheck` 与 `npm test` 通过
 
 ## License
 
