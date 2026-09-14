@@ -13,7 +13,8 @@
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
     "test": "node tests/term-test.js && node tests/diff-test.js && node tests/logic-test.js && node tests/mobamacro-test.js && node tests/net-test.js && node tests/tftp-test.js && node tests/ymodem-test.js && node tests/zmodem-test.js",
     "dist": "npm run build && electron-builder --win",
-    "dist:dir": "npm run build && electron-builder --dir"
+    "dist:dir": "npm run build && electron-builder --dir",
+    "dist:zip": "npm run build && electron-builder --win zip --x64"
   },
   "dependencies": {
     "@element-plus/icons-vue": "^2.3.2",
@@ -62,6 +63,7 @@
       "node_modules/@serialport/**"
     ],
     "win": {
+      "artifactName": "DevKit-${version}-win-${arch}.${ext}",
       "target": [
         {
           "target": "dir",
@@ -71,6 +73,12 @@
         },
         {
           "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
           "arch": [
             "x64"
           ]

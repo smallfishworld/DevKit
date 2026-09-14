@@ -44,12 +44,18 @@ npm run dev
 > ELECTRON_MIRROR="https://npmmirror.com/mirrors/electron/" npm install
 > ```
 
-### 打包（portable 单文件 + 免安装目录）
+### 打包（portable 单文件 + ZIP 解压版 + 免安装目录）
 
 ```bash
 npm run dist:dir   # 目录版 → release/win-unpacked/DevKit.exe
-npm run dist       # portable 单文件 → release/DevKit-<版本>-portable.exe
+npm run dist:zip   # ZIP 解压版 → release/DevKit-<版本>-win-x64.zip
+npm run dist       # 同时生成 portable 单文件、ZIP 解压版和目录版
 ```
+
+发布包说明：
+
+- `DevKit-<版本>-portable.exe`：单文件便携版，下载后直接运行。
+- `DevKit-<版本>-win-x64.zip`：Windows x64 解压版，解压后运行 `DevKit.exe`，推荐长期使用。
 
 国内网络可用镜像拉取打包器二进制：
 
