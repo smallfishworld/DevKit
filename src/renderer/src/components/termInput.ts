@@ -3,21 +3,21 @@
  * 行为规格：
  * - 左键：有选区 → 复制；无选区 → 无操作
  * - 右键：粘贴
- * - 查找条打开时点击终端：退出查找（清除命中高亮/选区，恢复普通交互）；右键同时粘贴
+ * - 查找条打开时点击终端：行为与常规模式一致（选区抑制由 TerminalView 内部处理）；关闭查找靠 Esc / 关闭按钮
  * - Ctrl+C：有选区 → 复制；无选区 → 放行给 xterm 发 SIGINT(\x03)
  * - Ctrl+V：粘贴
  * - Ctrl+= / Ctrl+- / Ctrl+0：缩放；Ctrl+F：打开查找
  * - 全局兜底（焦点不在输入框）：Ctrl+终端控制键作为终端输入发出；Ctrl+C 有选区时复制
  */
 
-export type MouseAction = 'copy' | 'paste' | 'exit-search' | 'exit-search-paste' | 'none'
+export type MouseAction = 'copy' | 'paste' | 'none'
 
 export function resolveMouseDown(p: {
-  searchOpen: boolean
   button: number
   hasSelection: boolean
 }): MouseAction {
-  if (p.searchOpen) return p.button === 2 ? 'exit-search-paste' : 'exit-search'
+  // 查找条打开时点击终端不改变鼠标行为（选区抑制由 TerminalView 内部处理）。
+  // 关闭查找由 Esc / 查找框关闭按钮负责，避免用户点回终端滚动时搜索框消失。
   if (p.button === 0) return p.hasSelection ? 'copy' : 'none'
   if (p.button === 2) return 'paste'
   return 'none'

@@ -13,17 +13,12 @@ function check(name, cond) {
   }
 }
 
-console.log('== resolveMouseDown（鼠标复制粘贴） ==')
-// 常规模式
-check('左键+有选区 → 复制', resolveMouseDown({ searchOpen: false, button: 0, hasSelection: true }) === 'copy')
-check('左键+无选区 → 无操作', resolveMouseDown({ searchOpen: false, button: 0, hasSelection: false }) === 'none')
-check('右键 → 粘贴（无论有无选区）', resolveMouseDown({ searchOpen: false, button: 2, hasSelection: true }) === 'paste')
-check('右键 → 粘贴（无选区）', resolveMouseDown({ searchOpen: false, button: 2, hasSelection: false }) === 'paste')
-check('中键 → 无操作', resolveMouseDown({ searchOpen: false, button: 1, hasSelection: true }) === 'none')
-// 查找模式：点击终端退出查找
-check('查找中左键 → 退出查找', resolveMouseDown({ searchOpen: true, button: 0, hasSelection: false }) === 'exit-search')
-check('查找中左键+有选区 → 仍退出查找（不复制命中内容）', resolveMouseDown({ searchOpen: true, button: 0, hasSelection: true }) === 'exit-search')
-check('查找中右键 → 退出查找并粘贴', resolveMouseDown({ searchOpen: true, button: 2, hasSelection: false }) === 'exit-search-paste')
+console.log('== resolveMouseDown（鼠标复制粘贴；查找打开时行为不变） ==')
+check('左键+有选区 → 复制', resolveMouseDown({ button: 0, hasSelection: true }) === 'copy')
+check('左键+无选区 → 无操作', resolveMouseDown({ button: 0, hasSelection: false }) === 'none')
+check('右键 → 粘贴（无论有无选区）', resolveMouseDown({ button: 2, hasSelection: true }) === 'paste')
+check('右键 → 粘贴（无选区）', resolveMouseDown({ button: 2, hasSelection: false }) === 'paste')
+check('中键 → 无操作', resolveMouseDown({ button: 1, hasSelection: true }) === 'none')
 
 console.log('== resolveTermKey（终端内按键） ==')
 // 非 keydown / 非 Ctrl 一律放行

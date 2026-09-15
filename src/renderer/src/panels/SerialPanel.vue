@@ -10,6 +10,7 @@ import {
   FolderOpened,
   Plus,
   Refresh,
+  Search,
   UploadFilled
 } from '@element-plus/icons-vue'
 import TerminalView from '@renderer/components/TerminalView.vue'
@@ -452,6 +453,11 @@ function stopLoop(): void {
 }
 
 // ---------- 终端 ----------
+/** 工具栏「查找」按钮：展开终端查找栏（等效 Ctrl+F） */
+function openTermSearch(): void {
+  termView.value?.openSearch()
+}
+
 function clearTerm(): void {
   // 清屏同时清内存流水并解除溢出锁定（先存日志再清，否则清掉的内容不可再导出）
   ringBuf.length = 0
@@ -681,6 +687,7 @@ async function deleteSession(idx: number): Promise<void> {
           <el-tooltip content="每行前显示本地时间 [HH:MM:SS.mmm]，与日志落盘格式一致" placement="top">
             <el-checkbox v-model="showTime" size="small" @change="persistConfig">时间戳</el-checkbox>
           </el-tooltip>
+          <el-button size="small" text :icon="Search" title="查找（Ctrl+F）" @click="openTermSearch">查找</el-button>
           <el-button size="small" text @click="clearTerm">清空</el-button>
           <el-button size="small" text :icon="Download" @click="saveLog">存日志</el-button>
           <el-dropdown trigger="click" @command="(cmd: string) => (cmd === 'set' ? setLogDir() : openLogDir())">

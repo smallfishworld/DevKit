@@ -10,7 +10,8 @@ import {
   FolderOpened,
   Key,
   Lock,
-  Plus
+  Plus,
+  Search
 } from '@element-plus/icons-vue'
 import TerminalView from '@renderer/components/TerminalView.vue'
 import QuickCmdManager from '@renderer/components/QuickCmdManager.vue'
@@ -222,6 +223,11 @@ function onTermResize(size: { cols: number; rows: number }): void {
 }
 
 // ---------- 终端工具栏 ----------
+/** 工具栏「查找」按钮：展开终端查找栏（等效 Ctrl+F） */
+function openTermSearch(): void {
+  termView.value?.openSearch()
+}
+
 function clearTerm(): void {
   // 清屏同时清内存流水并解除溢出锁定（先存日志再清，否则清掉的内容不可再导出）
   ringBuf.length = 0
@@ -452,6 +458,7 @@ async function pickKeyFile(): Promise<void> {
               <el-option v-for="s in TERM_SIZES" :key="s" :value="s" :label="String(s)" />
             </el-select>
           </el-tooltip>
+          <el-button size="small" text :icon="Search" title="查找（Ctrl+F）" @click="openTermSearch">查找</el-button>
           <el-button size="small" text @click="clearTerm">清空</el-button>
           <el-tooltip content="每行前显示本地时间 [HH:MM:SS.mmm]，与日志落盘格式一致" placement="top">
             <el-checkbox v-model="showTime" size="small" @change="persistConfig">时间戳</el-checkbox>

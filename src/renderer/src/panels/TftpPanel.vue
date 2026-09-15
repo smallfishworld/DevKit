@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue'
+import { onMounted, onUnmounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Folder, FolderOpened } from '@element-plus/icons-vue'
 import type { TransferInfo } from '../../../shared/types'
+import { useTabStore } from '@renderer/stores/tabs'
 
 const props = defineProps<{ panelId: string }>()
+const tabStore = useTabStore()
 
 const FIREWALL_HINT =
   '设备连不上时请放行 Windows 防火墙，管理员运行：netsh advfirewall firewall add rule ' +
@@ -21,6 +23,15 @@ const starting = ref(false)
 const logs = ref<{ line: string; time: number }[]>([])
 const transfers = ref<TransferInfo[]>([])
 const transferMap = new Map<number, TransferInfo>()
+
+/** 标签页随端口与绑定 IP 命名，便于多个 TFTP 实例区分 */
+watch(
+  [port, address],
+  () => {
+    tabStore.rename(props.panelId, `TFTP:${address.value}:${port.value}`)
+  },
+  { immediate: true }
+)
 
 onMounted(async () => {
   // 读取上次使用的端口/根目录/绑定 IP（无保存记录时服务端返回默认值）

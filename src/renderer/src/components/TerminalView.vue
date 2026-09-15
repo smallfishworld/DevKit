@@ -95,6 +95,18 @@ onMounted(() => {
   searchAddon = new SearchAddon()
   term.loadAddon(searchAddon)
   searchAddon.onDidChangeResults(onSearchResults)
+  // 查找打开期间用户点击终端后锁定选区操作：SearchAddon 在每次终端写入后会延时
+  // findPrevious(incremental) 重新 select 命中项，把用户刚拖出的手动选区顶掉。
+  // 锁定期间 addon 的 select/clearSelection 变为空操作（高亮装饰不受影响），
+  // 回到查找框触发 doSearch 时解锁，命中导航恢复正常。
+  const rawSelect = term.select.bind(term)
+  const rawClearSelection = term.clearSelection.bind(term)
+  term.select = (col: number, row: number, length: number): void => {
+    if (!selectionLocked) rawSelect(col, row, length)
+  }
+  term.clearSelection = (): void => {
+    if (!selectionLocked) rawClearSelection()
+  }
   term.open(termBox.value)
   fitAddon.fit()
 
@@ -127,11 +139,14 @@ onMounted(() => {
   resizeObserver.observe(termBox.value)
   termBox.value.addEventListener('mousedown', onMousedown, true)
   termBox.value.addEventListener('contextmenu', onContextmenu, true)
-  // 查找条打开时点击空白处（查找条以外任意位置）自动关闭
-  document.addEventListener('mousedown', onDocMousedown, true)
   // Ctrl+= / Ctrl+- / Ctrl+0 缩放（拦截，不发给远端）；Ctrl+F 打开搜索
   // Ctrl+C 有选区时复制、无选区时照旧作为中断信号；Ctrl+V 粘贴（判定逻辑见 termInput.ts）
   term.attachCustomKeyEventHandler((ev) => {
+    // 查找打开时焦点在终端按 Esc：关闭查找（不拦截会把 \x1b 发给远端）
+    if (searchOpen.value && ev.type === 'keydown' && ev.key === 'Escape') {
+      closeSearch()
+      return false
+    }
     const act = resolveTermKey({
       type: ev.type,
       ctrlKey: ev.ctrlKey,
@@ -177,7 +192,6 @@ onMounted(() => {
 onUnmounted(() => {
   window.removeEventListener('keydown', onGlobalKeydown, true)
   document.removeEventListener('visibilitychange', onVisibilityChange)
-  document.removeEventListener('mousedown', onDocMousedown, true)
   termBox.value?.removeEventListener('wheel', onWheel)
   termBox.value?.removeEventListener('mousedown', onMousedown, true)
   termBox.value?.removeEventListener('contextmenu', onContextmenu, true)
@@ -196,19 +210,17 @@ onUnmounted(() => {
 // 本组件的监听在捕获阶段先于 xterm 执行，才能读到点击前的选区
 function onMousedown(e: MouseEvent): void {
   if (!term) return
+  const hasSelection = !!term.getSelection()
   const act = resolveMouseDown({
-    searchOpen: searchOpen.value,
     button: e.button,
-    hasSelection: !!term.getSelection()
+    hasSelection
   })
+  // 查找打开时点击终端：锁定选区操作，阻止 addon 的延时重选把选区/视口拉回命中处，
+  // 用户的手动选区与复制粘贴不受影响；高亮装饰保留。回到查找框触发查找时解锁。
+  if (searchOpen.value) {
+    selectionLocked = true
+  }
   switch (act) {
-    case 'exit-search':
-    case 'exit-search-paste':
-      // 查找打开期间点击终端 = 退出查找：addon 在每次终端输出后会自动重新选中命中项，
-      // 手动选区会被它顶掉、选区光标跳回命中处，复制粘贴因此失效
-      closeSearch()
-      if (act === 'exit-search-paste') pasteFromClipboard()
-      return
     case 'copy':
       // 捕获阶段选区尚在（xterm 随后会清空选区开始新选择）
       void window.api.win.writeClipboard(term.getSelection())
@@ -300,7 +312,8 @@ const searchOpen = ref(false)
 const searchTerm = ref('')
 const searchInfo = ref('')
 const searchInput = ref<HTMLInputElement | null>(null)
-const searchBarEl = ref<HTMLElement | null>(null)
+/** 查找打开期间点击终端后置位：抑制 addon 偷换选区，doSearch 时复位 */
+let selectionLocked = false
 
 function onSearchResults(r: { resultCount: number; resultIndex: number }): void {
   // 无结果或结果未变化时不显示计数
@@ -319,27 +332,24 @@ function openSearch(): void {
   if (searchTerm.value) doSearch(true)
 }
 
-function closeSearch(refocus = true): void {
-  searchOpen.value = false
-  // 重建 SearchAddon：其内部 200ms 延时重选定时器（MutableDisposable）随 dispose 取消。
-  // 否则刷屏串口上关闭查找后仍可能补触发一次 findPrevious→clearSelection，
-  // 把用户刚做的选区清掉——这正是「复制粘贴偶现失效」的根因。
-  if (term && searchAddon) {
-    searchAddon.dispose()
-    searchAddon = new SearchAddon()
-    term.loadAddon(searchAddon)
-    searchAddon.onDidChangeResults(onSearchResults)
-  }
-  term?.clearSelection()
-  if (refocus) term?.focus()
+/** 重建 SearchAddon：dispose 时一并取消其内部 200ms 延时重选定时器
+ *  （onWriteParsed 后它会 findPrevious(incremental) 重新选中命中项，
+ *  把用户刚做的选区顶掉、光标跳回命中处——复制粘贴因此失效）。 */
+function resetSearchAddon(): void {
+  if (!term || !searchAddon) return
+  searchAddon.dispose()
+  searchAddon = new SearchAddon()
+  term.loadAddon(searchAddon)
+  searchAddon.onDidChangeResults(onSearchResults)
 }
 
-/** 点击查找条以外任意位置（终端、工具栏、空白处）自动关闭查找 */
-function onDocMousedown(e: MouseEvent): void {
-  if (!searchOpen.value) return
-  const bar = searchBarEl.value
-  if (bar && e.target instanceof Node && bar.contains(e.target)) return
-  closeSearch(false)
+function closeSearch(refocus = true): void {
+  searchOpen.value = false
+  // 先解锁再清选区：锁定期间 clearSelection 被包装为空操作，不复位会清不掉
+  selectionLocked = false
+  resetSearchAddon()
+  term?.clearSelection()
+  if (refocus) term?.focus()
 }
 
 const SEARCH_DECORATIONS = {
@@ -354,6 +364,8 @@ const SEARCH_DECORATIONS = {
 }
 
 function doSearch(next: boolean): void {
+  // 用户主动触发查找（输入/Enter/↑/↓）时解除选区锁定，命中导航恢复正常
+  selectionLocked = false
   // 关键词被清空时也要清除查找高亮与选区，否则「删除后仍在查找」
   if (!searchTerm.value) {
     if (searchAddon) searchAddon.clearDecorations()
@@ -423,12 +435,12 @@ function focus(): void {
   term?.focus()
 }
 
-defineExpose({ write, info, clear, focus })
+defineExpose({ write, info, clear, focus, openSearch })
 </script>
 
 <template>
   <div class="term-wrap">
-    <div v-if="searchOpen" ref="searchBarEl" class="search-bar">
+    <div v-if="searchOpen" class="search-bar">
       <input
         ref="searchInput"
         v-model="searchTerm"
