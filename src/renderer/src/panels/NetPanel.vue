@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, reactive, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Connection, Delete, Promotion } from '@element-plus/icons-vue'
 import type { NetConfig, NetMode, NetParams } from '../../../shared/net'
 import { DEFAULT_NET_PARAMS } from '../../../shared/net'
+import { useTabStore } from '@renderer/stores/tabs'
 
 const props = defineProps<{ panelId: string }>()
+const tabStore = useTabStore()
 
 interface PeerInfo {
   id: string
@@ -52,6 +54,21 @@ const loopPeriod = ref(1000)
 let loopTimer: ReturnType<typeof setInterval> | null = null
 
 let unsubs: Array<() => void> = []
+
+/** 标签页随模式与地址命名：网络·TCP服务端:9000 / 网络·TCP客户端 10.0.0.1:9000 / 网络·UDP:9000 */
+watch(
+  params,
+  () => {
+    const label =
+      params.mode === 'tcp-server'
+        ? `网络·TCP服务端:${params.localPort}`
+        : params.mode === 'tcp-client'
+          ? `网络·TCP客户端 ${params.host}:${params.port}`
+          : `网络·UDP:${params.localPort}`
+    tabStore.rename(props.panelId, label)
+  },
+  { deep: true, immediate: true }
+)
 
 const modeLabel = computed(
   () => ({ 'tcp-server': 'TCP 服务端', 'tcp-client': 'TCP 客户端', udp: 'UDP' })[activeMode.value]

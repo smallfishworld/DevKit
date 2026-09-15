@@ -12,6 +12,7 @@ import EncodingPanel from '@renderer/panels/EncodingPanel.vue'
 import EndianPanel from '@renderer/panels/EndianPanel.vue'
 import DiffPanel from '@renderer/panels/DiffPanel.vue'
 import ColorPanel from '@renderer/panels/ColorPanel.vue'
+import BridgePanel from '@renderer/panels/BridgePanel.vue'
 
 /** 工具定义：渲染端注册表，主进程侧服务以同 id 注册 */
 export interface ToolDef {
@@ -151,6 +152,16 @@ const ALL_TOOLS: ToolDef[] = [
     component: markRaw(ColorPanel),
     singleton: true,
     phase: 'M5',
+    ready: true
+  },
+  {
+    id: 'bridge',
+    name: '串口TCP桥接',
+    icon: 'Switch',
+    description: '8 通道串口 ⇄ TCP 透传 + 远程管理',
+    component: markRaw(BridgePanel),
+    singleton: false,
+    phase: 'M6',
     ready: true
   }
 ]
