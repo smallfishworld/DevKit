@@ -25,8 +25,10 @@ const props = withDefaults(
     localEcho?: boolean
     /** 显示时间戳：每批接收数据前插灰色本地时间 [HH:MM:SS.mmm]（与日志落盘格式一致） */
     showTime?: boolean
+    /** 回滚行数上限（可滚回查看的历史行数）；MobaXterm 默认 360000，取 500000 留余量 */
+    scrollback?: number
   }>(),
-  { font: 'Consolas', fontSize: 13, localEcho: false, showTime: false }
+  { font: 'Consolas', fontSize: 13, localEcho: false, showTime: false, scrollback: 500000 }
 )
 
 const emit = defineEmits<{
@@ -47,9 +49,33 @@ let fitAddon: FitAddon | null = null
 let searchAddon: SearchAddon | null = null
 let webglAddon: WebglAddon | null = null
 let resizeObserver: ResizeObserver | null = null
+// 被 select/clearSelection 补丁包装前的原始方法（doSearch 需要绕过锁造临时锚点选区）
+let rawSelect: ((col: number, row: number, length: number) => void) | null = null
 
 function fontFamilyCss(): string {
   return `${props.font}, Consolas, "Courier New", monospace`
+}
+
+/** 重建 WebGL 渲染器：GPU 上下文丢失/窗口隐藏后恢复用 */
+function recreateWebgl(): void {
+  if (!term) return
+  try {
+    const addon = new WebglAddon()
+    // GPU 驱动重置（如远程桌面切换、驱动恢复）会触发 contextLoss：不处理会留下
+    // 花屏/蒙版状残影。丢弃当前渲染器立即重建；重建失败自动回退 DOM 渲染。
+    // 捕获具体实例：旧实例销毁后可能仍派发一次排队的 contextLoss，
+    // 若读共享变量会误杀新建的渲染器。
+    addon.onContextLoss(() => {
+      if (webglAddon !== addon) return
+      webglAddon?.dispose()
+      webglAddon = null
+      recreateWebgl()
+    })
+    webglAddon = addon
+    term.loadAddon(addon)
+  } catch {
+    webglAddon = null
+  }
 }
 
 /** 窗口最小化/隐藏时 Windows 会丢失 GPU 上下文，回到可见时重建 WebGL 渲染器避免花屏 */
@@ -58,15 +84,7 @@ function onVisibilityChange(): void {
     webglAddon?.dispose()
     webglAddon = null
   } else if (term) {
-    const createWebgl = (): void => {
-      try {
-        webglAddon = new WebglAddon()
-        term!.loadAddon(webglAddon)
-      } catch {
-        webglAddon = null
-      }
-    }
-    createWebgl()
+    recreateWebgl()
     fitAddon?.fit()
   }
 }
@@ -79,7 +97,7 @@ onMounted(() => {
     lineHeight: 1.2,
     cursorBlink: true,
     convertEol: true, // 兼容只发 \n 的裸设备；\r\n 设备不受影响
-    scrollback: 5000,
+    scrollback: props.scrollback,
     // addon-search 的结果高亮依赖 registerDecoration（proposed API）
     allowProposedApi: true,
     theme: {
@@ -99,25 +117,21 @@ onMounted(() => {
   // findPrevious(incremental) 重新 select 命中项，把用户刚拖出的手动选区顶掉。
   // 锁定期间 addon 的 select/clearSelection 变为空操作（高亮装饰不受影响），
   // 回到查找框触发 doSearch 时解锁，命中导航恢复正常。
-  const rawSelect = term.select.bind(term)
-  const rawClearSelection = term.clearSelection.bind(term)
+  const boundSelect = term.select.bind(term)
+  const boundClearSelection = term.clearSelection.bind(term)
+  rawSelect = boundSelect
   term.select = (col: number, row: number, length: number): void => {
-    if (!selectionLocked) rawSelect(col, row, length)
+    if (!selectionLocked) boundSelect(col, row, length)
   }
   term.clearSelection = (): void => {
-    if (!selectionLocked) rawClearSelection()
+    if (!selectionLocked) boundClearSelection()
   }
   term.open(termBox.value)
   fitAddon.fit()
 
   // WebGL 渲染器：刷屏日志高吞吐下性能远优于默认 DOM 渲染器
   // （GPU 不可用时 addon 会告警并自动回退 DOM，不影响功能）
-  try {
-    webglAddon = new WebglAddon()
-    term.loadAddon(webglAddon)
-  } catch {
-    webglAddon = null
-  }
+  recreateWebgl()
   document.addEventListener('visibilitychange', onVisibilityChange)
   // 键盘直入：xterm 捕获按键后交给父组件发送
   term.onData((data) => {
@@ -373,7 +387,15 @@ function doSearch(next: boolean): void {
     searchInfo.value = ''
     return
   }
-  if (!searchAddon) return
+  if (!searchAddon || !term) return
+  // 无选区时（用户点过终端后 xterm 已清掉选区），addon 会从缓冲区最顶/最底开始搜，
+  // 直接跳到 5000 行回滚缓冲的端点——看起来像「眼前的匹配文本找不到」。
+  // 先在当前视口造一个 1 字符临时锚点选区，让查找从可视区域开始
+  // （引擎随后的 clearSelection 会清掉锚点，再选中真正的命中项）。
+  if (!term.getSelection() && rawSelect) {
+    const row = next ? term.buffer.active.viewportY : term.buffer.active.viewportY + term.rows - 1
+    rawSelect(0, row, 1)
+  }
   if (next) searchAddon.findNext(searchTerm.value, { decorations: SEARCH_DECORATIONS })
   else searchAddon.findPrevious(searchTerm.value, { decorations: SEARCH_DECORATIONS })
 }

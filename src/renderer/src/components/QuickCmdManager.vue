@@ -8,7 +8,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { ArrowDown, ArrowRight, CopyDocument, Delete, Download, EditPen, FolderAdd, Plus, Timer, Upload, VideoCamera } from '@element-plus/icons-vue'
 import type { QuickCmd, QuickCmdStep } from '../../../shared/term-macro'
-import { TERM_KEYS, keyName, stepPreview } from '../../../shared/term-macro'
+import { TERM_KEYS, keyName, stepPreview, resolveDropInsertion } from '../../../shared/term-macro'
 import { useTermMacros } from '../composables/useTermMacros'
 
 const props = defineProps<{
@@ -208,7 +208,7 @@ function onPlay(cmd: QuickCmd): void {
 
 // ---------- 多选 / 拖拽（排序 + 分组移动） ----------
 const selected = ref(new Set<string>())
-const dragOver = ref('') // 悬停目标：分组名 / '__ungrouped__' / 'item:<name>'（插到该命令前）
+const dragOver = ref('') // 悬停目标：分组名 / '__ungrouped__' / 'item:<name>'（插到该命令前） / 'itemafter:<name>'（插到该命令后）
 
 /** 点击命令：Ctrl/Shift 多选，否则执行该命令 */
 function onItemClick(name: string, e: MouseEvent): void {
@@ -234,19 +234,45 @@ function onDragStart(name: string, e: DragEvent): void {
   e.dataTransfer!.setData('text/plain', [...next].join('\n'))
 }
 
-/** 拖动悬停判定：命令行自身是插入锚点（插到它前面） */
-function onItemDragOver(name: string): void {
-  dragOver.value = `item:${name}`
+/** 拖动悬停判定：行上半部 = 插到该命令前，下半部 = 插到该命令后 */
+function onItemDragOver(name: string, e: DragEvent): void {
+  const el = e.currentTarget as HTMLElement
+  const rect = el.getBoundingClientRect()
+  dragOver.value = e.clientY - rect.top < rect.height / 2 ? `item:${name}` : `itemafter:${name}`
 }
 
-/** 命令行 drop：插到锚点命令之前，组别跟随锚点（锚点在组内即移入该组） */
+function onItemDragLeave(name: string, e: DragEvent): void {
+  // Chromium 指针移到行内子元素也会触发父级 dragleave，relatedTarget 仍在行内时忽略
+  const el = e.currentTarget as HTMLElement
+  if (e.relatedTarget instanceof Node && el.contains(e.relatedTarget)) return
+  if (dragOver.value === `item:${name}` || dragOver.value === `itemafter:${name}`) dragOver.value = ''
+}
+
+/** 命令行 drop：按悬停位置插到锚点前/后，组别跟随锚点（锚点在组内即移入该组）。
+ *  行级 dragover/drop 已加 .stop：事件若冒泡到分组容器，会把 dragOver 覆盖成组名
+ *  （after 判定失效退化为插前），drop 还会再触发一次 moveToGroup 移到组尾。 */
 async function onItemDrop(anchorName: string): Promise<void> {
+  const after = dragOver.value === `itemafter:${anchorName}`
   const names = [...selected.value]
-  if (names.length === 0) return
-  if (names.includes(anchorName) && names.length === 1) return
+  if (names.length === 0) {
+    dragOver.value = ''
+    return
+  }
+  if (names.includes(anchorName) && names.length === 1) {
+    // 拖到自身上：无操作，但须复位选中与指示，否则残留到下次拖动
+    selected.value = new Set()
+    dragOver.value = ''
+    return
+  }
   const anchor = quickCmds.value.find((c) => c.name === anchorName)
-  const group = anchor ? (anchor.group ?? '').trim() : null
-  await reorderCmds(names, anchorName, group)
+  if (!anchor) {
+    dragOver.value = ''
+    return
+  }
+  // 插入点判定抽为纯函数 resolveDropInsertion（共享模块，可单测）；
+  // beforeName 为 null 表示插到列表末尾（reorderCmds 对不存在的 beforeName 即插末尾）
+  const { beforeName, group } = resolveDropInsertion(quickCmds.value, anchorName, names, after)
+  await reorderCmds(names, beforeName ?? '__end__', group)
   selected.value = new Set()
   dragOver.value = ''
 }
@@ -390,14 +416,18 @@ async function onImport(): Promise<void> {
             v-for="it in g.items"
             :key="it.cmd.name"
             class="cmd-item"
-            :class="[selected.has(it.cmd.name) ? 'selected' : '', dragOver === 'item:' + it.cmd.name ? 'drop-hover' : '']"
+            :class="[
+              selected.has(it.cmd.name) ? 'selected' : '',
+              dragOver === 'item:' + it.cmd.name ? 'drop-before' : '',
+              dragOver === 'itemafter:' + it.cmd.name ? 'drop-after' : ''
+            ]"
             draggable="true"
             :title="it.cmd.steps.map(stepPreview).join(' → ')"
             @click="onItemClick(it.cmd.name, $event)"
             @dragstart="onDragStart(it.cmd.name, $event)"
-            @dragover.prevent="onItemDragOver(it.cmd.name)"
-            @dragleave="dragOver === 'item:' + it.cmd.name ? (dragOver = '') : null"
-            @drop.prevent="onItemDrop(it.cmd.name)"
+            @dragover.prevent.stop="onItemDragOver(it.cmd.name, $event)"
+            @dragleave="onItemDragLeave(it.cmd.name, $event)"
+            @drop.prevent.stop="onItemDrop(it.cmd.name)"
           >
             <span class="cmd-name">{{ it.cmd.name }}</span>
             <span class="cmd-ops">
@@ -423,14 +453,18 @@ async function onImport(): Promise<void> {
         v-for="it in grouped.ungrouped"
         :key="it.cmd.name"
         class="cmd-item"
-        :class="[selected.has(it.cmd.name) ? 'selected' : '', dragOver === 'item:' + it.cmd.name ? 'drop-hover' : '']"
+        :class="[
+          selected.has(it.cmd.name) ? 'selected' : '',
+          dragOver === 'item:' + it.cmd.name ? 'drop-before' : '',
+          dragOver === 'itemafter:' + it.cmd.name ? 'drop-after' : ''
+        ]"
         draggable="true"
         :title="it.cmd.steps.map(stepPreview).join(' → ')"
         @click="onItemClick(it.cmd.name, $event)"
         @dragstart="onDragStart(it.cmd.name, $event)"
-        @dragover.prevent="onItemDragOver(it.cmd.name)"
-        @dragleave="dragOver === 'item:' + it.cmd.name ? (dragOver = '') : null"
-        @drop.prevent="onItemDrop(it.cmd.name)"
+        @dragover.prevent.stop="onItemDragOver(it.cmd.name, $event)"
+        @dragleave="onItemDragLeave(it.cmd.name, $event)"
+        @drop.prevent.stop="onItemDrop(it.cmd.name)"
       >
         <span class="cmd-name">{{ it.cmd.name }}</span>
         <span class="cmd-ops">
@@ -655,8 +689,13 @@ async function onImport(): Promise<void> {
   text-overflow: ellipsis;
 }
 
-.cmd-item.drop-hover {
-  outline: 1px dashed var(--el-color-primary);
+.cmd-item.drop-before {
+  box-shadow: inset 0 2px 0 var(--el-color-primary);
+  background: var(--el-color-primary-light-9);
+}
+
+.cmd-item.drop-after {
+  box-shadow: inset 0 -2px 0 var(--el-color-primary);
   background: var(--el-color-primary-light-9);
 }
 

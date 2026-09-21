@@ -42,6 +42,7 @@
 | `tests/diff-test.js` | 文本/十六进制/文件夹 diff 引擎 + io 多编码 |
 | `tests/logic-test.js` | hexutil + 程序员计算器 |
 | `tests/mobamacro-test.js` | MobaXterm 宏导入解析 |
+| `tests/quickcmd-test.js` | 快捷命令拖放插入点判定（term-macro.ts 的 resolveDropInsertion） |
 | `tests/net-test.js` | 网络助手 TCP/UDP 回环 |
 | `tests/tftp-test.js` / `tests/ymodem-test.js` / `tests/zmodem-test.js` | 传输协议 |
 | `tests/bridge-test.js` | 串口TCP桥接协议（bridge-protocol.ts：Telnet IAC 状态机 / JSON 行协议 / 身份派生） |

@@ -100,6 +100,34 @@ export interface QuickCmdsConfig {
   groups?: string[]
 }
 
+/**
+ * 拖放插入点判定（纯函数，供 QuickCmdManager 的行级 drop 与单元测试共用）。
+ * @param list   当前命令列表（完整顺序）
+ * @param anchor 悬停目标行命令名（插入基准）
+ * @param names  被拖动的命令名集合
+ * @param after  true = 悬停在行下半部（插到锚点后），false = 上半部（插到锚点前）
+ * @returns beforeName：reorderCmds 的插入点（锚点前 = 锚点名，锚点后 = 锚点后
+ *          第一条不在拖动集合中的命令名；锚点已是最后一条则返回 null 表示插到末尾）
+ *          group：锚点所在分组（'' = 未分组），用于拖动项跟随锚点归组
+ */
+export function resolveDropInsertion(
+  list: QuickCmd[],
+  anchor: string,
+  names: string[],
+  after: boolean
+): { beforeName: string | null; group: string } {
+  const anchorCmd = list.find((c) => c.name === anchor)
+  const group = anchorCmd ? (anchorCmd.group ?? '').trim() : ''
+  if (!after) return { beforeName: anchor, group }
+  const set = new Set(names)
+  const idx = list.findIndex((c) => c.name === anchor)
+  for (let i = idx + 1; i < list.length; i++) {
+    if (!set.has(list[i].name)) return { beforeName: list[i].name, group }
+  }
+  // 锚点之后全是被拖项（或锚点已是末条）：插到列表末尾
+  return { beforeName: null, group }
+}
+
 /** MobaXterm 宏按键名 → 终端转义序列（用于导入映射） */
 const MOBA_KEY_MAP: Record<string, string> = {
   RETURN: '\r',
