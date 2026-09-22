@@ -39,6 +39,19 @@ interface SerialSession {
   rawConsumer: ((chunk: Buffer) => void) | null
   /** 日志管道的未完行尾巴（最后一个 \n 之后的内容；未完行/半个 \r\r\n 终止符/跨批 ANSI 序列滞留于此） */
   logCarry: string
+  /** 内存全量日志（「存日志」导出源）：整行按 MEM_CHUNK_PIECES 行聚成的大块 Buffer。
+   *  放主进程且存 Buffer（V8 堆外）：此前放渲染端按字符串累积，长会话涨到数百 MB 后
+   *  渲染端 V8 大 GC 频繁暂停主线程——表现为长时间使用后终端打印断断续续，
+   *  重开串口（清掉累积）后恢复。Buffer 背储在堆外不参与 GC，彻底消除该退化 */
+  memBuf: Buffer[]
+  /** 未封块的行累积（凑满 MEM_CHUNK_PIECES 行再成块，避免按行一 Buffer 对象） */
+  pendingMem: string
+  /** pendingMem 已累积行数 */
+  memPieces: number
+  /** 内存全量日志累计字节（UTF-8 实际大小） */
+  memBytes: number
+  /** 超限后置位：停止记录（渲染端收到事件后同时停止终端显示） */
+  memFull: boolean
 }
 
 /** 进行中的传输（每面板最多一个） */
@@ -49,9 +62,39 @@ interface ActiveTransfer {
 }
 
 const sessions = new Map<string, SerialSession>()
+/** 断开后留存的内存全量日志（按 panelId）：会话关闭后「存日志」仍可导出，
+ *  重开串口（新会话）时移除——等价旧渲染端实现里「断开后 ringBuf 仍在」的行为 */
+interface RetainedMem {
+  /** 拼成单 Buffer 的完整日志内容 */
+  buf: Buffer
+  /** 文件名用串口名（断开后会话已删，params 不可再取） */
+  path: string
+}
+const retainedMem = new Map<string, RetainedMem>()
+
+/** 会话结束（正常关/拔线）时留存内存日志，供断开后「存日志」导出 */
+function retainMemLog(panelId: string, s: SerialSession): void {
+  // 先把未封块的行封成块再留存（漏封会丢尾部内容）
+  if (s.pendingMem) {
+    s.memBuf.push(Buffer.from(s.pendingMem, 'utf8'))
+    s.pendingMem = ''
+    s.memPieces = 0
+  }
+  if (s.memBuf.length > 0) {
+    retainedMem.set(panelId, { buf: Buffer.concat(s.memBuf), path: s.params.path })
+  }
+  s.memBuf = []
+  s.memBytes = 0
+}
 const transfers = new Map<string, ActiveTransfer>()
 /** 批量合并窗口：16ms ≈ 60fps，刷屏视觉流畅；合并仍吸收高波特率的碎片事件 */
 const FLUSH_MS = 16
+/** 内存全量日志上限（字节，UTF-8 实际大小）；超限停止记录并提示先存日志 */
+const MEM_LOG_LIMIT = 500 * 1024 * 1024
+
+/** 内存日志攒块阈值：行凑满 256 段拼成单块 Buffer，控制 Buffer 对象数量
+ *  （按行一对象时 500MB 日志会产生千万级 JS 堆对象，把 GC 压力转回主进程） */
+const MEM_CHUNK_PIECES = 256
 
 /** 自动日志目录：userData/serial-logs/ */
 function serialLogDir(): string {
@@ -70,13 +113,47 @@ class SerialService implements ToolService {
 
   /** 日志入缓冲（真正落盘在 flushLog；写失败静默停日志，不影响收发）。
    *  入参为已按完整行切分的原始行（不含终止符），清洗后逐行补时间戳（每行可辨；带日期，跨天可追溯）。
-   *  空行照常落盘（设备真实空行可追溯） */
-  private appendLog(s: SerialSession, parts: string[]): void {
-    if (!s.logHandle || parts.length === 0) return
+   *  空行照常落盘（设备真实空行可追溯）。
+   *  同格式整行始终累积进内存全量日志 memBuf（自动落盘关闭/失败时仍可「存日志」导出）；
+   *  行先拼进 pendingMem 字符串，攒满一段再 Buffer.from 成块（大块存储，见 MEM_CHUNK_PIECES） */
+  private appendLog(panelId: string, s: SerialSession, parts: string[]): void {
+    if (parts.length === 0) return
     const stamp = fmtLogTime(Date.now(), true)
     for (const part of parts) {
-      for (const line of cleanLogBody(part).split('\n')) s.logBuf.push(`[${stamp}] ${line}\r\n`)
+      for (const line of cleanLogBody(part).split('\n')) {
+        const piece = `[${stamp}] ${line}\r\n`
+        if (!s.memFull) {
+          s.pendingMem += piece
+          s.memPieces += 1
+          if (s.memPieces >= MEM_CHUNK_PIECES) {
+            this.sealMemChunk(panelId, s)
+          } else {
+            s.memBytes += Buffer.byteLength(piece, 'utf8')
+            if (s.memBytes > MEM_LOG_LIMIT) this.tripMemFull(panelId, s)
+          }
+        }
+        if (s.logHandle) s.logBuf.push(piece)
+      }
     }
+  }
+
+  /** 把 pendingMem 字符串封成一块 Buffer 入 memBuf（memBytes 以封块时实测为准） */
+  private sealMemChunk(panelId: string, s: SerialSession): void {
+    if (!s.pendingMem) return
+    const b = Buffer.from(s.pendingMem, 'utf8')
+    s.pendingMem = ''
+    s.memPieces = 0
+    s.memBuf.push(b)
+    s.memBytes += b.length
+    if (s.memBytes > MEM_LOG_LIMIT) this.tripMemFull(panelId, s)
+  }
+
+  /** 内存日志达上限：停记录（pendingMem 残留丢弃）并通知渲染端停显 */
+  private tripMemFull(panelId: string, s: SerialSession): void {
+    s.memFull = true
+    s.pendingMem = ''
+    s.memPieces = 0
+    this.emit(panelId, 'memlog', { full: true })
   }
 
   /** 日志落盘：串口会话断开或缓冲超限时把缓冲一次性写入持久句柄 */
@@ -112,18 +189,14 @@ class SerialService implements ToolService {
     s.pending = []
     const total = Buffer.concat(pieces.map((p) => p.buf))
     const text = s.decoder.write(total)
-    if (s.logHandle) {
-      // 剥 ANSI/归一行只在日志开启时做（关闭时不白白跑正则）。
-      // 按完整行切分：最后一个 \n 之前落盘，之后（未完行/半个 \r\r\n 终止符）留给下一批拼接，
-      // 终止符跨批不再产生幻影空行；跨批 ANSI 序列也在 carry 中
-      const { lines, carry } = splitTerminalLines(s.logCarry + text)
-      s.logCarry = carry
-      this.appendLog(s, lines)
-      // 缓冲超过 64 行立即落盘，防止长时间刷屏积压内存
-      if (s.logBuf.length >= 64) void this.flushLog(s)
-    } else {
-      s.logCarry = ''
-    }
+    // 按完整行切分：最后一个 \n 之前处理，之后（未完行/半个 \r\r\n 终止符）留给下一批拼接，
+    // 终止符跨批不产生幻影空行；跨批 ANSI 序列也在 carry 中。
+    // 切分不再只随磁盘日志走（内存全量日志总是开）
+    const { lines, carry } = splitTerminalLines(s.logCarry + text)
+    s.logCarry = carry
+    this.appendLog(panelId, s, lines)
+    // 缓冲超过 64 行立即落盘，防止长时间刷屏积压内存
+    if (s.logHandle && s.logBuf.length >= 64) void this.flushLog(s)
     this.emit(panelId, 'data', {
       text,
       bytes: total.length,
@@ -187,8 +260,11 @@ class SerialService implements ToolService {
         return this.setFlow(panelId, { rts: Boolean((payload as { on: boolean }).on) })
       case 'signals':
         return this.signals(panelId)
-      case 'log:save':
-        return this.saveLog(panelId, payload as { content: string; name?: string })
+      case 'log:mem-save':
+        return this.saveMemLog(panelId)
+      case 'log:mem-clear':
+        this.clearMemLog(panelId)
+        return { ok: true }
       case 'log:set-dir':
         return this.setLogDir()
       case 'log:get-dir':
@@ -290,6 +366,8 @@ class SerialService implements ToolService {
             logHandle = null
           }
         }
+        // 新会话：旧留存日志作废（重开串口 = 新一轮记录）
+        retainedMem.delete(panelId)
         sessions.set(panelId, {
           port,
           params,
@@ -302,7 +380,12 @@ class SerialService implements ToolService {
           logBuf: [],
           logTimer: null,
           rawConsumer: null,
-          logCarry: ''
+          logCarry: '',
+          memBuf: [],
+          pendingMem: '',
+          memPieces: 0,
+          memBytes: 0,
+          memFull: false
         })
         // 低流量场景：周期性把日志缓冲落盘
         if (logHandle) {
@@ -344,7 +427,8 @@ class SerialService implements ToolService {
             clearInterval(s.logTimer)
             s.logTimer = null
           }
-          // 端口意外关闭（拔线等）：冲掉日志缓冲并释放句柄
+          // 端口意外关闭（拔线等）：冲掉日志缓冲并释放句柄；内存全量日志留存供断开后导出
+          retainMemLog(panelId, s)
           void this.flushLog(s).finally(() => {
             void s.logHandle?.close().catch(() => {})
             s.logHandle = null
@@ -394,8 +478,8 @@ class SerialService implements ToolService {
     // 冲出未完行尾巴（提示符等；纯 \r 残留尾巴跳过，避免落盘多余空行）
     const tail = s.logCarry
     s.logCarry = ''
-    if (tail.replace(/\r/g, '')) this.appendLog(s, [tail])
-    this.appendLog(s, ['===== 断开 ====='])
+    if (tail.replace(/\r/g, '')) this.appendLog(panelId, s, [tail])
+    this.appendLog(panelId, s, ['===== 断开 ====='])
     // 日志：清定时器、冲掉缓冲并关闭句柄（会话结束后不再有数据）
     if (s.logTimer) {
       clearInterval(s.logTimer)
@@ -404,6 +488,8 @@ class SerialService implements ToolService {
     await this.flushLog(s)
     await s.logHandle?.close().catch(() => {})
     s.logHandle = null
+    // 留存内存全量日志供断开后「存日志」导出，再移除会话
+    retainMemLog(panelId, s)
     sessions.delete(panelId)
     await new Promise<void>((resolve) => {
       if (!s.port.isOpen) resolve()
@@ -434,7 +520,7 @@ class SerialService implements ToolService {
     s.port.write(buf)
     s.txBytes += buf.length
     // HEX 发送按字节审计记录（二进制过 toString('utf8') 会把 0x1b 当 ANSI 剥掉、非法字节变 U+FFFD）
-    this.appendLog(s, [p.mode === 'hex' ? buf.toString('hex').replace(/../g, '$& ').trim() : buf.toString('utf8')])
+    this.appendLog(panelId, s, [p.mode === 'hex' ? buf.toString('hex').replace(/../g, '$& ').trim() : buf.toString('utf8')])
     this.emit(panelId, 'tx', {
       text: buf.toString('utf8'),
       bytes: buf.length,
@@ -464,7 +550,10 @@ class SerialService implements ToolService {
     })
   }
 
-  private async saveLog(panelId: string, p: { content: string; name?: string }): Promise<{ ok: boolean; error?: string }> {
+  private async saveLog(
+    panelId: string,
+    p: { content: string | Buffer; name?: string }
+  ): Promise<{ ok: boolean; error?: string }> {
     // 文件名带时分秒，以创建时间为准；目录用记忆的保存目录（重启记忆）
     const cfg = await getSection<SerialConfig>('serial', DEFAULT_SERIAL_CONFIG)
     const stamp = new Date()
@@ -496,6 +585,41 @@ class SerialService implements ToolService {
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) }
     }
+  }
+
+  /** 导出内存全量日志（「存日志」）：Buffer 直拼直写，不经渲染端（满 500MB 也不占渲染端内存）。
+   *  会话已断开时回落到断开时留存的内容（断开后仍可导出本次会话日志） */
+  private async saveMemLog(panelId: string): Promise<{ ok: boolean; error?: string }> {
+    const s = sessions.get(panelId)
+    let content: Buffer | undefined
+    let path: string
+    if (s) {
+      // 封块后拼装（不改动会话自身状态；memBuf 继续可追加）
+      const chunks = [...s.memBuf]
+      if (s.pendingMem) chunks.push(Buffer.from(s.pendingMem, 'utf8'))
+      content = chunks.length > 0 ? Buffer.concat(chunks) : undefined
+      path = s.params.path
+    } else {
+      const r = retainedMem.get(panelId)
+      content = r?.buf
+      path = r?.path ?? ''
+    }
+    if (!content || content.length === 0) return { ok: false, error: '无日志可存' }
+    // 文件名 serial-<COM>-<时刻 YYYYMMDD-HHMMSS>.log（与原渲染端命名一致）
+    const safeName = path.replace(/[\\/:*?"<>|]/g, '_') || 'com'
+    return this.saveLog(panelId, { content, name: `serial-${safeName}-${fileNameStamp()}.log` })
+  }
+
+  /** 清空内存全量日志（终端「清空」联动解除溢出锁定；重开串口 = 新会话自动重置） */
+  private clearMemLog(panelId: string): void {
+    retainedMem.delete(panelId)
+    const s = sessions.get(panelId)
+    if (!s) return
+    s.memBuf = []
+    s.pendingMem = ''
+    s.memPieces = 0
+    s.memBytes = 0
+    s.memFull = false
   }
 
   /** 设置手动「存日志」的保存目录（目录选择框，重启记忆） */
