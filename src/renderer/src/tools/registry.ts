@@ -6,6 +6,7 @@ import TftpPanel from '@renderer/panels/TftpPanel.vue'
 import MacroPanel from '@renderer/panels/MacroPanel.vue'
 import SerialPanel from '@renderer/panels/SerialPanel.vue'
 import SshPanel from '@renderer/panels/SshPanel.vue'
+import LocalTerminalPanel from '@renderer/panels/LocalTerminalPanel.vue'
 import NetPanel from '@renderer/panels/NetPanel.vue'
 import TimestampPanel from '@renderer/panels/TimestampPanel.vue'
 import EncodingPanel from '@renderer/panels/EncodingPanel.vue'
@@ -90,6 +91,16 @@ const ALL_TOOLS: ToolDef[] = [
     icon: 'Lock',
     description: 'xterm 终端 + ssh2：密码 / 私钥认证，会话管理，自动日志',
     component: markRaw(SshPanel),
+    singleton: false,
+    phase: 'M4',
+    ready: true
+  },
+  {
+    id: 'local-terminal',
+    name: '本地终端',
+    icon: 'Monitor',
+    description: 'Windows 本地 Shell：CMD / PowerShell / Git Bash，多实例 PTY 终端',
+    component: markRaw(LocalTerminalPanel),
     singleton: false,
     phase: 'M4',
     ready: true

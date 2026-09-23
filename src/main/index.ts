@@ -13,6 +13,7 @@ import { diffService } from './services/diff'
 import { codecService } from './services/codec'
 import { bridgeService } from './services/bridge'
 import { settingsService } from './services/settings'
+import { localTerminalService } from './services/localTerminal'
 
 let mainWindow: BrowserWindow | null = null
 
@@ -104,6 +105,7 @@ app.whenReady().then(() => {
   registerService('macro', macroService)
   registerService('serial', serialService)
   registerService('ssh', sshService)
+  registerService('local-terminal', localTerminalService)
   registerService('quickcmds', quickCmdsService)
   registerService('net', netService)
   registerService('color', colorService)

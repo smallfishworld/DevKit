@@ -35,3 +35,15 @@ jobs:
 
       - name: Build
         run: npm run build
+
+      - name: node-pty runtime smoke test
+        run: npm run test:pty-smoke
+
+      - name: Build unpacked Windows app
+        run: npm run dist:dir
+
+      - name: Verify packaged node-pty
+        shell: pwsh
+        run: |
+          $env:DEVKIT_CHECK_PACKAGED = '1'
+          npm run test:pty-smoke
