@@ -14,6 +14,8 @@ import { WebglAddon } from '@xterm/addon-webgl'
 import '@xterm/xterm/css/xterm.css'
 import { resolveGlobalKey, resolveMouseDown, resolveTermKey } from './termInput'
 import { fmtStamp, stampLines } from '../../../shared/logtext'
+import { useAppearanceStore } from '@renderer/stores/appearance'
+import { toXtermTheme } from '@renderer/theme'
 
 const props = withDefaults(
   defineProps<{
@@ -30,6 +32,8 @@ const props = withDefaults(
   }>(),
   { font: 'Consolas', fontSize: 13, localEcho: false, showTime: false, scrollback: 500000 }
 )
+
+const appearance = useAppearanceStore()
 
 const emit = defineEmits<{
   /** 键盘原始输入（Enter 为 \r），由父组件决定发到哪 */
@@ -100,13 +104,7 @@ onMounted(() => {
     scrollback: props.scrollback,
     // addon-search 的结果高亮依赖 registerDecoration（proposed API）
     allowProposedApi: true,
-    theme: {
-      background: '#101418',
-      foreground: '#cfd8dc',
-      cursor: '#7fb4d9',
-      cursorAccent: '#101418',
-      selectionBackground: '#31454f'
-    }
+    theme: toXtermTheme(appearance.terminalTheme)
   })
   fitAddon = new FitAddon()
   term.loadAddon(fitAddon)
@@ -321,6 +319,14 @@ watch(
   }
 )
 
+watch(
+  () => appearance.terminalTheme,
+  (theme) => {
+    // xterm 支持运行时替换 theme；不重建实例，因此不会中断串口/SSH 会话。
+    if (term) term.options.theme = toXtermTheme(theme)
+  }
+)
+
 // ---------- 搜索 ----------
 const searchOpen = ref(false)
 const searchTerm = ref('')
@@ -477,7 +483,11 @@ defineExpose({ write, info, clear, focus, openSearch })
       <button class="search-btn" title="下一个（Enter）" @click="doSearch(true)">↓</button>
       <button class="search-btn" title="关闭（Esc）" @click="closeSearch()">×</button>
     </div>
-    <div ref="termBox" class="term mono"></div>
+    <div
+      ref="termBox"
+      class="term mono"
+      :style="{ background: appearance.terminalTheme.background }"
+    ></div>
   </div>
 </template>
 
@@ -497,7 +507,6 @@ defineExpose({ write, info, clear, focus, openSearch })
 .term {
   flex: 1;
   min-height: 0;
-  background: #101418;
   border: 1px solid var(--el-border-color-lighter);
   border-radius: 8px;
   padding: 6px 8px;

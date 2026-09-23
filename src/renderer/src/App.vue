@@ -1,12 +1,16 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { useTabStore } from '@renderer/stores/tabs'
+import { useAppearanceStore } from '@renderer/stores/appearance'
 import { toolById } from '@renderer/tools/registry'
 import TabBar from './components/TabBar.vue'
 import HomePanel from './components/HomePanel.vue'
+import SettingsDialog from './components/SettingsDialog.vue'
 import type { WinInfo } from '../../shared/types'
 
 const tabs = useTabStore()
+const appearance = useAppearanceStore()
+const settingsOpen = ref(false)
 
 function compFor(toolId: string) {
   if (toolId === 'home') return HomePanel
@@ -23,6 +27,7 @@ const winToggleMax = (): void => window.api.win.toggleMaximize()
 const winClose = (): void => window.api.win.close()
 
 onMounted(() => {
+  void appearance.init()
   window.api.win.info().then((i) => (winInfo.value = i)).catch(() => {})
   window.api.win.onMaxChange((m) => (maximized.value = m))
 })
@@ -51,6 +56,9 @@ onMounted(() => {
       </el-popover>
       <span class="app-title">DevKit</span>
       <div class="header-spacer"></div>
+      <button class="header-action" title="外观与终端主题" @click="settingsOpen = true">
+        <el-icon :size="16"><Setting /></el-icon>
+      </button>
       <div class="win-controls">
         <button class="win-btn" title="最小化" @click="winMinimize">
           <el-icon :size="15"><Minus /></el-icon>
@@ -80,12 +88,35 @@ onMounted(() => {
     <footer class="app-status">
       {{ tabs.active?.title ?? 'DevKit' }}
     </footer>
+
+    <SettingsDialog v-model="settingsOpen" />
   </div>
 </template>
 
 <style scoped>
 .app-logo,
+.header-action,
 .win-controls {
   -webkit-app-region: no-drag;
+}
+
+.header-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 100%;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--el-text-color-regular);
+  cursor: pointer;
+  outline: none;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.header-action:hover {
+  background: var(--el-fill-color-dark);
+  color: var(--el-color-primary);
 }
 </style>
