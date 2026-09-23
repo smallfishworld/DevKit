@@ -6,7 +6,7 @@
  * 搜索：Ctrl+F 打开搜索条，Enter/下一个按钮向下找，Shift+Enter 向上找
  * 数据流：父组件调 write()/info() 灌入远端输出；@data 把键入原样交给父组件发送
  */
-import { onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
@@ -14,6 +14,9 @@ import { WebglAddon } from '@xterm/addon-webgl'
 import '@xterm/xterm/css/xterm.css'
 import { resolveGlobalKey, resolveMouseDown, resolveTermKey } from './termInput'
 import { fmtStamp, stampLines } from '../../../shared/logtext'
+import type { TerminalTheme } from '../../../shared/theme'
+import { useAppearanceStore } from '@renderer/stores/appearance'
+import { toXtermTheme } from '@renderer/theme/apply'
 
 const props = withDefaults(
   defineProps<{
@@ -27,6 +30,8 @@ const props = withDefaults(
     showTime?: boolean
     /** 回滚行数上限（可滚回查看的历史行数）；MobaXterm 默认 360000，取 500000 留余量 */
     scrollback?: number
+    /** 可选会话级主题覆盖；缺省使用全局 Appearance 终端主题 */
+    theme?: TerminalTheme
   }>(),
   { font: 'Consolas', fontSize: 13, localEcho: false, showTime: false, scrollback: 500000 }
 )
@@ -39,6 +44,9 @@ const emit = defineEmits<{
   /** 缩放/换字号时同步（父组件持久化） */
   (e: 'update:fontSize', size: number): void
 }>()
+
+const appearance = useAppearanceStore()
+const effectiveTheme = computed(() => props.theme ?? appearance.terminalTheme)
 
 const DEFAULT_FONT_SIZE = 13
 const SIZES = [10, 11, 12, 13, 14, 15, 16, 17, 18, 20, 22, 24, 26, 28]
@@ -100,13 +108,7 @@ onMounted(() => {
     scrollback: props.scrollback,
     // addon-search 的结果高亮依赖 registerDecoration（proposed API）
     allowProposedApi: true,
-    theme: {
-      background: '#101418',
-      foreground: '#cfd8dc',
-      cursor: '#7fb4d9',
-      cursorAccent: '#101418',
-      selectionBackground: '#31454f'
-    }
+    theme: toXtermTheme(effectiveTheme.value)
   })
   fitAddon = new FitAddon()
   term.loadAddon(fitAddon)
@@ -321,6 +323,14 @@ watch(
   }
 )
 
+watch(
+  effectiveTheme,
+  (value) => {
+    if (term) term.options.theme = toXtermTheme(value)
+  },
+  { deep: true }
+)
+
 // ---------- 搜索 ----------
 const searchOpen = ref(false)
 const searchTerm = ref('')
@@ -477,7 +487,7 @@ defineExpose({ write, info, clear, focus, openSearch })
       <button class="search-btn" title="下一个（Enter）" @click="doSearch(true)">↓</button>
       <button class="search-btn" title="关闭（Esc）" @click="closeSearch()">×</button>
     </div>
-    <div ref="termBox" class="term mono"></div>
+    <div ref="termBox" class="term mono" :style="{ backgroundColor: effectiveTheme.background }"></div>
   </div>
 </template>
 
@@ -497,7 +507,6 @@ defineExpose({ write, info, clear, focus, openSearch })
 .term {
   flex: 1;
   min-height: 0;
-  background: #101418;
   border: 1px solid var(--el-border-color-lighter);
   border-radius: 8px;
   padding: 6px 8px;

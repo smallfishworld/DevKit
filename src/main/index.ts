@@ -12,6 +12,7 @@ import { colorService } from './services/color'
 import { diffService } from './services/diff'
 import { codecService } from './services/codec'
 import { bridgeService } from './services/bridge'
+import { settingsService } from './services/settings'
 
 let mainWindow: BrowserWindow | null = null
 
@@ -109,6 +110,7 @@ app.whenReady().then(() => {
   registerService('codec', codecService)
   registerService('diff', diffService)
   registerService('bridge', bridgeService)
+  registerService('settings', settingsService)
   void macroService.init()
   registerToolIpc()
   registerWindowIpc()
