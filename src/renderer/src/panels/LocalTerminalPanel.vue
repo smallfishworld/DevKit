@@ -77,8 +77,9 @@ async function start(clearFirst = false): Promise<void> {
       return
     }
     running.value = true
-    activeProfileId.value = result.profile?.id ?? profileId.value
-    profileId.value = activeProfileId.value
+    const startedProfileId = result.profile?.id ?? profileId.value
+    activeProfileId.value = startedProfileId
+    profileId.value = startedProfileId
     if (result.cwd) cwd.value = result.cwd
     tabStore.rename(props.panelId, result.profile?.name ?? profile.name)
     await persistConfig()
@@ -227,7 +228,7 @@ onUnmounted(() => {
           :loading="starting"
           @click="start(false)"
         >启动</el-button>
-        <el-button v-else size="small" :type="profileChanged ? 'primary' : 'default'" :icon="RefreshRight" :loading="starting" @click="restart">
+        <el-button v-else size="small" :type="profileChanged ? 'primary' : ''" :icon="RefreshRight" :loading="starting" @click="restart">
           {{ profileChanged ? '切换终端' : '重启' }}
         </el-button>
         <el-button v-if="running" size="small" type="danger" plain :icon="SwitchButton" @click="stop">终止</el-button>
