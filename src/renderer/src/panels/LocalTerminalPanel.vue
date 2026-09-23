@@ -86,6 +86,7 @@ async function restart(): Promise<void> {
 async function stop(): Promise<void> {
   await window.api.invoke('local-terminal', 'kill', props.panelId)
   running.value = false
+  activeProfileId.value = undefined
 }
 
 function onTermData(text: string): void {
@@ -97,6 +98,11 @@ function onTermResize(size: { cols: number; rows: number }): void {
   lastSize.value = size
   if (!running.value) return
   void window.api.invoke('local-terminal', 'resize', props.panelId, size)
+}
+
+function onFontSizeUpdate(size: number): void {
+  fontSize.value = size
+  void persistConfig()
 }
 
 function clearTerm(): void {
@@ -174,7 +180,7 @@ onUnmounted(() => {
     <div class="terminal-toolbar panel-section">
       <div class="toolbar-row">
         <span class="label">Shell</span>
-        <el-select v-model="profileId" size="small" style="width: 150px" @change="onProfileChanged">
+        <el-select v-model="profileId" size="small" style="width: 180px" @change="onProfileChanged">
           <el-option
             v-for="profile in profiles"
             :key="profile.id"
@@ -226,8 +232,9 @@ onUnmounted(() => {
     <div class="terminal-host">
       <TerminalView
         ref="termView"
-        v-model:font-size="fontSize"
+        :font-size="fontSize"
         :font="font"
+        @update:font-size="onFontSizeUpdate"
         @data="onTermData"
         @resize="onTermResize"
       />
