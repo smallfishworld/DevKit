@@ -7,6 +7,7 @@ import type { ToolService } from '../../ipc'
 import { emitToolEvent } from '../../ipc'
 import {
   DEFAULT_LOCAL_TERMINAL_CONFIG,
+  normalizeLocalTerminalProfileId,
   type LocalTerminalConfig,
   type LocalTerminalStartPayload,
   type ShellProfile
@@ -88,10 +89,15 @@ class LocalTerminalService implements ToolService {
 
   private async attach(panelId: string): Promise<unknown> {
     const config = await getSection<LocalTerminalConfig>('localTerminal', DEFAULT_LOCAL_TERMINAL_CONFIG)
+    const profiles = this.profiles()
+    const normalizedConfig: LocalTerminalConfig = {
+      ...config,
+      defaultProfileId: normalizeLocalTerminalProfileId(config.defaultProfileId, profiles)
+    }
     const current = sessions.get(panelId)
     return {
-      config,
-      profiles: this.profiles(),
+      config: normalizedConfig,
+      profiles,
       running: !!current,
       activeProfileId: current?.profile.id,
       cwd: current?.cwd
@@ -104,7 +110,8 @@ class LocalTerminalService implements ToolService {
     }
 
     const profiles = this.profiles()
-    const profile = profiles.find((item) => item.id === payload.profileId && item.available)
+    const requestedProfileId = normalizeLocalTerminalProfileId(payload.profileId, profiles)
+    const profile = profiles.find((item) => item.id === requestedProfileId && item.available)
     if (!profile) {
       return { ok: false, error: `Shell 不可用：${payload.profileId}` }
     }
