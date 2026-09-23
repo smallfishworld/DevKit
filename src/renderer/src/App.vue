@@ -4,6 +4,7 @@ import { useTabStore } from '@renderer/stores/tabs'
 import { toolById } from '@renderer/tools/registry'
 import TabBar from './components/TabBar.vue'
 import HomePanel from './components/HomePanel.vue'
+import SettingsDialog from './components/SettingsDialog.vue'
 import type { WinInfo } from '../../shared/types'
 
 const tabs = useTabStore()
@@ -16,6 +17,7 @@ function compFor(toolId: string) {
 // ---------- 自绘标题栏（无边框窗口） ----------
 const winInfo = ref<WinInfo>({ version: '', electron: '', chrome: '', node: '' })
 const maximized = ref(false)
+const settingsOpen = ref(false)
 
 // 模板里拿不到 window 全局，经 setup 暴露
 const winMinimize = (): void => window.api.win.minimize()
@@ -51,6 +53,11 @@ onMounted(() => {
       </el-popover>
       <span class="app-title">DevKit</span>
       <div class="header-spacer"></div>
+      <div class="header-tools">
+        <button class="header-tool-btn" title="外观设置" @click="settingsOpen = true">
+          <el-icon :size="16"><Setting /></el-icon>
+        </button>
+      </div>
       <div class="win-controls">
         <button class="win-btn" title="最小化" @click="winMinimize">
           <el-icon :size="15"><Minus /></el-icon>
@@ -80,12 +87,39 @@ onMounted(() => {
     <footer class="app-status">
       {{ tabs.active?.title ?? 'DevKit' }}
     </footer>
+
+    <SettingsDialog v-model="settingsOpen" />
   </div>
 </template>
 
 <style scoped>
 .app-logo,
+.header-tools,
 .win-controls {
   -webkit-app-region: no-drag;
+}
+
+.header-tools {
+  display: flex;
+  align-self: stretch;
+}
+
+.header-tool-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 100%;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--el-text-color-regular);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.header-tool-btn:hover {
+  background: var(--el-fill-color-dark);
+  color: var(--el-color-primary);
 }
 </style>

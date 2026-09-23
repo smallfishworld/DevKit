@@ -2,8 +2,8 @@
 
 | 项目 | 内容 |
 |---|---|
-| 文档版本 | v0.6 |
-| 日期 | 2026-09-22 |
+| 文档版本 | v0.7 |
+| 日期 | 2026-09-23 |
 | 状态 | 已定稿（随功能演进滚动更新；每次新增/修改功能与非功能需求须同步本档） |
 | 目标平台 | Windows 10/11（64位，需兼容较旧的 Win10 环境） |
 
@@ -37,7 +37,8 @@
 DevKit 主程序
 ├── 主面板（工具箱 Home）
 │    ├── 工具网格/图标列表，点击打开对应面板
-│    └── 多标签页：面板以标签承载，同工具可开多实例（串口/SSH/TFTP）
+│    ├── 多标签页：面板以标签承载，同工具可开多实例（串口/SSH/TFTP）
+│    └── 外观设置：DevKit 深/浅 UI 主题 + 独立终端配色（ANSI 16 色）
 ├── 核心工具（P0，已交付）
 │    ├── ① 程序员计算器（calc）
 │    ├── ② TFTP 服务器（tftp）
@@ -162,7 +163,7 @@ DevKit 主程序
 - 枚举串口（含 CH340 驱动毛刺自动复位重试），波特率 1200~12M，数据位/停止位/校验位/RTS-CTS 可配
 - ASCII/HEX 收发切换、发送历史下拉、定时循环发送、本地回显开关
 - DTR/RTS 控制、CTS/DSR/DCD 信号轮询显示
-- **终端视图**（xterm.js WebGL 渲染）：会话式管理（保存/一键载入）、深色主题、字体字号可调、回滚缓冲默认 50 万行（对齐 MobaXterm 量级）、Ctrl+F 查找（工具栏「查找」按钮等效）、查找打开时终端内选区/复制粘贴不受命中高亮干扰、查找以当前视口为起点（无选区时不跳缓冲区端点）、WebGL 上下文丢失自动重建（防蒙版残影）、复制粘贴（选中点击复制 / 右键粘贴）
+- **终端视图**（xterm.js WebGL 渲染）：会话式管理（保存/一键载入）、全局可切换终端配色（与 UI 主题解耦）、字体字号可调、回滚缓冲默认 50 万行（对齐 MobaXterm 量级）、Ctrl+F 查找（工具栏「查找」按钮等效）、查找打开时终端内选区/复制粘贴不受命中高亮干扰、查找以当前视口为起点（无选区时不跳缓冲区端点）、WebGL 上下文丢失自动重建（防蒙版残影）、复制粘贴（选中点击复制 / 右键粘贴）
 - **本地时间戳显示**（可选开关）：每行前插灰色 `[HH:MM:SS.mmm]`，仅插在行首不打进行中间
 - **日志双通道**（内容逐行 `[YYYY-MM-DD HH:MM:SS.mmm]` + 清洗后正文，两通道同格式）：
   - 自动落盘（主进程）：会话期间收发自动写 `<日志目录>/<COM>-<创建时刻>.log`，持久句柄批量写防杀毒扫描阻塞
@@ -222,7 +223,18 @@ DevKit 主程序
 | BR-09 | 日志 | 界面事件日志上限 1500 行；磁盘日志按身份+按天分文件（`bridge-logs/<身份>_bridge_YYYYMMDD.log`），每条带时间戳 |
 | BR-10 | 字节计数 | 每路独立 RX/TX 字节计数 |
 
-### 4.8 未实现（按需再排期）
+
+### 4.8 外观与终端主题（已交付）
+
+- **UI Theme 与 Terminal Theme 解耦**：应用界面使用 DevKit semantic tokens（`--dk-*`）映射 Element Plus；终端独立维护 xterm 颜色方案，切换任一侧不联动另一侧。
+- **应用主题**：内置 DevKit Dark / DevKit Light，可选择跟随 Windows 明暗模式；设置保存在 `userData/config.json` 的 `appearance` 段。
+- **终端主题**：内置 DevKit Default、Dark+、One Dark、Dracula、Nord、Gruvbox Dark、Solarized Dark/Light、Catppuccin Mocha、Tokyo Night。
+- **完整终端色板**：主题包含前景/背景/光标/选区以及标准 ANSI 16 色；串口和 SSH 共用 `TerminalView`，运行中修改通过 `term.options.theme` 热切换，不重建终端、不影响连接。
+- **预览与自定义**：设置窗口提供模拟终端与 16 色色块预览；可从任一主题复制为自定义主题，编辑基础颜色和 ANSI 16 色并持久化。
+- **Tabby 导入**：支持 Tabby color scheme 常见 YAML / JSON 格式导入，`colors[0..15]` 映射 ANSI normal/bright 颜色；同时接受 DevKit 自身 `TerminalTheme` JSON。
+- **扩展点**：`TerminalView` 保留可选 `theme` prop，后续可在全局主题之上增加单会话覆盖而无需改终端组件。
+
+### 4.9 未实现（按需再排期）
 
 - HEX/BIN 文件查看与编辑器（S-Record 互转、CRC/MD5/SHA1 摘要）
 - DHCP 服务器
@@ -235,11 +247,11 @@ DevKit 主程序
 |---|---|
 | 性能 | 启动 < 3s；待机内存 < 300MB（Electron 基线，原 150MB 目标按实际栈调整）；串口高速收发不丢包不卡界面 |
 | 可靠性 | TFTP 传输校验失败自动重传；宏回放必须可随时强停 |
-| 配置 | 所有配置存本地 `config/` 目录（JSON），程序可绿色拷贝迁移 |
+| 配置 | 所有配置存本地 JSON；外观配置位于 `userData/config.json` 的 `appearance` 段，程序重启后恢复 |
 | 日志 | 串口/SSH 会话自动日志写用户日志目录（`serial-logs/`/`ssh-logs/` 或用户设置目录），逐行带 `YYYY-MM-DD HH:MM:SS.mmm` 时间戳可追溯；清洗后内容（剥 ANSI、归一换行）与终端显示一致；宏文件即数据，人类可读 |
 | 内存 | 终端内存全量日志上限 500MB/会话，超限弹窗停止并提示先存日志 |
 | 安全 | 不联网、不上报；录制的宏文件含键盘内容，文档提示勿录制密码输入 |
-| 界面 | 中文界面；深色主题优先（嵌入式工程师偏好 + 长时间使用） |
+| 界面 | 中文界面；内置 DevKit Dark / Light，可跟随系统；终端配色独立于 UI，支持 ANSI 16 色主题、自定义与 Tabby 导入 |
 | 分发 | Electron portable 单文件或免安装目录；无代码签名，首次运行会有 SmartScreen 提示，附说明文档 |
 
 ---
@@ -250,7 +262,7 @@ DevKit 主程序
 |---|---|---|
 | 应用框架 | Electron（LTS，锁定版本） | UI 灵活、生态成熟；仅支持 Windows |
 | 前端框架 | Vue 3 + TypeScript + Vite | 生态成熟、类型安全 |
-| UI 组件库 | Element Plus（暗色主题） | 表格/表单组件齐全，中文资料多 |
+| UI 组件库 | Element Plus + DevKit semantic tokens | 表格/表单组件齐全；`--dk-*` 语义变量统一映射深/浅主题 |
 | 键鼠钩子/注入 | **自研轻量 N-API 原生插件**（SetWindowsHookEx + SendInput） | 灵魂功能可控性优先；备选现成库 uiohook-napi / @nut-tree/nut-js |
 | 全局热键 | Electron `globalShortcut` | 内置能力，零原生代码 |
 | 截图/取色 | `desktopCapturer` + `nativeImage.getPixelColor` | 内置能力，零原生代码 |
@@ -272,7 +284,8 @@ DevKit 主程序
 | M4 实用打磨 | 串口助手 + SSH 终端 + 网络助手 + 配置持久化 | 日常开发可以卸载/替代原有零散工具 | ✅ 已交付 |
 | M5 按需扩展 | 时间戳 / 编码 / 大小端 / 文本对比 / 取色器 | — | ✅ 已交付（v0.1.1 开源版） |
 | M6 串口TCP桥接 | 8 通道串口⇄TCP 透传 + 远程管理 | BR-01~10；双实例远程管理互控验证 | ✅ 已交付 |
-| M6+ 按需 | HEX/BIN 查看器、DHCP 服务器等 4.8 项 | — | 未开始 |
+| M7 外观主题 | UI 深/浅主题 + 终端 ANSI 16 色主题 + Tabby 导入/自定义 | 串口/SSH 热切换不掉线，配置重启恢复 | ✅ 已交付 |
+| M7+ 按需 | HEX/BIN 查看器、DHCP 服务器等 4.9 项 | — | 未开始 |
 
 ---
 
@@ -301,4 +314,5 @@ DevKit 主程序
 7. 终端日志双通道设计：主进程自动落盘（完整、持久句柄批量写）+ 内存全量日志（500MB 上限，MobaXterm 式，主进程 Buffer 堆外累积——渲染端字符串累积会随会话增长引发 GC 暂停卡顿）；两通道内容格式一致（共享 `src/shared/logtext.ts` 清洗与时间戳函数）
 8. HEX/BIN 查看器与 CRC 计算器暂缓（原 4.3/4.4）：优先交付 SSH/diff/取色器等更高频工具，见 4.7
 9. 文件传输协议选型：串口内置 YMODEM/ZMODEM（纯 TS 实现进 `tests/` 单测），不引第三方依赖
-10. **文档维护规约**：每次新增或修改功能需求/非功能需求时，必须同步更新本 spec（版本号递增、日期更新）；AI 协作流程见仓库根 `AGENTS.md`
+10. 主题架构：UI Theme 与 Terminal Theme 解耦；应用层以 `--dk-*` semantic tokens 驱动 Element Plus，终端主题集中由 ThemeRegistry 管理并通过共享 TerminalView 热切换；自定义主题进入 `appearance.customTerminalThemes`。
+11. **文档维护规约**：每次新增或修改功能需求/非功能需求时，必须同步更新本 spec（版本号递增、日期更新）；AI 协作流程见仓库根 `AGENTS.md`
