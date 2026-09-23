@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { win32 } from 'node:path'
 import type { ShellProfile } from '../../../shared/local-terminal'
@@ -43,9 +44,50 @@ function gitBashCandidates(env: Env, gitExe?: string): string[] {
   return result
 }
 
+/** `wsl.exe --list --quiet` 在部分 Windows 版本重定向输出时会混入 NUL（UTF-16LE 痕迹）。 */
+export function parseWslDistributionList(output: string): string[] {
+  const seen = new Set<string>()
+  const result: string[] = []
+  for (const rawLine of output.replaceAll('\0', '').split(/\r?\n/)) {
+    const name = rawLine.replace(/^\*\s*/, '').trim()
+    if (!name) continue
+    // Docker Desktop 的内部发行版不是用户交互式 Shell，不放进终端选择器。
+    if (name.toLowerCase() === 'docker-desktop' || name.toLowerCase() === 'docker-desktop-data') continue
+    if (seen.has(name.toLowerCase())) continue
+    seen.add(name.toLowerCase())
+    result.push(name)
+  }
+  return result
+}
+
+function wslExecutable(env: Env, exists: ExistsFn): string | undefined {
+  const systemRoot = env.SystemRoot ?? env.WINDIR ?? 'C:\\Windows'
+  return firstExisting(
+    [win32.join(systemRoot, 'System32', 'wsl.exe'), findOnWindowsPath('wsl.exe', env, exists)],
+    exists
+  )
+}
+
+export function detectWslDistributions(env: Env = process.env, exists: ExistsFn = existsSync): string[] {
+  const command = wslExecutable(env, exists)
+  if (!command) return []
+  try {
+    const output = execFileSync(command, ['--list', '--quiet'], {
+      encoding: 'utf8',
+      windowsHide: true,
+      timeout: 1500,
+      stdio: ['ignore', 'pipe', 'ignore']
+    })
+    return parseWslDistributionList(output)
+  } catch {
+    return []
+  }
+}
+
 export function detectWindowsShellProfiles(
   env: Env = process.env,
-  exists: ExistsFn = existsSync
+  exists: ExistsFn = existsSync,
+  wslDistributions?: string[]
 ): ShellProfile[] {
   const systemRoot = env.SystemRoot ?? env.WINDIR ?? 'C:\\Windows'
   const cmd = firstExisting(
@@ -61,20 +103,30 @@ export function detectWindowsShellProfiles(
     ],
     exists
   )
-  const powerShellCommand = pwsh ?? windowsPowerShell
 
   const gitExe = findOnWindowsPath('git.exe', env, exists)
   const gitBash = firstExisting(gitBashCandidates(env, gitExe), exists)
+  const wsl = wslExecutable(env, exists)
+  const distros = wslDistributions ?? detectWslDistributions(env, exists)
 
-  return [
+  const profiles: ShellProfile[] = [
     {
-      id: 'powershell',
-      name: 'PowerShell',
+      id: 'powershell-7',
+      name: 'PowerShell 7',
       kind: 'powershell',
-      command: powerShellCommand ?? 'pwsh.exe',
+      command: pwsh ?? 'pwsh.exe',
       args: ['-NoLogo'],
-      available: !!powerShellCommand,
-      source: pwsh ? 'PowerShell 7' : windowsPowerShell ? 'Windows PowerShell' : undefined
+      available: !!pwsh,
+      source: pwsh ? 'pwsh.exe' : undefined
+    },
+    {
+      id: 'windows-powershell',
+      name: 'Windows PowerShell',
+      kind: 'powershell',
+      command: windowsPowerShell ?? 'powershell.exe',
+      args: ['-NoLogo'],
+      available: !!windowsPowerShell,
+      source: windowsPowerShell ? 'Windows PowerShell 5.x' : undefined
     },
     {
       id: 'cmd',
@@ -95,4 +147,20 @@ export function detectWindowsShellProfiles(
       source: gitBash ? 'Git for Windows' : undefined
     }
   ]
+
+  if (wsl) {
+    for (const distro of distros) {
+      profiles.push({
+        id: `wsl:${distro}`,
+        name: `WSL · ${distro}`,
+        kind: 'wsl',
+        command: wsl,
+        args: ['--distribution', distro],
+        available: true,
+        source: 'Windows Subsystem for Linux'
+      })
+    }
+  }
+
+  return profiles
 }
