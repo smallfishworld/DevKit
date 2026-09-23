@@ -26,6 +26,10 @@ let output = ''
 let done = false
 const timer = setTimeout(() => finish(new Error('node-pty smoke test timed out')), 15000)
 
+function exitSoon(code) {
+  setTimeout(() => process.exit(code), 50)
+}
+
 function finish(error) {
   if (done) return
   done = true
@@ -33,7 +37,7 @@ function finish(error) {
   try { child.kill() } catch {}
   if (error) {
     console.error(error.stack || error.message || error)
-    process.exitCode = 1
+    exitSoon(1)
     return
   }
   if (process.env.DEVKIT_CHECK_PACKAGED === '1') {
@@ -50,12 +54,13 @@ function finish(error) {
     const nativeFiles = findNativeFiles(unpacked)
     if (nativeFiles.length === 0) {
       console.error(`packaged node-pty native module not found under ${unpacked}`)
-      process.exitCode = 1
+      exitSoon(1)
       return
     }
     console.log(`packaged node-pty native files: ${nativeFiles.length}`)
   }
   console.log('node-pty smoke test passed')
+  exitSoon(0)
 }
 
 child.onData((data) => {
