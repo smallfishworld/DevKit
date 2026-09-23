@@ -6,6 +6,7 @@ import TerminalView from '@renderer/components/TerminalView.vue'
 import { useTabStore } from '@renderer/stores/tabs'
 import {
   DEFAULT_LOCAL_TERMINAL_CONFIG,
+  normalizeLocalTerminalProfileId,
   type LocalTerminalAttachResult,
   type LocalTerminalConfig,
   type LocalTerminalDataEvent,
@@ -30,11 +31,18 @@ const TERM_SIZES = [10, 11, 12, 13, 14, 15, 16, 17, 18, 20, 22, 24, 26, 28]
 let unsubs: Array<() => void> = []
 
 const selectedProfile = computed(() => profiles.value.find((item) => item.id === profileId.value))
+const activeProfile = computed(() => profiles.value.find((item) => item.id === activeProfileId.value))
 const availableProfiles = computed(() => profiles.value.filter((item) => item.available))
+const windowsProfiles = computed(() => profiles.value.filter((item) => item.kind !== 'wsl'))
+const wslProfiles = computed(() => profiles.value.filter((item) => item.kind === 'wsl'))
+const profileChanged = computed(
+  () => running.value && !!activeProfileId.value && activeProfileId.value !== profileId.value
+)
 
 function fallbackProfileId(): string {
-  if (profiles.value.some((item) => item.id === profileId.value && item.available)) return profileId.value
-  return availableProfiles.value[0]?.id ?? profileId.value
+  const normalized = normalizeLocalTerminalProfileId(profileId.value, profiles.value)
+  if (profiles.value.some((item) => item.id === normalized && item.available)) return normalized
+  return availableProfiles.value[0]?.id ?? normalized
 }
 
 async function persistConfig(): Promise<void> {
@@ -70,6 +78,7 @@ async function start(clearFirst = false): Promise<void> {
     }
     running.value = true
     activeProfileId.value = result.profile?.id ?? profileId.value
+    profileId.value = activeProfileId.value
     if (result.cwd) cwd.value = result.cwd
     tabStore.rename(props.panelId, result.profile?.name ?? profile.name)
     await persistConfig()
@@ -159,7 +168,7 @@ onMounted(async () => {
   fontSize.value = result.config.fontSize || DEFAULT_LOCAL_TERMINAL_CONFIG.fontSize
   running.value = result.running
   activeProfileId.value = result.activeProfileId
-  profileId.value = fallbackProfileId()
+  profileId.value = running.value && activeProfileId.value ? activeProfileId.value : fallbackProfileId()
 
   if (availableProfiles.value.length === 0) {
     termView.value?.info('当前系统没有检测到可用的 Windows Shell。')
@@ -179,15 +188,25 @@ onUnmounted(() => {
   <div class="panel local-terminal-panel">
     <div class="terminal-toolbar panel-section">
       <div class="toolbar-row">
-        <span class="label">Shell</span>
-        <el-select v-model="profileId" size="small" style="width: 180px" @change="onProfileChanged">
-          <el-option
-            v-for="profile in profiles"
-            :key="profile.id"
-            :value="profile.id"
-            :label="profile.source ? `${profile.name} · ${profile.source}` : profile.name"
-            :disabled="!profile.available"
-          />
+        <span class="label">终端</span>
+        <el-select v-model="profileId" size="small" style="width: 240px" @change="onProfileChanged">
+          <el-option-group label="Windows Shell">
+            <el-option
+              v-for="profile in windowsProfiles"
+              :key="profile.id"
+              :value="profile.id"
+              :label="profile.source ? `${profile.name} · ${profile.source}` : profile.name"
+              :disabled="!profile.available"
+            />
+          </el-option-group>
+          <el-option-group v-if="wslProfiles.length" label="WSL">
+            <el-option
+              v-for="profile in wslProfiles"
+              :key="profile.id"
+              :value="profile.id"
+              :label="profile.name"
+            />
+          </el-option-group>
         </el-select>
 
         <span class="label">工作目录</span>
@@ -208,7 +227,9 @@ onUnmounted(() => {
           :loading="starting"
           @click="start(false)"
         >启动</el-button>
-        <el-button v-else size="small" :icon="RefreshRight" :loading="starting" @click="restart">重启</el-button>
+        <el-button v-else size="small" :type="profileChanged ? 'primary' : 'default'" :icon="RefreshRight" :loading="starting" @click="restart">
+          {{ profileChanged ? '切换终端' : '重启' }}
+        </el-button>
         <el-button v-if="running" size="small" type="danger" plain :icon="SwitchButton" @click="stop">终止</el-button>
       </div>
 
@@ -223,8 +244,11 @@ onUnmounted(() => {
         </el-select>
         <el-button size="small" text :icon="Search" @click="openSearch">查找</el-button>
         <el-button size="small" text @click="clearTerm">清屏</el-button>
+        <span v-if="profileChanged" class="switch-hint">
+          当前 {{ activeProfile?.name ?? activeProfileId }}，待切换到 {{ selectedProfile?.name ?? profileId }}
+        </span>
         <span class="status" :class="{ online: running }">
-          {{ running ? `运行中 · ${activeProfileId ?? profileId}` : '已停止' }}
+          {{ running ? `运行中 · ${activeProfile?.name ?? activeProfileId ?? profileId}` : '已停止' }}
         </span>
       </div>
     </div>
@@ -276,10 +300,17 @@ onUnmounted(() => {
   min-width: 180px;
 }
 
+.switch-hint {
+  font-size: 12px;
+  color: var(--el-color-warning);
+  white-space: nowrap;
+}
+
 .status {
   margin-left: auto;
   font-size: 12px;
   color: var(--el-text-color-secondary);
+  white-space: nowrap;
 }
 
 .status.online {
