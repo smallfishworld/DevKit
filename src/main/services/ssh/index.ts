@@ -212,8 +212,6 @@ class SshService implements ToolService {
         return this.resize(panelId, payload as { cols: number; rows: number })
       case 'log:mem-save':
         return this.saveMemLog(panelId)
-      case 'log:mem-save':
-        return this.saveMemLog(panelId)
       case 'log:mem-clear':
         this.clearMemLog(panelId)
         return { ok: true }

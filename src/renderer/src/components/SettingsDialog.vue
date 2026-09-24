@@ -11,9 +11,6 @@ const visible = computed({
   set: (value: boolean) => emit('update:modelValue', value)
 })
 
-const uiChoice = computed(() =>
-  appearance.settings.followSystem ? 'system' : appearance.settings.uiTheme
-)
 const terminal = computed(() => appearance.terminalTheme)
 
 const ansiRows = computed(() => [
@@ -35,42 +32,19 @@ const ansiRows = computed(() => [
   ['brightWhite', terminal.value.ansi.brightWhite]
 ] as const)
 
-function onUiThemeChange(value: string): void {
-  if (value === 'system') appearance.setFollowSystem(true)
-  else appearance.setUiTheme(value)
-}
-
 function onTerminalThemeChange(value: string): void {
   appearance.setTerminalTheme(value)
 }
 </script>
 
 <template>
-  <el-dialog v-model="visible" title="外观与终端主题" width="720px" append-to-body>
+  <el-dialog v-model="visible" title="终端配色" width="720px" append-to-body>
     <div class="appearance-settings">
       <section class="setting-section">
         <div class="setting-head">
           <div>
-            <h3>应用主题</h3>
-            <p>控制 DevKit 界面、面板、标签栏和 Element Plus 组件的整体外观。</p>
-          </div>
-          <el-select :model-value="uiChoice" style="width: 190px" @change="onUiThemeChange">
-            <el-option value="system" label="跟随系统" />
-            <el-option
-              v-for="theme in appearance.uiThemes"
-              :key="theme.id"
-              :value="theme.id"
-              :label="theme.name"
-            />
-          </el-select>
-        </div>
-      </section>
-
-      <section class="setting-section">
-        <div class="setting-head">
-          <div>
             <h3>终端配色</h3>
-            <p>串口助手和 SSH 共用同一套全局终端主题，切换后当前会话立即生效。</p>
+            <p>选定的终端主题同时驱动整个界面：主界面、面板、标签栏、按钮、边框与弹层全部跟随，切换后立即生效。</p>
           </div>
           <el-select
             :model-value="appearance.settings.terminalTheme"

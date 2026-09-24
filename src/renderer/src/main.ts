@@ -7,10 +7,12 @@ import 'element-plus/dist/index.css'
 import 'element-plus/theme-chalk/dark/css-vars.css'
 import App from './App.vue'
 import './styles/global.css'
-import { DEVKIT_DARK_UI_THEME, applyUiTheme } from './theme'
+import { DEVKIT_TERMINAL_THEME, applyUiTheme } from './theme'
+import { uiThemeFromTerminal } from '../../shared/theme'
 
-// 首屏先应用默认主题，随后 AppearanceStore 会从 userData/config.json 恢复用户选择。
-applyUiTheme(DEVKIT_DARK_UI_THEME)
+// 首屏先应用默认终端主题衍生的界面配色，随后 AppearanceStore 会从
+// userData/config.json 恢复用户选中的终端主题。
+applyUiTheme(uiThemeFromTerminal(DEVKIT_TERMINAL_THEME))
 
 const app = createApp(App)
 app.use(createPinia())

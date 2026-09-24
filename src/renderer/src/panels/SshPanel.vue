@@ -2,11 +2,13 @@
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
+  ArrowRight,
   CircleClose,
   Connection,
   Delete,
   Download,
   Edit,
+  Fold,
   FolderOpened,
   Key,
   Lock,
@@ -58,6 +60,13 @@ const sessionName = ref('')
 /** 左侧会话栏宽度（拖动分隔条调整，重启记忆） */
 const sidebarWidth = ref(210)
 const { onMouseDown: onSidebarResize } = useSidebarDrag(sidebarWidth, () => void persistConfig())
+/** 左侧会话/快捷命令栏显示/隐藏 */
+const sidebarHidden = ref(false)
+/** 折叠/展开整条会话栏（与快捷命令栏一起收起；重启记忆） */
+function toggleSidebar(): void {
+  sidebarHidden.value = !sidebarHidden.value
+  void persistConfig()
+}
 
 /** 自动日志开关（连接期间收发自动落盘，默认开启；重启记忆） */
 const autoLog = ref(true)
@@ -139,6 +148,7 @@ onMounted(async () => {
   autoLog.value = config.value.autoLog !== false
   showTime.value = config.value.showTime === true
   if (config.value.sidebarWidth) sidebarWidth.value = config.value.sidebarWidth
+  sidebarHidden.value = config.value.sidebarHidden === true
   termView.value?.info('就绪。填写主机信息后点击「连接」，终端内直接输入命令。')
 })
 
@@ -249,6 +259,7 @@ async function persistConfig(): Promise<void> {
   config.value.autoLog = autoLog.value
   config.value.showTime = showTime.value
   config.value.sidebarWidth = sidebarWidth.value
+  config.value.sidebarHidden = sidebarHidden.value
   await window.api.invoke('ssh', 'config:set', props.panelId, JSON.parse(JSON.stringify(config.value)))
 }
 
@@ -371,43 +382,51 @@ async function pickKeyFile(): Promise<void> {
     </div>
 
     <div class="body">
-      <!-- 会话库；宽度可拖动调整 -->
-      <div class="sessions" :style="{ width: sidebarWidth + 'px' }">
-        <div class="sessions-head">
-          <span>会话</span>
-          <span class="hint">点击载入参数</span>
-        </div>
-        <div
-          v-for="(s, i) in sessions"
-          :key="s.name"
-          class="session-item"
-          :class="{ active: s.params.host === params.host && s.params.port === params.port }"
-          @click="loadSession(i)"
-        >
-          <div class="session-name">{{ s.name }}</div>
-          <div class="session-sub">
-            {{ s.params.authType === 'key' ? `${s.params.username}@${s.params.host}:${s.params.port}` : `${s.params.username}@${s.params.host}:${s.params.port} · 密码` }}
-            <el-button link type="danger" size="small" @click.stop="deleteSession(i)">
-              <el-icon><Delete /></el-icon>
-            </el-button>
+      <!-- 会话库 + 快捷命令栏；可拖动调宽，也可整体折叠/展开 -->
+      <template v-if="!sidebarHidden">
+        <div class="sessions" :style="{ width: sidebarWidth + 'px' }">
+          <div class="sessions-head">
+            <span>会话</span>
+            <span class="hint">点击载入参数</span>
           </div>
-        </div>
-        <div v-if="sessions.length === 0" class="hint" style="padding: 8px">
-          暂无会话。连接成功后输入名称保存。
-        </div>
-        <div class="sessions-head" style="margin-top: 10px">
-          <span class="hint">⚠ 密码明文保存在本机 config.json，请勿保存生产环境密码</span>
+          <div
+            v-for="(s, i) in sessions"
+            :key="s.name"
+            class="session-item"
+            :class="{ active: s.params.host === params.host && s.params.port === params.port }"
+            @click="loadSession(i)"
+          >
+            <div class="session-name">{{ s.name }}</div>
+            <div class="session-sub">
+              {{ s.params.authType === 'key' ? `${s.params.username}@${s.params.host}:${s.params.port}` : `${s.params.username}@${s.params.host}:${s.params.port} · 密码` }}
+              <el-button link type="danger" size="small" @click.stop="deleteSession(i)">
+                <el-icon><Delete /></el-icon>
+              </el-button>
+            </div>
+          </div>
+          <div v-if="sessions.length === 0" class="hint" style="padding: 8px">
+            暂无会话。连接成功后输入名称保存。
+          </div>
+          <div class="sessions-head" style="margin-top: 10px">
+            <span class="hint">⚠ 密码明文保存在本机 config.json，请勿保存生产环境密码</span>
+          </div>
+
+          <QuickCmdManager :enabled="open" :writer="macroWriter" />
         </div>
 
-        <QuickCmdManager :enabled="open" :writer="macroWriter" />
+        <!-- 拖动调整会话栏宽度（VS Code 式分隔条） -->
+        <div class="sidebar-split" title="拖动调整宽度" @mousedown="onSidebarResize"></div>
+      </template>
+
+      <!-- 折叠后的细条：点击展开会话栏 -->
+      <div v-else class="sidebar-collapsed" :title="'展开会话栏'" @click="toggleSidebar">
+        <el-icon :size="16"><ArrowRight /></el-icon>
       </div>
-
-      <!-- 拖动调整会话栏宽度（VS Code 式分隔条） -->
-      <div class="sidebar-split" title="拖动调整宽度" @mousedown="onSidebarResize"></div>
 
       <!-- 终端 -->
       <div class="term-col">
         <div class="term-opts">
+          <el-button size="small" text :icon="sidebarHidden ? ArrowRight : Fold" title="折叠/展开会话栏" @click="toggleSidebar" />
           <el-tooltip content="终端字体（可手输系统内已安装的字体名）" placement="top">
             <el-select
               v-model="termFont"
@@ -528,10 +547,30 @@ async function pickKeyFile(): Promise<void> {
   font-weight: 600;
   font-size: 13px;
   margin: 4px 0 8px;
+  gap: 8px;
 }
 
 .sessions-head .hint {
   font-weight: 400;
+}
+
+/* 折叠后的细条（VS Code 式）：占 24px，点击展开 */
+.sidebar-collapsed {
+  flex: 0 0 auto;
+  width: 24px;
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-right: 1px solid var(--el-border-color-lighter);
+  color: var(--el-text-color-secondary);
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.sidebar-collapsed:hover {
+  background: var(--el-fill-color);
+  color: var(--el-color-primary);
 }
 
 .session-item {

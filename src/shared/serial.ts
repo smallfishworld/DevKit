@@ -47,6 +47,8 @@ export interface SerialConfig {
   showTime: boolean
   /** 左侧会话栏宽度（拖动分隔条调整，重启记忆） */
   sidebarWidth: number
+  /** 左侧会话/快捷命令栏显示/隐藏 */
+  sidebarHidden?: boolean
 }
 
 /** 文件传输协议：YMODEM（ry/sy）或 ZMODEM（rz/sz） */

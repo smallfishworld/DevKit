@@ -56,8 +56,22 @@ onMounted(() => {
       </el-popover>
       <span class="app-title">DevKit</span>
       <div class="header-spacer"></div>
-      <button class="header-action" title="外观与终端主题" @click="settingsOpen = true">
-        <el-icon :size="16"><Setting /></el-icon>
+      <button class="header-action" title="终端配色（皮肤）" @click="settingsOpen = true">
+        <svg
+          class="skin-icon"
+          :width="16"
+          :height="16"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.8"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <!-- T恤（皮肤/主题）图标 -->
+          <path d="M15 4l6 2v5h-3v8a1 1 0 0 1 -1 1h-10a1 1 0 0 1 -1 -1v-8h-3v-5l6 -2a3 3 0 0 0 6 0" />
+        </svg>
       </button>
       <div class="win-controls">
         <button class="win-btn" title="最小化" @click="winMinimize">

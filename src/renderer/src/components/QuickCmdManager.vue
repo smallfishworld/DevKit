@@ -14,7 +14,7 @@ import { useTermMacros } from '../composables/useTermMacros'
 const props = defineProps<{
   /** 未连接时点击宏只提示不执行 */
   enabled: boolean
-  /** 面板注入的步骤执行器（串口 / SSH 写法不同） */
+  /** 面板注入的步骤执行器（串口 / SSH / 本地终端写法不同） */
   writer: (st: QuickCmdStep) => void
   /** 空提示文案 */
   emptyHint?: string
@@ -338,7 +338,7 @@ async function onImport(): Promise<void> {
 
 <template>
   <div>
-    <div class="sessions-head" style="margin-top: 10px">
+    <div class="sessions-head cmd-head" style="margin-top: 10px">
       <span>快捷命令</span>
       <span>
         <el-tooltip

@@ -43,6 +43,8 @@ export interface SshConfig {
   showTime: boolean
   /** 左侧会话栏宽度（拖动分隔条调整，重启记忆） */
   sidebarWidth: number
+  /** 左侧会话/快捷命令栏显示/隐藏 */
+  sidebarHidden?: boolean
 }
 
 export const DEFAULT_SSH_CONFIG: SshConfig = {

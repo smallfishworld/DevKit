@@ -1,107 +1,26 @@
 import type { ITheme } from '@xterm/xterm'
-import type { AppearanceSettings, TerminalTheme, UiTheme } from '../../../shared/theme'
+import type { TerminalTheme, UiTheme } from '../../../shared/theme'
+import { uiThemeFromTerminal } from '../../../shared/theme'
+
+export { uiThemeFromTerminal }
 
 export class ThemeRegistry {
-  private readonly uiThemes = new Map<string, UiTheme>()
   private readonly terminalThemes = new Map<string, TerminalTheme>()
 
-  constructor(uiThemes: UiTheme[] = [], terminalThemes: TerminalTheme[] = []) {
-    uiThemes.forEach((theme) => this.registerUi(theme))
+  constructor(terminalThemes: TerminalTheme[] = []) {
     terminalThemes.forEach((theme) => this.registerTerminal(theme))
-  }
-
-  registerUi(theme: UiTheme): void {
-    this.uiThemes.set(theme.id, theme)
   }
 
   registerTerminal(theme: TerminalTheme): void {
     this.terminalThemes.set(theme.id, theme)
   }
 
-  getUi(id: string): UiTheme | undefined {
-    return this.uiThemes.get(id)
-  }
-
   getTerminal(id: string): TerminalTheme | undefined {
     return this.terminalThemes.get(id)
   }
 
-  listUi(): UiTheme[] {
-    return Array.from(this.uiThemes.values())
-  }
-
   listTerminal(): TerminalTheme[] {
     return Array.from(this.terminalThemes.values())
-  }
-}
-
-export const DEVKIT_DARK_UI_THEME: UiTheme = {
-  id: 'devkit-dark',
-  name: 'DevKit Dark',
-  mode: 'dark',
-  colors: {
-    primary: '#5b8ac2',
-    success: '#67c23a',
-    warning: '#d8a657',
-    danger: '#d96868',
-    info: '#7d8b99',
-    background: '#141414',
-    backgroundPage: '#101216',
-    surface: '#1b1d21',
-    fill: '#25282d',
-    fillLight: '#202329',
-    fillDark: '#30343a',
-    textPrimary: '#e4e7ed',
-    textRegular: '#c5c9d1',
-    textSecondary: '#9097a3',
-    textPlaceholder: '#6f7782',
-    border: '#4b4f57',
-    borderLight: '#3d4148',
-    borderLighter: '#30343a',
-    diffChangeRow: 'rgba(198, 66, 66, 0.14)',
-    diffChangeSegment: 'rgba(229, 57, 53, 0.38)',
-    diffOrphanRow: 'rgba(67, 160, 71, 0.16)',
-    diffOnlyLeft: '#7ba3cc',
-    diffOnlyRight: '#dfad72',
-    diffDiffer: '#d99a9a',
-    diffIdentical: '#90a4ae',
-    diffDirectory: '#81c784',
-    diffIgnored: '#546e7a'
-  }
-}
-
-export const DEVKIT_LIGHT_UI_THEME: UiTheme = {
-  id: 'devkit-light',
-  name: 'DevKit Light',
-  mode: 'light',
-  colors: {
-    primary: '#3f6f9f',
-    success: '#4f8f45',
-    warning: '#a86f1f',
-    danger: '#b94a48',
-    info: '#657786',
-    background: '#ffffff',
-    backgroundPage: '#f4f6f8',
-    surface: '#ffffff',
-    fill: '#eef1f4',
-    fillLight: '#f5f7f9',
-    fillDark: '#e2e6ea',
-    textPrimary: '#20242a',
-    textRegular: '#3d454f',
-    textSecondary: '#69737f',
-    textPlaceholder: '#9aa3ad',
-    border: '#c8ced6',
-    borderLight: '#d8dde3',
-    borderLighter: '#e6e9ed',
-    diffChangeRow: 'rgba(198, 66, 66, 0.10)',
-    diffChangeSegment: 'rgba(229, 57, 53, 0.24)',
-    diffOrphanRow: 'rgba(67, 160, 71, 0.13)',
-    diffOnlyLeft: '#416f9b',
-    diffOnlyRight: '#9a641f',
-    diffDiffer: '#a94f4f',
-    diffIdentical: '#66717d',
-    diffDirectory: '#4f8f45',
-    diffIgnored: '#8a949e'
   }
 }
 
@@ -143,8 +62,6 @@ export const DEVKIT_TERMINAL_THEME = terminal(
   'DevKit'
 )
 
-export const UI_THEMES: UiTheme[] = [DEVKIT_DARK_UI_THEME, DEVKIT_LIGHT_UI_THEME]
-
 export const TERMINAL_THEMES: TerminalTheme[] = [
   DEVKIT_TERMINAL_THEME,
   terminal('vscode-dark-plus', 'VS Code Dark+', '#cccccc', '#1e1e1e', '#ffffff', '#264f78', {
@@ -182,10 +99,42 @@ export const TERMINAL_THEMES: TerminalTheme[] = [
   terminal('tokyo-night', 'Tokyo Night', '#c0caf5', '#1a1b26', '#c0caf5', '#33467c', {
     black: '#15161e', red: '#f7768e', green: '#9ece6a', yellow: '#e0af68', blue: '#7aa2f7', magenta: '#bb9af7', cyan: '#7dcfff', white: '#a9b1d6',
     brightBlack: '#414868', brightRed: '#f7768e', brightGreen: '#9ece6a', brightYellow: '#e0af68', brightBlue: '#7aa2f7', brightMagenta: '#bb9af7', brightCyan: '#7dcfff', brightWhite: '#c0caf5'
-  }, 'enkia')
+  }, 'enkia'),
+  terminal('monokai', 'Monokai', '#f8f8f2', '#272822', '#f8f8f0', '#49483e', {
+    black: '#272822', red: '#f92672', green: '#a6e22e', yellow: '#f4bf75', blue: '#66d9ef', magenta: '#ae81ff', cyan: '#a1efe4', white: '#f8f8f2',
+    brightBlack: '#75715e', brightRed: '#f92672', brightGreen: '#a6e22e', brightYellow: '#f4bf75', brightBlue: '#66d9ef', brightMagenta: '#ae81ff', brightCyan: '#a1efe4', brightWhite: '#f9f8f5'
+  }, 'Monokai'),
+  terminal('material-dark', 'Material (Dark)', '#eeffff', '#263238', '#ffcb6b', '#314549', {
+    black: '#000000', red: '#f07178', green: '#c3e88d', yellow: '#ffcb6b', blue: '#82aaff', magenta: '#c792ea', cyan: '#89ddff', white: '#eeffff',
+    brightBlack: '#546e7a', brightRed: '#ff8b92', brightGreen: '#ddffa7', brightYellow: '#ffe585', brightBlue: '#a2caff', brightMagenta: '#e2a9ff', brightCyan: '#b6f3ff', brightWhite: '#ffffff'
+  }, 'Google'),
+  terminal('github-dark', 'GitHub Dark', '#adbac7', '#1c2128', '#539bf5', '#373e47', {
+    black: '#090a0b', red: '#f47067', green: '#57ab5a', yellow: '#c69026', blue: '#539bf5', magenta: '#b083f0', cyan: '#39c5cf', white: '#909dab',
+    brightBlack: '#636e7b', brightRed: '#f47067', brightGreen: '#57ab5a', brightYellow: '#c69026', brightBlue: '#539bf5', brightMagenta: '#b083f0', brightCyan: '#39c5cf', brightWhite: '#adbac7'
+  }, 'GitHub'),
+  terminal('ayu-mirage', 'Ayu Mirage', '#cbccc6', '#1f2430', '#ffcc66', '#343f44', {
+    black: '#191e2a', red: '#f07178', green: '#aad94c', yellow: '#ffb454', blue: '#59c2ff', magenta: '#d2a6ff', cyan: '#95e6cb', white: '#cbccc6',
+    brightBlack: '#565b66', brightRed: '#ff6a78', brightGreen: '#b8e532', brightYellow: '#ffb454', brightBlue: '#69c4ff', brightMagenta: '#d889ff', brightCyan: '#9ae8cb', brightWhite: '#f3f4f5'
+  }, 'ayu'),
+  terminal('pure-black', 'Pure Black', '#e6e6e6', '#000000', '#e6e6e6', '#333333', {
+    black: '#000000', red: '#cc5555', green: '#55cc55', yellow: '#cccc55', blue: '#5555cc', magenta: '#cc55cc', cyan: '#55cccc', white: '#e6e6e6',
+    brightBlack: '#777777', brightRed: '#ff7777', brightGreen: '#77ff77', brightYellow: '#ffff77', brightBlue: '#7777ff', brightMagenta: '#ff77ff', brightCyan: '#77ffff', brightWhite: '#ffffff'
+  }, 'DevKit'),
+  terminal('black-navy', 'Dim Ink', '#d8dee9', '#0a0f14', '#d8dee9', '#1f2630', {
+    black: '#0a0f14', red: '#c05b5b', green: '#5fa86f', yellow: '#c9a45c', blue: '#5a7fa8', magenta: '#a86baa', cyan: '#57a7aa', white: '#d8dee9',
+    brightBlack: '#5a6673', brightRed: '#e07373', brightGreen: '#7bc98c', brightYellow: '#e0c077', brightBlue: '#7ca4cc', brightMagenta: '#c08ac5', brightCyan: '#77c9cc', brightWhite: '#f2f6fa'
+  }, 'DevKit'),
+  terminal('homebrew-green', 'Homebrew Green', '#00ff00', '#000000', '#00ff00', '#00ff0044', {
+    black: '#000000', red: '#990000', green: '#00a600', yellow: '#999900', blue: '#0000b2', magenta: '#b200b2', cyan: '#00a6b2', white: '#bfbfbf',
+    brightBlack: '#666666', brightRed: '#e50000', brightGreen: '#00d900', brightYellow: '#e5e500', brightBlue: '#0000ff', brightMagenta: '#e500e5', brightCyan: '#00e5e5', brightWhite: '#e5e5e5'
+  }, 'Homebrew'),
+  terminal('eye-green', 'Soft Green', '#2f4f3a', '#c7edcc', '#2f4f3a', '#a8d8b4', {
+    black: '#3a4a3f', red: '#a03d3d', green: '#2a7d43', yellow: '#8a6a1d', blue: '#3a5a8a', magenta: '#7a4a7a', cyan: '#2a6a6a', white: '#2f4f3a',
+    brightBlack: '#6a7a6f', brightRed: '#c05757', brightGreen: '#3d9a58', brightYellow: '#a8872e', brightBlue: '#5578ab', brightMagenta: '#9a639a', brightCyan: '#45898c', brightWhite: '#12381f'
+  }, 'DevKit')
 ]
 
-export const themeRegistry = new ThemeRegistry(UI_THEMES, TERMINAL_THEMES)
+export const themeRegistry = new ThemeRegistry(TERMINAL_THEMES)
 
 export function toXtermTheme(theme: TerminalTheme): ITheme {
   return {
@@ -212,11 +161,6 @@ export function toXtermTheme(theme: TerminalTheme): ITheme {
     brightCyan: theme.ansi.brightCyan,
     brightWhite: theme.ansi.brightWhite
   }
-}
-
-export function resolveUiTheme(settings: AppearanceSettings, prefersDark: boolean): UiTheme {
-  const id = settings.followSystem ? (prefersDark ? 'devkit-dark' : 'devkit-light') : settings.uiTheme
-  return themeRegistry.getUi(id) ?? DEVKIT_DARK_UI_THEME
 }
 
 export function applyUiTheme(theme: UiTheme): void {

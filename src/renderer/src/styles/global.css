@@ -31,6 +31,8 @@ body {
  * DevKit semantic tokens -> Element Plus variables。
  * 具体颜色由 theme/applyUiTheme() 写入 --dk-*；业务组件只消费语义变量，
  * 避免 UI 主题与 Element Plus 实现细节耦合。
+ * 选定的终端主题经 uiThemeFromTerminal() 派生为完整界面配色，同样走 applyUiTheme
+ * 写入 html 根节点，因此整个窗口（含传送到 body 的弹层）都跟随终端主题。
  */
 html[data-ui-theme] {
   --el-color-primary: var(--dk-primary);

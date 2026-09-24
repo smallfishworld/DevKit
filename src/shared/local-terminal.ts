@@ -15,6 +15,10 @@ export interface LocalTerminalConfig {
   cwd: string
   font: string
   fontSize: number
+  /** 左侧快捷命令栏宽度（px），可拖动分隔条调整并记忆 */
+  quickCmdWidth?: number
+  /** 左侧快捷命令栏是否折叠 */
+  quickCmdHidden?: boolean
 }
 
 export const DEFAULT_LOCAL_TERMINAL_CONFIG: LocalTerminalConfig = {

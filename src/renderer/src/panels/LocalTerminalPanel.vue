@@ -1,9 +1,13 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { FolderOpened, RefreshRight, Search, SwitchButton, VideoPlay } from '@element-plus/icons-vue'
+import { FolderOpened, Fold, ArrowRight, RefreshRight, Search, SwitchButton, VideoPlay } from '@element-plus/icons-vue'
 import TerminalView from '@renderer/components/TerminalView.vue'
+import QuickCmdManager from '@renderer/components/QuickCmdManager.vue'
 import { useTabStore } from '@renderer/stores/tabs'
+import { useSidebarDrag } from '../composables/useSidebarDrag'
+import { useTermMacros } from '../composables/useTermMacros'
+import type { QuickCmdStep } from '../../../shared/term-macro'
 import {
   DEFAULT_LOCAL_TERMINAL_CONFIG,
   normalizeLocalTerminalProfileId,
@@ -17,6 +21,11 @@ import {
 const props = defineProps<{ panelId: string }>()
 const tabStore = useTabStore()
 const termView = ref<InstanceType<typeof TerminalView> | null>(null)
+
+/** 左侧快捷命令栏宽度 + 折叠状态（随配置持久化，重启记忆） */
+const quickCmdWidth = ref(220)
+const quickCmdHidden = ref(false)
+const { onMouseDown: onQuickCmdResize } = useSidebarDrag(quickCmdWidth, () => void persistConfig())
 
 const profiles = ref<ShellProfile[]>([])
 const profileId = ref(DEFAULT_LOCAL_TERMINAL_CONFIG.defaultProfileId)
@@ -50,9 +59,26 @@ async function persistConfig(): Promise<void> {
     defaultProfileId: profileId.value,
     cwd: cwd.value,
     font: font.value,
-    fontSize: fontSize.value
+    fontSize: fontSize.value,
+    quickCmdWidth: quickCmdWidth.value,
+    quickCmdHidden: quickCmdHidden.value
   }
   await window.api.invoke('local-terminal', 'config:set', props.panelId, config)
+}
+
+/** 快捷命令步骤执行器：本地终端写法（命令追加 \r；按键原样） */
+function macroWriter(st: QuickCmdStep): void {
+  if (st.type === 'key') {
+    window.api.invoke('local-terminal', 'write', props.panelId, { text: st.key ?? '' }).catch(() => {})
+    return
+  }
+  const text = (st.text ?? '') + (st.crlf && st.mode !== 'hex' ? '\r' : '')
+  window.api.invoke('local-terminal', 'write', props.panelId, { text }).catch(() => {})
+}
+
+function toggleQuickCmd(): void {
+  quickCmdHidden.value = !quickCmdHidden.value
+  void persistConfig()
 }
 
 async function start(clearFirst = false): Promise<void> {
@@ -167,6 +193,8 @@ onMounted(async () => {
   cwd.value = result.cwd ?? result.config.cwd ?? ''
   font.value = result.config.font || DEFAULT_LOCAL_TERMINAL_CONFIG.font
   fontSize.value = result.config.fontSize || DEFAULT_LOCAL_TERMINAL_CONFIG.fontSize
+  if (result.config.quickCmdWidth) quickCmdWidth.value = result.config.quickCmdWidth
+  if (result.config.quickCmdHidden) quickCmdHidden.value = result.config.quickCmdHidden
   running.value = result.running
   activeProfileId.value = result.activeProfileId
   profileId.value = running.value && activeProfileId.value ? activeProfileId.value : fallbackProfileId()
@@ -235,6 +263,9 @@ onUnmounted(() => {
       </div>
 
       <div class="toolbar-row secondary">
+        <el-tooltip :content="quickCmdHidden ? '展开快捷命令栏' : '隐藏快捷命令栏'" placement="top">
+          <el-button size="small" text :icon="quickCmdHidden ? ArrowRight : Fold" @click="toggleQuickCmd" />
+        </el-tooltip>
         <el-select v-model="font" size="small" filterable allow-create style="width: 132px" @change="onFontChanged">
           <el-option value="Consolas" label="Consolas" />
           <el-option value="Cascadia Mono" label="Cascadia Mono" />
@@ -254,15 +285,29 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <div class="terminal-host">
-      <TerminalView
-        ref="termView"
-        :font-size="fontSize"
-        :font="font"
-        @update:font-size="onFontSizeUpdate"
-        @data="onTermData"
-        @resize="onTermResize"
-      />
+    <div class="term-body">
+      <template v-if="!quickCmdHidden">
+        <div class="quick-cmd-col" :style="{ width: quickCmdWidth + 'px' }">
+          <QuickCmdManager :enabled="running" :writer="macroWriter" />
+        </div>
+        <div class="sidebar-split" title="拖动调整快捷命令栏宽度" @mousedown="onQuickCmdResize"></div>
+      </template>
+
+      <!-- 折叠后的细条：点击展开（与串口/SSH 一致） -->
+      <div v-else class="sidebar-collapsed" title="展开快捷命令栏" @click="toggleQuickCmd">
+        <el-icon :size="16"><ArrowRight /></el-icon>
+      </div>
+
+      <div class="terminal-host">
+        <TerminalView
+          ref="termView"
+          :font-size="fontSize"
+          :font="font"
+          @update:font-size="onFontSizeUpdate"
+          @data="onTermData"
+          @resize="onTermResize"
+        />
+      </div>
     </div>
   </div>
 </template>
@@ -318,8 +363,57 @@ onUnmounted(() => {
   color: var(--el-color-success);
 }
 
+.term-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  gap: 8px;
+}
+
+/* 快捷命令栏（VS Code 式）：可拖动调宽，分栏与终端之间留分隔条 */
+.quick-cmd-col {
+  flex: 0 0 auto;
+  min-width: 150px;
+  overflow-y: auto;
+  border-right: 1px solid var(--el-border-color-lighter);
+  padding-right: 12px;
+}
+
+.sidebar-split {
+  flex: 0 0 4px;
+  margin: 0 -2px;
+  cursor: col-resize;
+  border-radius: 2px;
+  z-index: 5;
+}
+
+.sidebar-split:hover {
+  background: var(--el-color-primary);
+  opacity: 0.5;
+}
+
+/* 折叠后的细条（VS Code 式，与串口/SSH 一致）：占 24px，点击展开 */
+.sidebar-collapsed {
+  flex: 0 0 auto;
+  width: 24px;
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-right: 1px solid var(--el-border-color-lighter);
+  color: var(--el-text-color-secondary);
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.sidebar-collapsed:hover {
+  background: var(--el-fill-color);
+  color: var(--el-color-primary);
+}
+
 .terminal-host {
   flex: 1;
+  min-width: 0;
   min-height: 0;
   display: flex;
 }
