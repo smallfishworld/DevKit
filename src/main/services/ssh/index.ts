@@ -50,8 +50,8 @@ interface SshSession {
 }
 
 const sessions = new Map<string, SshSession>()
-/** 批量合并窗口：16ms ≈ 60fps，视觉流畅；仍合并吸收网络碎片包 */
-const FLUSH_MS = 16
+/** 批量合并窗口：32ms ≈ 30fps，打印刷新依旧顺滑；解析与重绘调用次数较 16ms 减半，仍合并吸收网络碎片包 */
+const FLUSH_MS = 32
 /** 内存全量日志上限（字节，UTF-8 实际大小）；超限停止记录并提示先存日志 */
 const MEM_LOG_LIMIT = 500 * 1024 * 1024
 /** 内存日志攒块阈值：行凑满 256 段拼成单块 Buffer，控制 Buffer 对象数量

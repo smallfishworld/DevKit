@@ -27,10 +27,8 @@ const props = withDefaults(
     localEcho?: boolean
     /** 显示时间戳：每批接收数据前插灰色本地时间 [HH:MM:SS.mmm]（与日志落盘格式一致） */
     showTime?: boolean
-    /** 回滚行数上限（可滚回查看的历史行数）；MobaXterm 默认 360000，取 500000 留余量 */
-    scrollback?: number
   }>(),
-  { font: 'Consolas', fontSize: 13, localEcho: false, showTime: false, scrollback: 500000 }
+  { font: 'Consolas', fontSize: 13, localEcho: false, showTime: false }
 )
 
 const appearance = useAppearanceStore()
@@ -53,6 +51,8 @@ let fitAddon: FitAddon | null = null
 let searchAddon: SearchAddon | null = null
 let webglAddon: WebglAddon | null = null
 let resizeObserver: ResizeObserver | null = null
+/** fit 节流的收尾定时器（拖动停止后补最后一次重排） */
+let fitTrailingTimer: ReturnType<typeof setTimeout> | null = null
 // 被 select/clearSelection 补丁包装前的原始方法（doSearch 需要绕过锁造临时锚点选区）
 let rawSelect: ((col: number, row: number, length: number) => void) | null = null
 
@@ -101,7 +101,8 @@ onMounted(() => {
     lineHeight: 1.2,
     cursorBlink: true,
     convertEol: true, // 兼容只发 \n 的裸设备；\r\n 设备不受影响
-    scrollback: props.scrollback,
+    // 回滚 50 万行对齐 MobaXterm 量级；满缓冲内存数百 MB 是已知代价（全量历史另有日志双通道兜底）
+    scrollback: 500_000,
     // addon-search 的结果高亮依赖 registerDecoration（proposed API）
     allowProposedApi: true,
     theme: toXtermTheme(appearance.terminalTheme)
@@ -140,12 +141,36 @@ onMounted(() => {
     emit('data', data)
   })
   term.onResize(({ cols, rows }) => emit('resize', { cols, rows }))
-  // 容器尺寸变化（含标签页切换 0→有尺寸）时重排
-  resizeObserver = new ResizeObserver(() => {
+  // 容器尺寸变化（含标签页切换 0→有尺寸）时重排。节流 120ms：
+  // fit 改变列数时 xterm 要对整个回滚缓冲重排换行（O(行数×列数)，50 万行时单次即数百 ms），
+  // 拖侧栏/缩放窗口时鼠标每帧触发 resize，不节流会连续叠加 reflow 把界面卡死
+  const FIT_THROTTLE_MS = 120
+  let lastFitAt = 0
+  const runFit = (): void => {
     try {
       fitAddon?.fit()
     } catch {
       /* 容器 0 尺寸时 fit 可能抛错，忽略 */
+    }
+  }
+  resizeObserver = new ResizeObserver(() => {
+    const now = Date.now()
+    const since = now - lastFitAt
+    if (since >= FIT_THROTTLE_MS) {
+      lastFitAt = now
+      if (fitTrailingTimer) {
+        clearTimeout(fitTrailingTimer)
+        fitTrailingTimer = null
+      }
+      runFit()
+      return
+    }
+    if (!fitTrailingTimer) {
+      fitTrailingTimer = setTimeout(() => {
+        fitTrailingTimer = null
+        lastFitAt = Date.now()
+        runFit()
+      }, FIT_THROTTLE_MS - since)
     }
   })
   resizeObserver.observe(termBox.value)
@@ -207,6 +232,10 @@ onUnmounted(() => {
   termBox.value?.removeEventListener('wheel', onWheel)
   termBox.value?.removeEventListener('mousedown', onMousedown, true)
   termBox.value?.removeEventListener('contextmenu', onContextmenu, true)
+  if (fitTrailingTimer) {
+    clearTimeout(fitTrailingTimer)
+    fitTrailingTimer = null
+  }
   resizeObserver?.disconnect()
   resizeObserver = null
   webglAddon?.dispose()

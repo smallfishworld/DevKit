@@ -19,9 +19,16 @@ interface LocalTerminalSession {
   proc: IPty
   profile: ShellProfile
   cwd: string
+  /** 待合并的输出片段（16ms 窗口拼成单次 IPC，对齐串口/SSH 的批量模式） */
+  pending: string[]
+  flushTimer: NodeJS.Timeout | null
 }
 
 const sessions = new Map<string, LocalTerminalSession>()
+
+/** 批量合并窗口：32ms ≈ 30fps；ConPTY 高吞吐时每帧可能派发数十个小片段，
+ *  直通会让渲染端每片段解析一次；32ms 兼顾打印顺滑与解析次数减半 */
+const FLUSH_MS = 32
 
 function normalizedEnv(profile: ShellProfile): Record<string, string> {
   const env: Record<string, string> = {}
@@ -129,15 +136,30 @@ class LocalTerminalService implements ToolService {
         cwd,
         env: normalizedEnv(profile)
       })
-      const session: LocalTerminalSession = { proc, profile, cwd }
+      const session: LocalTerminalSession = { proc, profile, cwd, pending: [], flushTimer: null }
       sessions.set(panelId, session)
 
       proc.onData((text) => {
-        if (sessions.get(panelId)?.proc !== proc) return
-        this.emit(panelId, 'data', { text })
+        const cur = sessions.get(panelId)
+        if (cur?.proc !== proc) return
+        cur.pending.push(text)
+        if (!cur.flushTimer) {
+          cur.flushTimer = setTimeout(() => {
+            const s = sessions.get(panelId)
+            if (s) s.flushTimer = null
+            this.flushData(panelId)
+          }, FLUSH_MS)
+        }
       })
       proc.onExit(({ exitCode, signal }) => {
-        if (sessions.get(panelId)?.proc !== proc) return
+        const cur = sessions.get(panelId)
+        if (cur?.proc !== proc) return
+        if (cur.flushTimer) {
+          clearTimeout(cur.flushTimer)
+          cur.flushTimer = null
+        }
+        // 先冲掉尾部输出再报 exit，渲染端按序写入「进程已退出」提示
+        this.flushData(panelId)
         sessions.delete(panelId)
         this.emit(panelId, 'exit', { exitCode, signal, profileId: profile.id })
         this.emit(panelId, 'status', { running: false, profileId: profile.id, cwd })
@@ -179,9 +201,23 @@ class LocalTerminalService implements ToolService {
     }
   }
 
+  /** 把 16ms 窗口内攒的输出片段拼成单次 data 事件发出 */
+  private flushData(panelId: string): void {
+    const s = sessions.get(panelId)
+    if (!s || s.pending.length === 0) return
+    const text = s.pending.join('')
+    s.pending = []
+    this.emit(panelId, 'data', { text })
+  }
+
   private kill(panelId: string): { ok: boolean } {
     const session = sessions.get(panelId)
     if (!session) return { ok: true }
+    if (session.flushTimer) {
+      clearTimeout(session.flushTimer)
+      session.flushTimer = null
+    }
+    // 不冲 flush：kill 也用于「重启/切换 Shell」，旧进程尾部输出不应进入新会话
     sessions.delete(panelId)
     try {
       session.proc.kill()

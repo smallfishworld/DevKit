@@ -87,8 +87,9 @@ function retainMemLog(panelId: string, s: SerialSession): void {
   s.memBytes = 0
 }
 const transfers = new Map<string, ActiveTransfer>()
-/** 批量合并窗口：16ms ≈ 60fps，刷屏视觉流畅；合并仍吸收高波特率的碎片事件 */
-const FLUSH_MS = 16
+/** 批量合并窗口：32ms ≈ 30fps，打印刷新依旧顺滑；解析与视口重绘调用次数较 16ms 减半
+ *  （大回滚缓冲下每次写入的固定开销显著），合并仍吸收高波特率的碎片事件 */
+const FLUSH_MS = 32
 /** 内存全量日志上限（字节，UTF-8 实际大小）；超限停止记录并提示先存日志 */
 const MEM_LOG_LIMIT = 500 * 1024 * 1024
 
