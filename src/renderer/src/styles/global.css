@@ -249,6 +249,15 @@ html[data-ui-theme] {
   font-weight: 600;
 }
 
+/* 拖拽换位反馈：被拖标签半透明，悬停目标左右浮现指示边 */
+.tab-item.dragging {
+  opacity: 0.4;
+}
+
+.tab-item.drop-target {
+  box-shadow: inset 2px 0 0 var(--el-color-primary);
+}
+
 .tab-item .tab-close {
   display: inline-flex;
   border-radius: 3px;

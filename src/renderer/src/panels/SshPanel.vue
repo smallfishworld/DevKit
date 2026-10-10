@@ -8,7 +8,6 @@ import {
   Delete,
   Download,
   Edit,
-  Fold,
   FolderOpened,
   Key,
   Lock,
@@ -414,8 +413,14 @@ async function pickKeyFile(): Promise<void> {
           <QuickCmdManager :enabled="open" :writer="macroWriter" />
         </div>
 
-        <!-- 拖动调整会话栏宽度（VS Code 式分隔条） -->
-        <div class="sidebar-split" title="拖动调整宽度" @mousedown="onSidebarResize"></div>
+        <!-- 拖动调整会话栏宽度（VS Code 式分隔条）；中央折叠把手 -->
+        <div class="sidebar-split" title="拖动调整宽度" @mousedown="onSidebarResize">
+          <button class="split-toggle" title="折叠会话栏" @mousedown.stop @click="toggleSidebar">
+            <svg viewBox="0 0 8 12" width="7" height="10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M6.5 1L1.5 6l5 5" />
+            </svg>
+          </button>
+        </div>
       </template>
 
       <!-- 折叠后的细条：点击展开会话栏 -->
@@ -426,7 +431,6 @@ async function pickKeyFile(): Promise<void> {
       <!-- 终端 -->
       <div class="term-col">
         <div class="term-opts">
-          <el-button size="small" text :icon="sidebarHidden ? ArrowRight : Fold" title="折叠/展开会话栏" @click="toggleSidebar" />
           <el-tooltip content="终端字体（可手输系统内已安装的字体名）" placement="top">
             <el-select
               v-model="termFont"
@@ -532,12 +536,50 @@ async function pickKeyFile(): Promise<void> {
   margin: 0 -2px;
   cursor: col-resize;
   border-radius: 2px;
+  position: relative;
   z-index: 5;
 }
 
 .sidebar-split:hover {
   background: var(--el-color-primary);
   opacity: 0.5;
+}
+
+/* 分隔条中央的折叠把手：默认近乎隐没（透明底，只余浅灰细箭头），悬停才浮出底色与描边；
+   mousedown.stop 避免点击把手被当成拖动调宽 */
+.split-toggle {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 12px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--el-text-color-placeholder);
+  opacity: 0.45;
+  cursor: pointer;
+  transition:
+    opacity 0.15s ease,
+    background 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease;
+  z-index: 6;
+}
+
+.sidebar-split:hover .split-toggle {
+  opacity: 1;
+}
+
+.split-toggle:hover {
+  background: var(--el-color-primary-light-9);
+  border-color: var(--el-color-primary-light-7);
+  color: var(--el-color-primary);
 }
 
 .sessions-head {
@@ -554,10 +596,10 @@ async function pickKeyFile(): Promise<void> {
   font-weight: 400;
 }
 
-/* 折叠后的细条（VS Code 式）：占 24px，点击展开 */
+/* 折叠后的细条（VS Code 式）：占 16px，点击展开 */
 .sidebar-collapsed {
   flex: 0 0 auto;
-  width: 24px;
+  width: 16px;
   align-self: stretch;
   display: flex;
   align-items: center;

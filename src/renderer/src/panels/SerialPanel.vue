@@ -8,7 +8,6 @@ import {
   Connection,
   Delete,
   Download,
-  Fold,
   FolderOpened,
   Plus,
   Refresh,
@@ -17,7 +16,7 @@ import {
 } from '@element-plus/icons-vue'
 import TerminalView from '@renderer/components/TerminalView.vue'
 import QuickCmdManager from '@renderer/components/QuickCmdManager.vue'
-import type { SerialConfig, SerialParams, SerialTransferEvt, TransferProtocol } from '../../../shared/serial'
+import type { SerialConfig, SerialEncoding, SerialParams, SerialTransferEvt, TransferProtocol } from '../../../shared/serial'
 import { BAUD_RATES } from '../../../shared/serial'
 import type { QuickCmdStep } from '../../../shared/term-macro'
 import { useTermMacros } from '../composables/useTermMacros'
@@ -120,6 +119,15 @@ function toggleSidebar(): void {
 const autoLog = ref(true)
 /** 终端时间戳显示（每批数据前插 [HH:MM:SS.mmm]，与日志格式一致；重启记忆） */
 const showTime = ref(false)
+/** 收发编码：串口线上无编码约定，多数嵌入式设备输出 GBK；切换对打开中的会话即时生效 */
+const encoding = ref<SerialEncoding>('utf8')
+function onEncodingChange(): void {
+  if (config.value) {
+    config.value.encoding = encoding.value
+    void persistConfig()
+  }
+  window.api.invoke('serial', 'encoding:set', props.panelId, { encoding: encoding.value }).catch(() => {})
+}
 
 let unsubs: Array<() => void> = []
 let signalTimer: ReturnType<typeof setInterval> | null = null
@@ -291,6 +299,7 @@ onMounted(async () => {
   xferProtocol.value = config.value.xferProtocol || 'ymodem'
   autoLog.value = config.value.autoLog !== false
   showTime.value = config.value.showTime === true
+  encoding.value = config.value.encoding ?? 'utf8'
   if (config.value.sidebarWidth) sidebarWidth.value = config.value.sidebarWidth
   sidebarHidden.value = config.value.sidebarHidden === true
   termView.value?.info('就绪。选择串口后点击「打开」，终端内可直接输入命令。')
@@ -489,6 +498,7 @@ async function persistConfig(): Promise<void> {
   config.value.termFontSize = termFontSize.value
   config.value.autoLog = autoLog.value
   config.value.showTime = showTime.value
+  config.value.encoding = encoding.value
   config.value.sidebarWidth = sidebarWidth.value
   config.value.sidebarHidden = sidebarHidden.value
   await window.api.invoke('serial', 'config:set', props.panelId, JSON.parse(JSON.stringify(config.value)))
@@ -638,8 +648,14 @@ async function deleteSession(idx: number): Promise<void> {
           <QuickCmdManager :enabled="open" :writer="macroWriter" />
         </div>
 
-        <!-- 拖动调整会话栏宽度（VS Code 式分隔条） -->
-        <div class="sidebar-split" title="拖动调整宽度" @mousedown="onSidebarResize"></div>
+        <!-- 拖动调整会话栏宽度（VS Code 式分隔条）；中央折叠把手 -->
+        <div class="sidebar-split" title="拖动调整宽度" @mousedown="onSidebarResize">
+          <button class="split-toggle" title="折叠会话栏" @mousedown.stop @click="toggleSidebar">
+            <svg viewBox="0 0 8 12" width="7" height="10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M6.5 1L1.5 6l5 5" />
+            </svg>
+          </button>
+        </div>
       </template>
 
       <!-- 折叠后的细条：点击展开会话栏 -->
@@ -650,7 +666,6 @@ async function deleteSession(idx: number): Promise<void> {
       <!-- 终端 + 发送 -->
       <div class="term-col">
         <div class="term-opts">
-          <el-button size="small" text :icon="sidebarHidden ? ArrowRight : Fold" title="折叠/展开会话栏" @click="toggleSidebar" />
           <el-tooltip content="终端字体（可手输系统内已安装的字体名）" placement="top">
             <el-select
               v-model="termFont"
@@ -675,6 +690,12 @@ async function deleteSession(idx: number): Promise<void> {
           </el-tooltip>
           <el-tooltip content="每行前显示本地时间 [HH:MM:SS.mmm]，与日志落盘格式一致" placement="top">
             <el-checkbox v-model="showTime" size="small" @change="persistConfig">时间戳</el-checkbox>
+          </el-tooltip>
+          <el-tooltip content="串口线上字节的编码：多数嵌入式设备输出 GBK，选错时中文显示乱码 / ？；对打开中的会话即时生效" placement="top">
+            <el-select v-model="encoding" size="small" style="width: 88px" @change="onEncodingChange">
+              <el-option value="utf8" label="UTF-8" />
+              <el-option value="gbk" label="GBK" />
+            </el-select>
           </el-tooltip>
           <el-button size="small" text :icon="Search" title="查找（Ctrl+F）" @click="openTermSearch">查找</el-button>
           <el-button size="small" text @click="clearTerm">清空</el-button>
@@ -912,12 +933,50 @@ async function deleteSession(idx: number): Promise<void> {
   margin: 0 -2px;
   cursor: col-resize;
   border-radius: 2px;
+  position: relative;
   z-index: 5;
 }
 
 .sidebar-split:hover {
   background: var(--el-color-primary);
   opacity: 0.5;
+}
+
+/* 分隔条中央的折叠把手：默认近乎隐没（透明底，只余浅灰细箭头），悬停才浮出底色与描边；
+   mousedown.stop 避免点击把手被当成拖动调宽 */
+.split-toggle {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 12px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--el-text-color-placeholder);
+  opacity: 0.45;
+  cursor: pointer;
+  transition:
+    opacity 0.15s ease,
+    background 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease;
+  z-index: 6;
+}
+
+.sidebar-split:hover .split-toggle {
+  opacity: 1;
+}
+
+.split-toggle:hover {
+  background: var(--el-color-primary-light-9);
+  border-color: var(--el-color-primary-light-7);
+  color: var(--el-color-primary);
 }
 
 .sessions-head {
@@ -934,10 +993,10 @@ async function deleteSession(idx: number): Promise<void> {
   font-weight: 400;
 }
 
-/* 折叠后的细条（VS Code 式）：占 24px，点击展开 */
+/* 折叠后的细条（VS Code 式）：占 16px，点击展开 */
 .sidebar-collapsed {
   flex: 0 0 auto;
-  width: 24px;
+  width: 16px;
   align-self: stretch;
   display: flex;
   align-items: center;

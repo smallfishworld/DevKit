@@ -36,6 +36,16 @@ export const useTabStore = defineStore('tabs', {
     activate(id: string): void {
       this.activeId = id
     },
+    /** 拖拽排序：把 id 移动到 toId 的位置（浏览器式换序）。home 恒为第一个，不可移入其前 */
+    moveTab(id: string, toId: string): void {
+      if (id === toId || id === 'home' || toId === 'home') return
+      const from = this.tabs.findIndex((t) => t.id === id)
+      const to = this.tabs.findIndex((t) => t.id === toId)
+      if (from < 0 || to < 0) return
+      const [tab] = this.tabs.splice(from, 1)
+      const insertAt = this.tabs.findIndex((t) => t.id === toId)
+      this.tabs.splice(insertAt, 0, tab)
+    },
     /** 面板重命名自身标签（如串口助手 → COM5@115200；SSH → root@10.0.0.1） */
     rename(id: string, title: string): void {
       const tab = this.tabs.find((t) => t.id === id)

@@ -4,13 +4,14 @@
  */
 import { SerialPort } from 'serialport'
 import { StringDecoder } from 'node:string_decoder'
+import * as iconv from 'iconv-lite'
 import { dialog, app, shell } from 'electron'
 import { promises as fs } from 'node:fs'
 import type { FileHandle } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import type { ToolService } from '../../ipc'
 import { emitToolEvent } from '../../ipc'
-import type { SerialConfig, SerialParams, SerialTransferEvt, TransferProtocol } from '../../../shared/serial'
+import type { SerialConfig, SerialEncoding, SerialParams, SerialTransferEvt, TransferProtocol } from '../../../shared/serial'
 import { DEFAULT_SERIAL_CONFIG } from '../../../shared/serial'
 import { getSection, setSection } from '../macro/configStore'
 import { ByteQueue, TransferCancelled, ymodemRecv, ymodemSend } from './ymodem'
@@ -22,13 +23,27 @@ interface RxPiece {
   time: number
 }
 
+/** 解码器统一接口：StringDecoder 与 iconv-lite 流式解码器同形（write/end），收发编码热切换时整只替换 */
+interface TextDecoderLike {
+  write(buf: Buffer): string
+  end(): string | undefined
+}
+
+/** 按编码建流式解码器：跨批的多字节序列（GBK 双字节汉字 / UTF-8 续字节）滞留在解码器内部，
+ *  不会把半个汉字拆到两批各自变成替换字符 */
+function makeDecoder(encoding: SerialEncoding): TextDecoderLike {
+  return encoding === 'gbk' ? iconv.getDecoder('gbk') : new StringDecoder('utf8')
+}
+
 interface SerialSession {
   port: SerialPort
   params: SerialParams
   rxBytes: number
   txBytes: number
   pending: RxPiece[]
-  decoder: StringDecoder
+  decoder: TextDecoderLike
+  /** 本会话收发编码（开串口时从配置定档；工具栏切换编码时热替换 decoder 与此值） */
+  encoding: SerialEncoding
   flushTimer: NodeJS.Timeout | null
   /** 自动日志：持久句柄 + 内存缓冲批量写（避免每周期 open/close 文件触发杀毒扫描阻塞事件循环） */
   logHandle: FileHandle | null
@@ -249,6 +264,8 @@ class SerialService implements ToolService {
         return getSection<SerialConfig>('serial', DEFAULT_SERIAL_CONFIG)
       case 'config:set':
         return setSection('serial', payload).then(() => ({ ok: true }))
+      case 'encoding:set':
+        return this.setEncoding(panelId, (payload as { encoding: SerialEncoding }).encoding)
       case 'open':
         return this.open(panelId, payload as SerialParams)
       case 'close':
@@ -375,7 +392,8 @@ class SerialService implements ToolService {
           rxBytes: 0,
           txBytes: 0,
           pending: [],
-          decoder: new StringDecoder('utf8'),
+          decoder: makeDecoder(cfg.encoding ?? 'utf8'),
+          encoding: cfg.encoding ?? 'utf8',
           flushTimer: null,
           logHandle,
           logBuf: [],
@@ -507,6 +525,7 @@ class SerialService implements ToolService {
     const s = sessions.get(panelId)
     if (!s) return { ok: false, error: '串口未打开' }
     // 与渲染端相同的组包规则（主进程兜底解析）
+    const nl = p.newline === 'crlf' ? '\r\n' : p.newline === 'lf' ? '\n' : p.newline === 'cr' ? '\r' : ''
     let buf: Buffer
     if (p.mode === 'hex') {
       const compact = p.text.replace(/0x/gi, ' ').replace(/[^0-9a-fA-F]/g, '')
@@ -514,22 +533,35 @@ class SerialService implements ToolService {
       if (compact.length % 2 !== 0) return { ok: false, error: 'HEX 长度须为偶数' }
       buf = Buffer.from(compact, 'hex')
     } else {
-      const nl = p.newline === 'crlf' ? '\r\n' : p.newline === 'lf' ? '\n' : p.newline === 'cr' ? '\r' : ''
-      buf = Buffer.from(p.text + nl, 'utf8')
+      // TX 编码：GBK 设备按 GBK 下发（设备按 UTF-8 解释 GBK 字节时中文变 ？）
+      buf = s.encoding === 'gbk' ? iconv.encode(p.text + nl, 'gbk') : Buffer.from(p.text + nl, 'utf8')
     }
     if (buf.length === 0) return { ok: false, error: '发送内容为空' }
     s.port.write(buf)
     s.txBytes += buf.length
     // HEX 发送按字节审计记录（二进制过 toString('utf8') 会把 0x1b 当 ANSI 剥掉、非法字节变 U+FFFD）
-    this.appendLog(panelId, s, [p.mode === 'hex' ? buf.toString('hex').replace(/../g, '$& ').trim() : buf.toString('utf8')])
+    // ASCII 发送记录解码前文本（buf 可能是 GBK 编码，toString('utf8') 会乱码；hex 模式不存在多字节问题）
+    const auditText = p.mode === 'hex' ? buf.toString('hex').replace(/../g, '$& ').trim() : p.text + nl
+    this.appendLog(panelId, s, [auditText])
     this.emit(panelId, 'tx', {
-      text: buf.toString('utf8'),
+      text: auditText,
       bytes: buf.length,
       time: Date.now(),
       rxBytes: s.rxBytes,
       txBytes: s.txBytes
     })
     return { ok: true, bytes: buf.length }
+  }
+
+  /** 热切换收发编码：只影响之后的线上字节；切换前已按旧编码解码的显示/日志不回溯。
+   *  替换整个流式解码器——旧解码器里滞留的多字节尾巴按新编码解释必然错位 */
+  private setEncoding(panelId: string, encoding: SerialEncoding): { ok: boolean } {
+    const s = sessions.get(panelId)
+    if (s) {
+      s.encoding = encoding
+      s.decoder = makeDecoder(encoding)
+    }
+    return { ok: true }
   }
 
   private setFlow(panelId: string, bits: { dtr?: boolean; rts?: boolean }): Promise<{ ok: boolean; error?: string }> {

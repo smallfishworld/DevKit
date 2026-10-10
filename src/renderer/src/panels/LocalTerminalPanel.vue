@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { FolderOpened, Fold, ArrowRight, RefreshRight, Search, SwitchButton, VideoPlay } from '@element-plus/icons-vue'
+import { ArrowRight, FolderOpened, RefreshRight, Search, SwitchButton, VideoPlay } from '@element-plus/icons-vue'
 import TerminalView from '@renderer/components/TerminalView.vue'
 import QuickCmdManager from '@renderer/components/QuickCmdManager.vue'
 import { useTabStore } from '@renderer/stores/tabs'
@@ -263,9 +263,6 @@ onUnmounted(() => {
       </div>
 
       <div class="toolbar-row secondary">
-        <el-tooltip :content="quickCmdHidden ? '展开快捷命令栏' : '隐藏快捷命令栏'" placement="top">
-          <el-button size="small" text :icon="quickCmdHidden ? ArrowRight : Fold" @click="toggleQuickCmd" />
-        </el-tooltip>
         <el-select v-model="font" size="small" filterable allow-create style="width: 132px" @change="onFontChanged">
           <el-option value="Consolas" label="Consolas" />
           <el-option value="Cascadia Mono" label="Cascadia Mono" />
@@ -290,7 +287,14 @@ onUnmounted(() => {
         <div class="quick-cmd-col" :style="{ width: quickCmdWidth + 'px' }">
           <QuickCmdManager :enabled="running" :writer="macroWriter" />
         </div>
-        <div class="sidebar-split" title="拖动调整快捷命令栏宽度" @mousedown="onQuickCmdResize"></div>
+        <!-- 拖动调宽分隔条；中央折叠把手 -->
+        <div class="sidebar-split" title="拖动调整快捷命令栏宽度" @mousedown="onQuickCmdResize">
+          <button class="split-toggle" title="折叠快捷命令栏" @mousedown.stop @click="toggleQuickCmd">
+            <svg viewBox="0 0 8 12" width="7" height="10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M6.5 1L1.5 6l5 5" />
+            </svg>
+          </button>
+        </div>
       </template>
 
       <!-- 折叠后的细条：点击展开（与串口/SSH 一致） -->
@@ -384,6 +388,7 @@ onUnmounted(() => {
   margin: 0 -2px;
   cursor: col-resize;
   border-radius: 2px;
+  position: relative;
   z-index: 5;
 }
 
@@ -392,10 +397,47 @@ onUnmounted(() => {
   opacity: 0.5;
 }
 
-/* 折叠后的细条（VS Code 式，与串口/SSH 一致）：占 24px，点击展开 */
+/* 分隔条中央的折叠把手：默认近乎隐没（透明底，只余浅灰细箭头），悬停才浮出底色与描边；
+   mousedown.stop 避免点击把手被当成拖动调宽 */
+.split-toggle {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 12px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--el-text-color-placeholder);
+  opacity: 0.45;
+  cursor: pointer;
+  transition:
+    opacity 0.15s ease,
+    background 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease;
+  z-index: 6;
+}
+
+.sidebar-split:hover .split-toggle {
+  opacity: 1;
+}
+
+.split-toggle:hover {
+  background: var(--el-color-primary-light-9);
+  border-color: var(--el-color-primary-light-7);
+  color: var(--el-color-primary);
+}
+
+/* 折叠后的细条（VS Code 式，与串口/SSH 一致）：占 16px，点击展开 */
 .sidebar-collapsed {
   flex: 0 0 auto;
-  width: 24px;
+  width: 16px;
   align-self: stretch;
   display: flex;
   align-items: center;

@@ -57,7 +57,10 @@ let fitTrailingTimer: ReturnType<typeof setTimeout> | null = null
 let rawSelect: ((col: number, row: number, length: number) => void) | null = null
 
 function fontFamilyCss(): string {
-  return `${props.font}, Consolas, "Courier New", monospace`
+  // 末尾追加 CJK 回退：Consolas / Courier New 均无中文字形，
+  // WebGL 渲染器遇缺字形会留空（中文输出「不显示」的根因）。
+  // 中文字形放在等宽字体之后，拉丁字符仍走 Consolas，CJK 自然双宽对齐。
+  return `${props.font}, Consolas, "Courier New", "Microsoft YaHei", "PingFang SC", monospace`
 }
 
 /** 重建 WebGL 渲染器：GPU 上下文丢失/窗口隐藏后恢复用 */

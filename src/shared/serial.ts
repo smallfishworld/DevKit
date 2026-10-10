@@ -29,6 +29,9 @@ export interface SerialSessionInfo {
   params: SerialParams
 }
 
+/** 串口收发编码：串口线上无编码约定，多数嵌入式设备输出 GBK；终端/日志内部统一 UTF-8 */
+export type SerialEncoding = 'utf8' | 'gbk'
+
 /** 串口配置持久化结构（config.json 的 serial 键） */
 export interface SerialConfig {
   last: SerialParams
@@ -49,6 +52,8 @@ export interface SerialConfig {
   sidebarWidth: number
   /** 左侧会话/快捷命令栏显示/隐藏 */
   sidebarHidden?: boolean
+  /** 收发编码（收：按它解码线上的字节；发：按它编码下发文本；默认 UTF-8） */
+  encoding: SerialEncoding
 }
 
 /** 文件传输协议：YMODEM（ry/sy）或 ZMODEM（rz/sz） */
@@ -75,5 +80,6 @@ export const DEFAULT_SERIAL_CONFIG: SerialConfig = {
   logDir: '',
   autoLog: true,
   showTime: false,
-  sidebarWidth: 210
+  sidebarWidth: 210,
+  encoding: 'utf8'
 }
