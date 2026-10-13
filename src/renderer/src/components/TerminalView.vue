@@ -104,8 +104,10 @@ onMounted(() => {
     lineHeight: 1.2,
     cursorBlink: true,
     convertEol: true, // 兼容只发 \n 的裸设备；\r\n 设备不受影响
-    // 回滚 50 万行对齐 MobaXterm 量级；满缓冲内存数百 MB 是已知代价（全量历史另有日志双通道兜底）
-    scrollback: 500_000,
+    // 回滚 20 万行：50 万行时 xterm JS 堆实测涨至 ~190MB，Major GC 暂停 50-90ms，
+    // 长会话持续打印下表现为周期性卡顿（清空即恢复，tests/probes/xterm-heap-probe.js 可复测）；
+    // 20 万行把堆压到 ~80MB 内。全量历史不丢：日志双通道（主进程 Buffer 堆外，不受 GC 影响）
+    scrollback: 200_000,
     // addon-search 的结果高亮依赖 registerDecoration（proposed API）
     allowProposedApi: true,
     theme: toXtermTheme(appearance.terminalTheme)
