@@ -14,7 +14,6 @@ import { WebglAddon } from '@xterm/addon-webgl'
 import '@xterm/xterm/css/xterm.css'
 import { resolveGlobalKey, resolveMouseDown, resolveTermKey } from './termInput'
 import { fmtStamp, stampLines } from '../../../shared/logtext'
-import { useTerminalSettings } from '../stores/terminal'
 import { useAppearanceStore } from '@renderer/stores/appearance'
 import { toXtermTheme } from '@renderer/theme'
 
@@ -33,9 +32,6 @@ const props = withDefaults(
 )
 
 const appearance = useAppearanceStore()
-const terminalSettings = useTerminalSettings()
-void terminalSettings.init()
-watch(() => terminalSettings.scrollback, (value) => { if (term) term.options.scrollback = value })
 
 const emit = defineEmits<{
   /** 键盘原始输入（Enter 为 \r），由父组件决定发到哪 */
@@ -108,7 +104,7 @@ onMounted(() => {
     lineHeight: 1.2,
     cursorBlink: true,
     convertEol: true, // 兼容只发 \n 的裸设备；\r\n 设备不受影响
-    scrollback: terminalSettings.scrollback,
+    scrollback: 200_000,
     // addon-search 的结果高亮依赖 registerDecoration（proposed API）
     allowProposedApi: true,
     theme: toXtermTheme(appearance.terminalTheme)

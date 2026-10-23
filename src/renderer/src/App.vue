@@ -56,7 +56,7 @@ onMounted(() => {
       </el-popover>
       <span class="app-title">DevKit</span>
       <div class="header-spacer"></div>
-      <button class="header-action" title="终端设置（配色与回滚）" @click="settingsOpen = true">
+      <button class="header-action" title="终端配色（皮肤）" @click="settingsOpen = true">
         <svg
           class="skin-icon"
           :width="16"

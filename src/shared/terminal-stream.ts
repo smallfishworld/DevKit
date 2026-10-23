@@ -1,11 +1,5 @@
 import { fmtStamp } from './logtext'
 
-export const DEFAULT_SCROLLBACK = 50_000
-export const SCROLLBACK_OPTIONS = [10_000, 20_000, 50_000, 100_000, 200_000]
-export function normalizeScrollback(value: unknown): number {
-  return typeof value === 'number' && SCROLLBACK_OPTIONS.includes(value) ? value : DEFAULT_SCROLLBACK
-}
-
 export interface OutputFrame {
   text: string
   generation: string

@@ -4,7 +4,6 @@ import {
   type AppearanceSettings
 } from '../../../shared/theme'
 import { getSection, setSection } from '../macro/configStore'
-import { DEFAULT_SCROLLBACK, normalizeScrollback } from '../../../shared/terminal-stream'
 
 function sanitizeAppearance(value: unknown): AppearanceSettings {
   const raw = (value ?? {}) as Partial<AppearanceSettings>
@@ -24,15 +23,6 @@ function sanitizeAppearance(value: unknown): AppearanceSettings {
 export const settingsService: ToolService = {
   async invoke(_panelId, action, payload) {
     switch (action) {
-      case 'terminal:get': {
-        const saved = await getSection('terminal', { scrollback: DEFAULT_SCROLLBACK })
-        return { scrollback: normalizeScrollback(saved.scrollback) }
-      }
-      case 'terminal:set': {
-        const settings = { scrollback: normalizeScrollback((payload as { scrollback?: number })?.scrollback) }
-        await setSection('terminal', settings)
-        return settings
-      }
       case 'appearance:get': {
         const saved = await getSection<AppearanceSettings>('appearance', DEFAULT_APPEARANCE_SETTINGS)
         return sanitizeAppearance(saved)
