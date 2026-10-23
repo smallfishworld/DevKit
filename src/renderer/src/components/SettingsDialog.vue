@@ -1,11 +1,19 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { ElMessage } from 'element-plus'
+import { useTerminalSettings } from '../stores/terminal'
+import { SCROLLBACK_OPTIONS } from '../../../shared/terminal-stream'
 import { useAppearanceStore } from '@renderer/stores/appearance'
 
 const props = defineProps<{ modelValue: boolean }>()
 const emit = defineEmits<{ (e: 'update:modelValue', value: boolean): void }>()
 
 const appearance = useAppearanceStore()
+const terminalSettings = useTerminalSettings()
+void terminalSettings.init()
+async function saveScrollback(value: number): Promise<void> {
+  try { await terminalSettings.save(value) } catch (error) { ElMessage.error(String(error)) }
+}
 const visible = computed({
   get: () => props.modelValue,
   set: (value: boolean) => emit('update:modelValue', value)
@@ -38,8 +46,14 @@ function onTerminalThemeChange(value: string): void {
 </script>
 
 <template>
-  <el-dialog v-model="visible" title="终端配色" width="720px" append-to-body>
+  <el-dialog v-model="visible" title="终端设置" width="720px" append-to-body>
     <div class="appearance-settings">
+      <section class="setting-section setting-head">
+        <div><h3>终端回滚行数</h3><p>立即应用到所有终端。减少行数会释放旧回滚；完整记录可从「历史日志」查询。</p></div>
+        <el-select :model-value="terminalSettings.scrollback" style="width: 180px" @change="saveScrollback">
+          <el-option v-for="count in SCROLLBACK_OPTIONS" :key="count" :value="count" :label="`${count / 10000} 万行`" />
+        </el-select>
+      </section>
       <section class="setting-section">
         <div class="setting-head">
           <div>

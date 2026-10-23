@@ -14,6 +14,7 @@ import { WebglAddon } from '@xterm/addon-webgl'
 import '@xterm/xterm/css/xterm.css'
 import { resolveGlobalKey, resolveMouseDown, resolveTermKey } from './termInput'
 import { fmtStamp, stampLines } from '../../../shared/logtext'
+import { useTerminalSettings } from '../stores/terminal'
 import { useAppearanceStore } from '@renderer/stores/appearance'
 import { toXtermTheme } from '@renderer/theme'
 
@@ -32,6 +33,9 @@ const props = withDefaults(
 )
 
 const appearance = useAppearanceStore()
+const terminalSettings = useTerminalSettings()
+void terminalSettings.init()
+watch(() => terminalSettings.scrollback, (value) => { if (term) term.options.scrollback = value })
 
 const emit = defineEmits<{
   /** 键盘原始输入（Enter 为 \r），由父组件决定发到哪 */
@@ -104,10 +108,7 @@ onMounted(() => {
     lineHeight: 1.2,
     cursorBlink: true,
     convertEol: true, // 兼容只发 \n 的裸设备；\r\n 设备不受影响
-    // 回滚 20 万行：50 万行时 xterm JS 堆实测涨至 ~190MB，Major GC 暂停 50-90ms，
-    // 长会话持续打印下表现为周期性卡顿（清空即恢复，tests/probes/xterm-heap-probe.js 可复测）；
-    // 20 万行把堆压到 ~80MB 内。全量历史不丢：日志双通道（主进程 Buffer 堆外，不受 GC 影响）
-    scrollback: 200_000,
+    scrollback: terminalSettings.scrollback,
     // addon-search 的结果高亮依赖 registerDecoration（proposed API）
     allowProposedApi: true,
     theme: toXtermTheme(appearance.terminalTheme)
@@ -468,15 +469,15 @@ async function onSearchContextmenu(e: MouseEvent): Promise<void> {
 
 /** 时间戳逐行补戳逻辑见 shared/logtext.ts 的 stampLines（纯函数，可单测） */
 let midLine = false
-function write(text: string): void {
-  if (!text) return
+function write(text: string, done?: () => void): void {
+  if (!text) { done?.(); return }
   if (!props.showTime) {
-    term?.write(text)
+    term?.write(text, done)
     midLine = !/[\r\n]$/.test(text)
     return
   }
   const r = stampLines(text, `\x1b[90m[${fmtStamp()}]\x1b[0m `, midLine)
-  term?.write(r.out)
+  term?.write(r.out, done)
   midLine = r.midLine
 }
 
@@ -497,7 +498,14 @@ function focus(): void {
   term?.focus()
 }
 
-defineExpose({ write, info, clear, focus, openSearch })
+function reset(): void {
+  closeSearch(false)
+  // Queue reset after already accepted frames, preserving parser/ACK ordering.
+  term?.write('\x1bc')
+  midLine = false
+}
+
+defineExpose({ write, info, clear, reset, focus, openSearch })
 </script>
 
 <template>

@@ -3,6 +3,8 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { ArrowRight, FolderOpened, RefreshRight, Search, SwitchButton, VideoPlay } from '@element-plus/icons-vue'
 import TerminalView from '@renderer/components/TerminalView.vue'
+import TerminalHistory from '@renderer/components/TerminalHistory.vue'
+import { useTerminalStream } from '../composables/useTerminalStream'
 import QuickCmdManager from '@renderer/components/QuickCmdManager.vue'
 import { useTabStore } from '@renderer/stores/tabs'
 import { useSidebarDrag } from '../composables/useSidebarDrag'
@@ -13,7 +15,6 @@ import {
   normalizeLocalTerminalProfileId,
   type LocalTerminalAttachResult,
   type LocalTerminalConfig,
-  type LocalTerminalDataEvent,
   type LocalTerminalExitEvent,
   type ShellProfile
 } from '../../../shared/local-terminal'
@@ -21,6 +22,7 @@ import {
 const props = defineProps<{ panelId: string }>()
 const tabStore = useTabStore()
 const termView = ref<InstanceType<typeof TerminalView> | null>(null)
+useTerminalStream('local-terminal', props.panelId, termView)
 
 /** 左侧快捷命令栏宽度 + 折叠状态（随配置持久化，重启记忆） */
 const quickCmdWidth = ref(220)
@@ -142,7 +144,7 @@ function onFontSizeUpdate(size: number): void {
 }
 
 function clearTerm(): void {
-  termView.value?.clear()
+  void window.api.invoke('local-terminal', 'output:reset', props.panelId).catch((error) => ElMessage.error(String(error)))
 }
 
 function openSearch(): void {
@@ -169,10 +171,7 @@ async function onFontChanged(): Promise<void> {
 
 onMounted(async () => {
   unsubs.push(
-    window.api.on('local-terminal', props.panelId, 'data', (payload) => {
-      const evt = payload as LocalTerminalDataEvent
-      termView.value?.write(evt.text)
-    }),
+    window.api.on('local-terminal', props.panelId, 'error', (payload) => { ElMessage.error((payload as { message: string }).message) }),
     window.api.on('local-terminal', props.panelId, 'exit', (payload) => {
       const evt = payload as LocalTerminalExitEvent
       running.value = false
@@ -272,6 +271,7 @@ onUnmounted(() => {
           <el-option v-for="size in TERM_SIZES" :key="size" :value="size" :label="String(size)" />
         </el-select>
         <el-button size="small" text :icon="Search" @click="openSearch">查找</el-button>
+        <TerminalHistory tool="local-terminal" :panel-id="props.panelId" />
         <el-button size="small" text @click="clearTerm">清屏</el-button>
         <span v-if="profileChanged" class="switch-hint">
           当前 {{ activeProfile?.name ?? activeProfileId }}，待切换到 {{ selectedProfile?.name ?? profileId }}

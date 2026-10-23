@@ -14,13 +14,16 @@ import {
 } from '../../../shared/local-terminal'
 import { getSection, setSection } from '../macro/configStore'
 import { detectWindowsShellProfiles } from './shellProfiles'
+import { join } from 'node:path'
+import { TerminalRuntime } from '../terminal/runtime'
 
 interface LocalTerminalSession {
   proc: IPty
   profile: ShellProfile
   cwd: string
-  /** 待合并的输出片段（16ms 窗口拼成单次 IPC，对齐串口/SSH 的批量模式） */
+  /** 待合并的输出片段（32ms 窗口拼成单次 IPC，对齐串口/SSH 的批量模式） */
   pending: string[]
+  pendingChars: number
   flushTimer: NodeJS.Timeout | null
 }
 
@@ -59,6 +62,7 @@ function clampSize(value: number | undefined, fallback: number, max: number): nu
 }
 
 class LocalTerminalService implements ToolService {
+  private runtime = new TerminalRuntime('local-terminal')
   private emit(panelId: string, type: string, payload?: unknown): void {
     emitToolEvent('local-terminal', panelId, type, payload)
   }
@@ -68,6 +72,7 @@ class LocalTerminalService implements ToolService {
   }
 
   invoke(panelId: string, action: string, payload: unknown): Promise<unknown> | unknown {
+    if (this.runtime.handles(action)) return this.runtime.invoke(panelId, action, payload)
     switch (action) {
       case 'attach':
         return this.attach(panelId)
@@ -78,15 +83,15 @@ class LocalTerminalService implements ToolService {
       case 'config:set':
         return setSection('localTerminal', payload as LocalTerminalConfig).then(() => ({ ok: true }))
       case 'start':
-        return this.start(panelId, payload as LocalTerminalStartPayload)
+        return this.runtime.tasks.run(panelId, () => this.start(panelId, payload as LocalTerminalStartPayload))
       case 'restart':
-        return this.restart(panelId, payload as LocalTerminalStartPayload)
+        return this.runtime.tasks.run(panelId, () => this.start(panelId, payload as LocalTerminalStartPayload))
       case 'write':
         return this.write(panelId, (payload as { text?: string })?.text ?? '')
       case 'resize':
         return this.resize(panelId, payload as { cols?: number; rows?: number })
       case 'kill':
-        return this.kill(panelId)
+        return this.runtime.tasks.run(panelId, () => this.kill(panelId))
       case 'cwd:pick':
         return this.pickCwd()
       default:
@@ -111,7 +116,7 @@ class LocalTerminalService implements ToolService {
     }
   }
 
-  private start(panelId: string, payload: LocalTerminalStartPayload): unknown {
+  private async start(panelId: string, payload: LocalTerminalStartPayload): Promise<unknown> {
     if (process.platform !== 'win32') {
       return { ok: false, error: '本地终端当前仅支持 Windows' }
     }
@@ -123,7 +128,7 @@ class LocalTerminalService implements ToolService {
       return { ok: false, error: `Shell 不可用：${payload.profileId}` }
     }
 
-    this.kill(panelId)
+    await this.kill(panelId)
     const cwd = validCwd(payload.cwd)
     const cols = clampSize(payload.cols, 120, 500)
     const rows = clampSize(payload.rows, 30, 200)
@@ -136,14 +141,20 @@ class LocalTerminalService implements ToolService {
         cwd,
         env: normalizedEnv(profile)
       })
-      const session: LocalTerminalSession = { proc, profile, cwd, pending: [], flushTimer: null }
+      proc.pause()
+      const session: LocalTerminalSession = { proc, profile, cwd, pending: [], pendingChars: 0, flushTimer: null }
       sessions.set(panelId, session)
 
       proc.onData((text) => {
         const cur = sessions.get(panelId)
         if (cur?.proc !== proc) return
         cur.pending.push(text)
-        if (!cur.flushTimer) {
+        cur.pendingChars += text.length
+        if (cur.pendingChars >= 32 * 1024) {
+          if (cur.flushTimer) clearTimeout(cur.flushTimer)
+          cur.flushTimer = null
+          this.flushData(panelId)
+        } else if (!cur.flushTimer) {
           cur.flushTimer = setTimeout(() => {
             const s = sessions.get(panelId)
             if (s) s.flushTimer = null
@@ -152,18 +163,27 @@ class LocalTerminalService implements ToolService {
         }
       })
       proc.onExit(({ exitCode, signal }) => {
-        const cur = sessions.get(panelId)
-        if (cur?.proc !== proc) return
-        if (cur.flushTimer) {
-          clearTimeout(cur.flushTimer)
-          cur.flushTimer = null
-        }
-        // 先冲掉尾部输出再报 exit，渲染端按序写入「进程已退出」提示
-        this.flushData(panelId)
-        sessions.delete(panelId)
-        this.emit(panelId, 'exit', { exitCode, signal, profileId: profile.id })
-        this.emit(panelId, 'status', { running: false, profileId: profile.id, cwd })
+        void this.runtime.tasks.run(panelId, async () => {
+          if (sessions.get(panelId) !== session) return
+          if (session.flushTimer) clearTimeout(session.flushTimer)
+          session.flushTimer = null
+          this.flushData(panelId)
+          sessions.delete(panelId)
+          this.runtime.note(panelId, `===== 进程已退出：${exitCode} =====`)
+          await this.runtime.close(panelId)
+          this.emit(panelId, 'exit', { exitCode, signal, profileId: profile.id })
+          this.emit(panelId, 'status', { running: false, profileId: profile.id, cwd })
+        }).catch(() => {})
       })
+      await this.runtime.start(panelId, {
+        dir: join(app.getPath('userData'), 'local-terminal-logs'), name: profile.id, temporary: false,
+        pause: (paused) => {
+          if (sessions.get(panelId) !== session) return
+          if (paused) proc.pause(); else proc.resume()
+        },
+        fatal: () => { void this.runtime.tasks.run(panelId, () => this.kill(panelId)).catch(() => {}) }
+      })
+      proc.resume()
 
       this.emit(panelId, 'status', {
         running: true,
@@ -174,13 +194,10 @@ class LocalTerminalService implements ToolService {
       })
       return { ok: true, profile, cwd, pid: proc.pid }
     } catch (error) {
+      await this.kill(panelId)
+      await this.runtime.dispose(panelId)
       return { ok: false, error: error instanceof Error ? error.message : String(error) }
     }
-  }
-
-  private restart(panelId: string, payload: LocalTerminalStartPayload): unknown {
-    this.kill(panelId)
-    return this.start(panelId, payload)
   }
 
   private write(panelId: string, text: string): unknown {
@@ -201,29 +218,32 @@ class LocalTerminalService implements ToolService {
     }
   }
 
-  /** 把 16ms 窗口内攒的输出片段拼成单次 data 事件发出 */
+  /** 把 32ms 窗口内攒的输出片段拼成单次 data 事件发出 */
   private flushData(panelId: string): void {
     const s = sessions.get(panelId)
     if (!s || s.pending.length === 0) return
     const text = s.pending.join('')
     s.pending = []
-    this.emit(panelId, 'data', { text })
+    s.pendingChars = 0
+    this.runtime.data(panelId, text)
   }
 
-  private kill(panelId: string): { ok: boolean } {
+  private async kill(panelId: string): Promise<{ ok: boolean }> {
     const session = sessions.get(panelId)
     if (!session) return { ok: true }
     if (session.flushTimer) {
       clearTimeout(session.flushTimer)
       session.flushTimer = null
     }
-    // 不冲 flush：kill 也用于「重启/切换 Shell」，旧进程尾部输出不应进入新会话
+    this.flushData(panelId)
     sessions.delete(panelId)
     try {
       session.proc.kill()
     } catch {
       // process may already be gone
     }
+    this.runtime.note(panelId, '===== 终止 =====')
+    await this.runtime.close(panelId)
     return { ok: true }
   }
 
@@ -237,12 +257,11 @@ class LocalTerminalService implements ToolService {
     return { ok: true, path: result.filePaths[0] }
   }
 
-  dispose(panelId: string): void {
-    if (panelId === '*') {
-      for (const id of [...sessions.keys()]) this.kill(id)
-      return
-    }
-    this.kill(panelId)
+  async dispose(panelId: string): Promise<void> {
+    const ids = panelId === '*' ? [...new Set([...sessions.keys(), ...this.runtime.ids])] : [panelId]
+    await Promise.all(ids.map((id) => this.runtime.tasks.run(id, async () => {
+      try { await this.kill(id) } finally { await this.runtime.dispose(id) }
+    })))
   }
 }
 
