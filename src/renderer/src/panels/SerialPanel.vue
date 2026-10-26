@@ -15,12 +15,15 @@ import {
   UploadFilled
 } from '@element-plus/icons-vue'
 import TerminalView from '@renderer/components/TerminalView.vue'
+import TerminalHistory from '@renderer/components/TerminalHistory.vue'
+import { useTerminalStream } from '../composables/useTerminalStream'
+import { ByteCounterThrottle } from '../../../shared/terminal-stream'
 import QuickCmdManager from '@renderer/components/QuickCmdManager.vue'
 import type { SerialConfig, SerialEncoding, SerialParams, SerialTransferEvt, TransferProtocol } from '../../../shared/serial'
 import { BAUD_RATES, SUSPEND_FLUSH_MS } from '../../../shared/serial'
 import { fmtDuration, hasBareCr } from '../../../shared/logtext'
-import type { VtGuardStats } from '../../../shared/vtguard'
 import { newBareCrWatch, noteBareCr } from '@renderer/components/termFlow'
+import type { VtGuardStats } from '../../../shared/vtguard'
 import type { QuickCmdStep } from '../../../shared/term-macro'
 import { useTermMacros } from '../composables/useTermMacros'
 import { useSidebarDrag } from '../composables/useSidebarDrag'
@@ -58,21 +61,18 @@ const opening = ref(false)
 const rxBytes = ref(0)
 const txBytes = ref(0)
 /** 字节计数节流：刷屏时每批 data 都写 ref 会频繁触发状态栏重渲，500ms 更新足够 */
-let byteTimer: ReturnType<typeof setTimeout> | null = null
-function updateBytesThrottled(rx: number, tx: number): void {
-  if (byteTimer) return
-  byteTimer = setTimeout(() => {
-    byteTimer = null
-    rxBytes.value = rx
-    txBytes.value = tx
-  }, 500)
-}
+const byteCounter = new ByteCounterThrottle((rx, tx) => {
+  rxBytes.value = rx
+  txBytes.value = tx
+})
+function updateBytesThrottled(rx: number, tx: number): void { byteCounter.update(rx, tx) }
 const dtrOn = ref(false)
 const rtsOn = ref(false)
 const signals = ref<{ cts: boolean; dsr: boolean; dcd: boolean } | null>(null)
 
 // ---------- 终端（TerminalView 共享组件：xterm.js 封装） ----------
 const termView = ref<InstanceType<typeof TerminalView> | null>(null)
+useTerminalStream('serial', props.panelId, termView)
 /** 本地回显：设备不回显的裸模块打开后能看到自己敲的字符 */
 const localEcho = ref(false)
 /** 终端字体族与字号（Ctrl+滚轮 / Ctrl+=/- 缩放） */
@@ -90,7 +90,7 @@ function onGuard(stats: VtGuardStats): void {
   const what = stats.eraseScrollback > 0 ? '清回滚序列(CSI 3J)' : '终端硬复位(ESC c)'
   const note = `设备发了${what}——这类序列会销毁已滚出屏幕的内容；已拦下并保留回滚历史（可在工具栏关闭「保护回滚」按原始字节渲染）`
   termView.value?.info(note)
-  // 同步写进日志：原序列在落盘前已被剥掉，不记这条的话用户在日志里找不到任何线索
+  // 同步写进日志：原序列在渲染前已被剥掉，不记这条的话用户在日志里找不到任何线索
   void window.api.invoke('serial', 'log:note', props.panelId, { text: note }).catch(() => {})
 }
 
@@ -108,24 +108,6 @@ function onAltScreen(): void {
 }
 /** 裸 CR 洪泛监视：同一秒内累计 20 批含裸 CR 即提示一次开关 */
 const bareCrWatch = newBareCrWatch(Date.now())
-const TERM_SIZES = [10, 11, 12, 13, 14, 15, 16, 17, 18, 20, 22, 24, 26, 28]
-/** 原始收发流水（供「存日志」导出；完整落盘由主进程自动日志负责）
- *  MobaXterm 式全量内存日志：不截断条数，按字节上限管理；超限弹窗并停止记录/显示，清屏后恢复 */
-/** 内存日志溢出锁定（主进程 memBuf 达 500MB 上限时置位）：停止终端显示，
- *  清空终端或重开串口后恢复。日志本体存主进程（Buffer 堆外），渲染端不再累积字符串——
- *  长会话数百 MB 字符串在渲染端堆上会引发 V8 大 GC 频繁暂停，表现为打印断断续续 */
-let logOverflow = false
-
-/** 系统长休眠唤醒提示：串口链路可能已失步，给一键重开（不自动复位——DTR 抖动会复位部分设备） */
-const resumeHint = ref<string | null>(null)
-function dismissResumeHint(): void {
-  resumeHint.value = null
-}
-async function reopenFromResumeHint(): Promise<void> {
-  resumeHint.value = null
-  await closePort()
-  await openPort()
-}
 /** 重开串口时同时复位裸 CR 提示（新会话允许再提示一次） */
 function resetBareCrWatch(): void {
   Object.assign(bareCrWatch, newBareCrWatch(Date.now()))
@@ -138,6 +120,19 @@ function onCrModeChange(): void {
   if (!crAsNewline.value) resetBareCrWatch()
   persistConfig()
 }
+
+/** 系统长休眠唤醒提示：串口链路可能已失步，给一键重开（不自动复位——DTR 抖动会复位部分设备） */
+const resumeHint = ref<string | null>(null)
+function dismissResumeHint(): void {
+  resumeHint.value = null
+}
+async function reopenFromResumeHint(): Promise<void> {
+  resumeHint.value = null
+  await closePort()
+  await openPort()
+}
+const TERM_SIZES = [10, 11, 12, 13, 14, 15, 16, 17, 18, 20, 22, 24, 26, 28]
+
 
 /** 键盘直入：原样发串口（Enter 发 \r，与真实终端一致）；录制时同步记录 */
 function onTermData(data: string): void {
@@ -312,16 +307,15 @@ onMounted(async () => {
   unsubs.push(
     window.api.on('serial', props.panelId, 'data', (p) => {
       const d = p as DataEvt
-      updateBytesThrottled(d.rxBytes, d.txBytes)
-      if (!logOverflow) termView.value?.write(d.text)
+      if (typeof d.rxBytes === 'number') updateBytesThrottled(d.rxBytes, d.txBytes)
       // 设备用 \r 原地重绘时屏幕不滚动，用户会以为"终端不刷新"；提示一次可切换显示模式
       if (!crAsNewline.value && noteBareCr(bareCrWatch, hasBareCr(d.text), Date.now())) {
-        termView.value?.info('设备在用 \\r 原地重绘同一行（屏幕被覆盖属正常的 VT 行为）；可在工具栏开启「裸 CR 按换行显示」逐帧查看')
+        termView.value?.info('设备在用 \\r 原地重绘同一行（屏幕被覆盖属正常的 VT 行为）；可在工具栏开启「裸 CR 换行」逐帧查看')
       }
     }),
     window.api.on('serial', props.panelId, 'tx', (p) => {
       const d = p as DataEvt
-      updateBytesThrottled(d.rxBytes, d.txBytes)
+      if (typeof d.rxBytes === 'number') updateBytesThrottled(d.rxBytes, d.txBytes)
     }),
     window.api.on('serial', props.panelId, 'status', (p) => {
       const s = p as { open: boolean; error?: string }
@@ -345,16 +339,7 @@ onMounted(async () => {
       if (!open.value || gap < SUSPEND_FLUSH_MS) return
       resumeHint.value = `系统休眠 ${fmtDuration(gap)}，串口可能已失步（设备不回显、屏幕不刷新）。`
     }),
-    window.api.on('serial', props.panelId, 'memlog', (p) => {
-      // 内存全量日志达上限（主进程已停止记录）：告知用户并停止终端显示，清空后恢复
-      if (!(p as { full?: boolean }).full) return
-      logOverflow = true
-      void ElMessageBox.alert(
-        '会话内存日志已达上限（约 500MB）。已停止记录与显示，清空终端后继续。请先「存日志」保留已收内容。',
-        '内存日志已满',
-        { confirmButtonText: '知道了', type: 'warning' }
-      ).catch(() => {})
-    })
+
   )
   const res = (await window.api.invoke('serial', 'attach', props.panelId)) as {
     config: SerialConfig
@@ -378,6 +363,7 @@ onMounted(async () => {
 onUnmounted(() => {
   unsubs.forEach((u) => u())
   unsubs = []
+  byteCounter.dispose()
   stopLoop()
   stopSignalPoll()
   window.api.invoke('serial', 'dispose', props.panelId).catch(() => {})
@@ -410,8 +396,7 @@ async function openPort(): Promise<void> {
     open.value = true
     dtrOn.value = true
     rtsOn.value = true
-    // 重开串口 = 新会话：主进程 memBuf 随新会话重置，这里解除溢出锁定
-    logOverflow = false
+    // 重开串口 = 新会话：防护提示/洪泛提示/唤醒横幅全部按新会话重置
     resumeHint.value = null
     resetBareCrWatch()
     guardNotified = false
@@ -528,22 +513,11 @@ function openTermSearch(): void {
 }
 
 function clearTerm(): void {
-  // 清屏同时清内存日志并解除溢出锁定（先存日志再清，否则清掉的内容不可再导出）。
-  // 复位标志等主进程 mem-clear 落定：清空瞬间涌入的数据不会出现「终端显示了但日志没记」的缺口
-  void window.api
-    .invoke('serial', 'log:mem-clear', props.panelId)
-    .then(() => {
-      logOverflow = false
-    })
-    .catch(() => {
-      logOverflow = false
-    })
-  termView.value?.clear()
+  void window.api.invoke('serial', 'output:reset', props.panelId).catch((error) => ElMessage.error(String(error)))
 }
 
 function saveLog(): void {
-  // 内存全量日志存于主进程（Buffer 堆外）：内容与自动落盘同格式（每行 [时间戳] 清洗后内容），
-  // 由主进程拼装直写文件，不经渲染端
+  // 从磁盘按块导出，日志正文不经渲染端。
   void window.api
     .invoke('serial', 'log:mem-save', props.panelId)
     .then((res) => {
@@ -565,7 +539,7 @@ async function setLogDir(): Promise<void> {
     dir?: string
     error?: string
   }
-  if (res.ok && res.dir) ElMessage.success(`日志保存目录已设为：${res.dir}`)
+  if (res.ok && res.dir) ElMessage.success(`日志保存目录已设为：${res.dir}（新会话生效）`)
 }
 
 // ---------- 会话与配置 ----------
@@ -784,6 +758,7 @@ async function deleteSession(idx: number): Promise<void> {
             </el-select>
           </el-tooltip>
           <el-button size="small" text :icon="Search" title="查找（Ctrl+F）" @click="openTermSearch">查找</el-button>
+        <TerminalHistory tool="serial" :panel-id="props.panelId" />
           <el-button size="small" text @click="clearTerm">清空</el-button>
           <el-button size="small" text :icon="Download" @click="saveLog">存日志</el-button>
           <el-dropdown trigger="click" @command="(cmd: string) => (cmd === 'set' ? setLogDir() : openLogDir())">
@@ -796,7 +771,7 @@ async function deleteSession(idx: number): Promise<void> {
             </template>
           </el-dropdown>
           <el-tooltip content="会话期间所有收发自动落盘（关闭后仅手动「存日志」）" placement="top">
-            <el-checkbox v-model="autoLog" size="small" @change="persistConfig">自动保存日志</el-checkbox>
+            <el-checkbox v-model="autoLog" size="small" title="新会话生效；关闭后使用临时历史，关闭面板或开始新会话时删除" @change="persistConfig">保留日志</el-checkbox>
           </el-tooltip>
           <el-tooltip content="发送文件到设备：先选协议（YMODEM/ZMODEM），再选文件" placement="top">
             <el-dropdown

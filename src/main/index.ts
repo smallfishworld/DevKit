@@ -136,6 +136,12 @@ app.on('window-all-closed', () => {
   app.quit()
 })
 
-app.on('will-quit', () => {
-  disposeAllPanels()
+let shutdownComplete = false
+let shuttingDown = false
+app.on('before-quit', (event) => {
+  if (shutdownComplete) return
+  event.preventDefault()
+  if (shuttingDown) return
+  shuttingDown = true
+  void disposeAllPanels().finally(() => { shutdownComplete = true; app.quit() })
 })

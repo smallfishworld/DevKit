@@ -5,7 +5,7 @@ export interface ToolService {
   /** 处理渲染进程调用 */
   invoke(panelId: string, action: string, payload: unknown): Promise<unknown> | unknown
   /** 面板关闭时清理资源（停止钩子/关闭端口等），不需要服务参与时可空实现 */
-  dispose?(panelId: string): void
+  dispose?(panelId: string): Promise<void> | void
 }
 
 const services = new Map<string, ToolService>()
@@ -36,13 +36,14 @@ export function registerToolIpc(): void {
       throw new Error(`未知工具服务: ${tool}`)
     }
     if (action === 'dispose') {
-      service.dispose?.(panelId)
+      await service.dispose?.(panelId)
       return true
     }
     return await service.invoke(panelId, action, payload)
   })
 }
 
-export function disposeAllPanels(): void {
-  for (const service of services.values()) service.dispose?.('*')
+export async function disposeAllPanels(): Promise<void> {
+  const results = await Promise.allSettled([...services.values()].map((service) => Promise.resolve().then(() => service.dispose?.('*'))))
+  for (const result of results) if (result.status === 'rejected') console.error('[shutdown]', result.reason)
 }
