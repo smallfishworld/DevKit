@@ -17,7 +17,10 @@ import {
 import TerminalView from '@renderer/components/TerminalView.vue'
 import QuickCmdManager from '@renderer/components/QuickCmdManager.vue'
 import type { SerialConfig, SerialEncoding, SerialParams, SerialTransferEvt, TransferProtocol } from '../../../shared/serial'
-import { BAUD_RATES } from '../../../shared/serial'
+import { BAUD_RATES, SUSPEND_FLUSH_MS } from '../../../shared/serial'
+import { fmtDuration, hasBareCr } from '../../../shared/logtext'
+import type { VtGuardStats } from '../../../shared/vtguard'
+import { newBareCrWatch, noteBareCr } from '@renderer/components/termFlow'
 import type { QuickCmdStep } from '../../../shared/term-macro'
 import { useTermMacros } from '../composables/useTermMacros'
 import { useSidebarDrag } from '../composables/useSidebarDrag'
@@ -75,6 +78,36 @@ const localEcho = ref(false)
 /** 终端字体族与字号（Ctrl+滚轮 / Ctrl+=/- 缩放） */
 const termFont = ref('Consolas')
 const termFontSize = ref(13)
+/** 裸 \r 按换行显示（默认关，重启记忆）：设备用 \r 原地重绘时看清每一帧 */
+const crAsNewline = ref(false)
+/** 回滚保护（默认开，重启记忆）：中和设备的擦回滚/硬复位/切备用屏，保住已滚出屏幕的历史 */
+const guardScrollback = ref(true)
+/** 回滚保护命中提示（每会话一次）：命中时说明原因，避免用户误以为终端丢内容 */
+let guardNotified = false
+function onGuard(stats: VtGuardStats): void {
+  if (guardNotified) return
+  guardNotified = true
+  const what = stats.eraseScrollback > 0 ? '清回滚序列(CSI 3J)' : '终端硬复位(ESC c)'
+  const note = `设备发了${what}——这类序列会销毁已滚出屏幕的内容；已拦下并保留回滚历史（可在工具栏关闭「保护回滚」按原始字节渲染）`
+  termView.value?.info(note)
+  // 同步写进日志：原序列在落盘前已被剥掉，不记这条的话用户在日志里找不到任何线索
+  void window.api.invoke('serial', 'log:note', props.panelId, { text: note }).catch(() => {})
+}
+
+/** 设备切进/切出备用屏（原样放行）：备用屏没有回滚，若程序退出时没发 ?1049l，
+ *  之后整个会话都滚不回去。只在日志留痕、不打断操作——终端提示每次进入都会打断阅读 */
+let altScreenNoted = false
+function onAltScreen(): void {
+  if (altScreenNoted) return
+  altScreenNoted = true
+  void window.api
+    .invoke('serial', 'log:note', props.panelId, {
+      text: '设备切入了备用屏(vi/top 等全屏程序)——备用屏没有回滚历史；若程序退出后终端回不到主屏，重开串口即可拉回（保留回滚内容）'
+    })
+    .catch(() => {})
+}
+/** 裸 CR 洪泛监视：同一秒内累计 20 批含裸 CR 即提示一次开关 */
+const bareCrWatch = newBareCrWatch(Date.now())
 const TERM_SIZES = [10, 11, 12, 13, 14, 15, 16, 17, 18, 20, 22, 24, 26, 28]
 /** 原始收发流水（供「存日志」导出；完整落盘由主进程自动日志负责）
  *  MobaXterm 式全量内存日志：不截断条数，按字节上限管理；超限弹窗并停止记录/显示，清屏后恢复 */
@@ -82,6 +115,29 @@ const TERM_SIZES = [10, 11, 12, 13, 14, 15, 16, 17, 18, 20, 22, 24, 26, 28]
  *  清空终端或重开串口后恢复。日志本体存主进程（Buffer 堆外），渲染端不再累积字符串——
  *  长会话数百 MB 字符串在渲染端堆上会引发 V8 大 GC 频繁暂停，表现为打印断断续续 */
 let logOverflow = false
+
+/** 系统长休眠唤醒提示：串口链路可能已失步，给一键重开（不自动复位——DTR 抖动会复位部分设备） */
+const resumeHint = ref<string | null>(null)
+function dismissResumeHint(): void {
+  resumeHint.value = null
+}
+async function reopenFromResumeHint(): Promise<void> {
+  resumeHint.value = null
+  await closePort()
+  await openPort()
+}
+/** 重开串口时同时复位裸 CR 提示（新会话允许再提示一次） */
+function resetBareCrWatch(): void {
+  Object.assign(bareCrWatch, newBareCrWatch(Date.now()))
+}
+
+/** 「裸 CR 换行」开关变更：关掉后重新武装提示——用户看过之后再关回去，
+ *  说明他选择按原始语义看；若设备仍以 \r 重绘，还应再提示一次（否则 notified 永久为真，
+ *  本会话内再也不提示，而故障现象已复现）。 */
+function onCrModeChange(): void {
+  if (!crAsNewline.value) resetBareCrWatch()
+  persistConfig()
+}
 
 /** 键盘直入：原样发串口（Enter 发 \r，与真实终端一致）；录制时同步记录 */
 function onTermData(data: string): void {
@@ -258,6 +314,10 @@ onMounted(async () => {
       const d = p as DataEvt
       updateBytesThrottled(d.rxBytes, d.txBytes)
       if (!logOverflow) termView.value?.write(d.text)
+      // 设备用 \r 原地重绘时屏幕不滚动，用户会以为"终端不刷新"；提示一次可切换显示模式
+      if (!crAsNewline.value && noteBareCr(bareCrWatch, hasBareCr(d.text), Date.now())) {
+        termView.value?.info('设备在用 \\r 原地重绘同一行（屏幕被覆盖属正常的 VT 行为）；可在工具栏开启「裸 CR 按换行显示」逐帧查看')
+      }
     }),
     window.api.on('serial', props.panelId, 'tx', (p) => {
       const d = p as DataEvt
@@ -278,6 +338,13 @@ onMounted(async () => {
       ElMessage.warning(`串口错误：${(p as { message: string }).message}`)
     }),
     window.api.on('serial', props.panelId, 'transfer', onTransferEvt),
+    window.api.on('serial', props.panelId, 'resume', (p) => {
+      // 主进程已丢弃休眠期间积压的陈旧字节；这里只提示"链路可能失步"，重开由用户决定。
+      // 阈值与主进程共用 SUSPEND_FLUSH_MS：两边不一致会出现「没丢缓冲却提示失步」的矛盾
+      const gap = (p as { gapMs: number }).gapMs
+      if (!open.value || gap < SUSPEND_FLUSH_MS) return
+      resumeHint.value = `系统休眠 ${fmtDuration(gap)}，串口可能已失步（设备不回显、屏幕不刷新）。`
+    }),
     window.api.on('serial', props.panelId, 'memlog', (p) => {
       // 内存全量日志达上限（主进程已停止记录）：告知用户并停止终端显示，清空后恢复
       if (!(p as { full?: boolean }).full) return
@@ -299,6 +366,8 @@ onMounted(async () => {
   xferProtocol.value = config.value.xferProtocol || 'ymodem'
   autoLog.value = config.value.autoLog !== false
   showTime.value = config.value.showTime === true
+  crAsNewline.value = config.value.crAsNewline === true
+  guardScrollback.value = config.value.guardScrollback !== false
   encoding.value = config.value.encoding ?? 'utf8'
   if (config.value.sidebarWidth) sidebarWidth.value = config.value.sidebarWidth
   sidebarHidden.value = config.value.sidebarHidden === true
@@ -327,6 +396,11 @@ async function openPort(): Promise<void> {
     return
   }
   opening.value = true
+  // 必须在下发 open 之前复位：open 一返回主进程就可能推出新会话的数据，
+  // 那时终端若还停在上个会话遗留的备用屏里，这批数据会画进备用屏、随复位一起消失。
+  // 上个会话可能停在备用屏里（vi/top 被打断）或残留模式未复位：拉回主屏+软复位，
+  // 但不碰回滚内容（设备随后自己发的清屏仍会按正常 VT 语义执行）
+  termView.value?.resetVtState()
   const res = (await window.api.invoke('serial', 'open', props.panelId, { ...params })) as {
     ok: boolean
     error?: string
@@ -338,6 +412,10 @@ async function openPort(): Promise<void> {
     rtsOn.value = true
     // 重开串口 = 新会话：主进程 memBuf 随新会话重置，这里解除溢出锁定
     logOverflow = false
+    resumeHint.value = null
+    resetBareCrWatch()
+    guardNotified = false
+    altScreenNoted = false
     // 真正拉高 DTR/RTS（仅改 UI 状态不下发时，部分需要复位才能工作的设备会卡住）
     await window.api.invoke('serial', 'dtr', props.panelId, { on: true }).catch(() => {})
     await window.api.invoke('serial', 'rts', props.panelId, { on: true }).catch(() => {})
@@ -498,6 +576,8 @@ async function persistConfig(): Promise<void> {
   config.value.termFontSize = termFontSize.value
   config.value.autoLog = autoLog.value
   config.value.showTime = showTime.value
+  config.value.crAsNewline = crAsNewline.value
+  config.value.guardScrollback = guardScrollback.value
   config.value.encoding = encoding.value
   config.value.sidebarWidth = sidebarWidth.value
   config.value.sidebarHidden = sidebarHidden.value
@@ -691,6 +771,12 @@ async function deleteSession(idx: number): Promise<void> {
           <el-tooltip content="每行前显示本地时间 [HH:MM:SS.mmm]，与日志落盘格式一致" placement="top">
             <el-checkbox v-model="showTime" size="small" @change="persistConfig">时间戳</el-checkbox>
           </el-tooltip>
+          <el-tooltip content="设备用 \r 原地重绘同一行时（进度条、休眠后失步），默认只有最后一眼可见；勾选后每个 \r 换一行，与日志一致" placement="top">
+            <el-checkbox v-model="crAsNewline" size="small" @change="onCrModeChange">裸 CR 换行</el-checkbox>
+          </el-tooltip>
+          <el-tooltip content="拦下设备发来的「清回滚(CSI 3J)/硬复位(ESC c)」序列：它们会销毁已滚出屏幕的内容，滚动也看不到；关闭后完全按原始字节渲染" placement="top">
+            <el-checkbox v-model="guardScrollback" size="small" @change="persistConfig">保护回滚</el-checkbox>
+          </el-tooltip>
           <el-tooltip content="串口线上字节的编码：多数嵌入式设备输出 GBK，选错时中文显示乱码 / ？；对打开中的会话即时生效" placement="top">
             <el-select v-model="encoding" size="small" style="width: 88px" @change="onEncodingChange">
               <el-option value="utf8" label="UTF-8" />
@@ -750,13 +836,22 @@ async function deleteSession(idx: number): Promise<void> {
             RX <b>{{ rxBytes }}</b> TX <b>{{ txBytes }}</b>
           </span>
         </div>
+        <div v-if="resumeHint" class="resume-hint">
+          <span class="resume-text">{{ resumeHint }}</span>
+          <el-button size="small" type="primary" text @click="reopenFromResumeHint">重开串口</el-button>
+          <el-button size="small" text @click="dismissResumeHint">忽略</el-button>
+        </div>
         <TerminalView
           ref="termView"
           v-model:font-size="termFontSize"
           :font="termFont"
           :local-echo="localEcho"
           :show-time="showTime"
+          :cr-mode="crAsNewline ? 'newline' : 'raw'"
+          :guard-scrollback="guardScrollback"
           @data="onTermData"
+          @guard="onGuard"
+          @altscreen="onAltScreen"
         />
 
         <div class="send-bar">
@@ -1063,6 +1158,25 @@ async function deleteSession(idx: number): Promise<void> {
   margin-left: auto;
   font-size: 12px;
   color: var(--el-text-color-secondary);
+}
+
+/* 长休眠唤醒提示条：非阻塞，不挡终端输入 */
+.resume-hint {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  margin-bottom: 6px;
+  font-size: 12px;
+  color: var(--el-color-warning);
+  background: var(--el-color-warning-light-9);
+  border: 1px solid var(--el-color-warning-light-5);
+  border-radius: 8px;
+}
+
+.resume-text {
+  flex: 1;
+  min-width: 0;
 }
 
 .counters b {

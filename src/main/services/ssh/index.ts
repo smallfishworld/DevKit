@@ -123,14 +123,15 @@ class SshService implements ToolService {
     }
   }
 
-  /** 把 pendingMem 字符串封成一块 Buffer 入 memBuf（memBytes 以封块时实测为准） */
+  /** 把 pendingMem 字符串封成一块 Buffer 入 memBuf。
+   *  字节数**不在这里累加**：每行在 appendLog 里已计过一次，这里再加会把同一批内容算两遍
+   *  （2.0×），500MB 上限会在约 250MB 实际内容时提前触发。 */
   private sealMemChunk(panelId: string, s: SshSession): void {
     if (!s.pendingMem) return
     const b = Buffer.from(s.pendingMem, 'utf8')
     s.pendingMem = ''
     s.memPieces = 0
     s.memBuf.push(b)
-    s.memBytes += b.length
     if (s.memBytes > MEM_LOG_LIMIT) this.tripMemFull(panelId, s)
   }
 

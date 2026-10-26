@@ -44,6 +44,70 @@ export function splitTerminalLines(raw: string): { lines: string[]; carry: strin
   return { lines: parts, carry: raw.slice(cut + 1) }
 }
 
+/**
+ * 发送（TX）审计行：把一次下发的文本翻译成"一发送 = 一日志行"的可见字面量。
+ * 不经过 cleanLogBody 的换行归一——否则 `\r` 会被归一成 `\n` 再被 split 成两行空日志
+ * （日志里按一次回车出现两条时间戳相同的空行）。控制符统一转字面量，屏幕/日志均无歧义。
+ */
+export function txAuditLine(text: string): string {
+  let out = ''
+  for (const ch of text) {
+    const code = ch.codePointAt(0) ?? 0
+    if (code >= 0x20 && code !== 0x7f) {
+      out += ch
+      continue
+    }
+    if (ch === '\r') out += '<CR>'
+    else if (ch === '\n') out += '<LF>'
+    else if (ch === '\t') out += '<TAB>'
+    else out += `<${code.toString(16).toUpperCase().padStart(2, '0')}>`
+  }
+  return out
+}
+
+/**
+ * 批内是否存在「裸 \r」（不跟 \n 的回车）。
+ * 这类回车在真实 VT 语义下只是把光标移回行首覆盖重绘，屏幕上看不到新内容——
+ * 设备进入这种输出模式时（休眠失步、进度条重绘）终端看起来"不刷新"。
+ * 结尾的 \r 可能是被批量窗口切开的 \r\n 前半，交给下一批判定，此处不算。
+ */
+export function hasBareCr(text: string): boolean {
+  if (!text) return false
+  // 裸 CR = 回车之后不跟换行的空转（设备原地重绘同一行）。
+  // 但 `\r` 的连续段（`\r`、`\r\r`、`\r\r\n`…）是行结束符而非重绘：
+  //   - `\r\r\n` 是不少设备的行结束符，splitTerminalLines 用 `\r*\n` 明确支持；
+  //   - 批尾单独一串 `\r` 可能是被 32ms 批边界切开的 CRLF 前半。
+  // 所以按「\r 段」判：段后是 \n（或文本结束）→ 不是裸 CR；其余 → 是。
+  // 用显式循环而非正则：`\r+` 的回溯会让 `\r\r\n` 在第一个 \r 处「不跟 \n」而误判。
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] !== '\r') continue
+    let j = i
+    while (j < text.length && text[j] === '\r') j++
+    const next = text[j] // 段后第一个字符（可能 undefined = 文本结束）
+    if (next !== '\n' && next !== undefined) return true
+    i = j - 1
+  }
+  return false
+}
+
+/** 把 \r（含 \r\n 中的 \r）视为换行：与日志归一规则对齐，供终端「裸 CR 按换行显示」模式使用 */
+export function crToNewline(text: string): string {
+  // 与 normalizeLines 同一条规则：\r+\n? 折叠为单个 \n（吃掉 \r\r\n 的重复回车）
+  return text.replace(/\r+\n?/g, '\n')
+}
+
+/** 时长人读格式（休眠/唤醒标记与提示条共用）：<1s 用毫秒，<60s 用秒，<60m 用分，其余用小时分 */
+export function fmtDuration(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) return '0s'
+  if (ms < 1000) return `${Math.round(ms)}ms`
+  const s = Math.round(ms / 1000)
+  if (s < 60) return `${s}s`
+  const m = Math.floor(s / 60)
+  if (m < 60) return `${m}m${s % 60 ? `${s % 60}s` : ''}`
+  const h = Math.floor(m / 60)
+  return `${h}h${m % 60 ? `${m % 60}m` : ''}`
+}
+
 /** 日期戳（跨天标记用）：YYYY-MM-DD */
 export function dateStamp(d = new Date()): string {
   const p = (n: number): string => n.toString().padStart(2, '0')

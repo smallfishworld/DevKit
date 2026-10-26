@@ -97,3 +97,19 @@ export function resolveGlobalKey(p: {
   if (lower === 'c' && p.hasSelection) return { kind: 'copy' }
   return { kind: 'send', seq }
 }
+
+/**
+ * 本地回显的显示翻译：把发往设备的按键序列翻译成"真实终端上会看到的样子"。
+ * xterm 的 VT 解析器把 \x7f（DEL，退格键）当无操作、\b 只移光标不擦字，
+ * 直接回写会导致本地回显模式下屏幕删除完全失效——须手动翻译成擦除序列 \b \b。
+ * \r 翻译为 \r\n（多数串口设备回显换行即此形态）；其余字符原样回显。
+ */
+export function localEchoFor(data: string): string {
+  let out = ''
+  for (const ch of data) {
+    if (ch === '\x7f' || ch === '\b') out += '\b \b'
+    else if (ch === '\r') out += '\r\n'
+    else out += ch
+  }
+  return out
+}

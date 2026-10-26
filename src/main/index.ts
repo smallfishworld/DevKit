@@ -1,4 +1,4 @@
-import { BrowserWindow, Menu, app, clipboard, ipcMain, screen } from 'electron'
+import { BrowserWindow, Menu, app, clipboard, ipcMain, powerMonitor, screen } from 'electron'
 import { join } from 'node:path'
 import { disposeAllPanels, registerService, registerToolIpc, setMainWindow } from './ipc'
 import { inputService, fullSelfTest } from './services/input'
@@ -116,6 +116,11 @@ app.whenReady().then(() => {
   void macroService.init()
   registerToolIpc()
   registerWindowIpc()
+
+  // 休眠/唤醒：串口链路在长休眠后会失步（驱动缓冲一次性倾倒 + 设备原地重绘），
+  // 主进程需要知道"刚睡过"才能在日志标注并丢掉陈旧字节（见 serialService.onSystemResume）
+  powerMonitor.on('suspend', () => serialService.onSystemSuspend())
+  powerMonitor.on('resume', () => serialService.onSystemResume())
 
   // 原生模块自检：结果同时打到 dev 控制台与面板
   console.log('[devkit] input selftest:', JSON.stringify(fullSelfTest()))

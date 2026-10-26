@@ -38,7 +38,9 @@
 | 脚本 | 覆盖 |
 |---|---|
 | `tests/term-test.js` | 终端鼠标复制粘贴 / Ctrl+C/V / 查找模式退出判定（termInput.ts） |
-| `tests/logtext-test.js` | 日志文本清洗（logtext.ts：剥 ANSI / 换行归一 / 跨批 ESC 切分 / 时间戳） |
+| `tests/termflow-test.js` | 终端显示队列水位与丢旧 / 裸 CR 洪泛提示（termFlow.ts） |
+| `tests/vtguard-test.js` | 串口回滚保护：ED3 / RIS 中和、备用屏只识别不改写、跨批拼回、重开复位序列（vtguard.ts） |
+| `tests/logtext-test.js` | 日志文本清洗（logtext.ts：剥 ANSI / 换行归一 / 跨批 ESC 切分 / 时间戳 / TX 审计行 / 裸 CR 判定） |
 | `tests/diff-test.js` | 文本/十六进制/文件夹 diff 引擎 + io 多编码 |
 | `tests/logic-test.js` | hexutil + 程序员计算器 |
 | `tests/mobamacro-test.js` | MobaXterm 宏导入解析 |

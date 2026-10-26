@@ -1,6 +1,6 @@
-/* 终端交互判定纯逻辑测试：鼠标复制粘贴 / Ctrl+C/V / 查找模式退出 / 全局兜底键。
+/* 终端交互判定纯逻辑测试：鼠标复制粘贴 / Ctrl+C/V / 查找模式退出 / 全局兜底键 / 本地回显翻译。
    判定逻辑与 TerminalView.vue 共用同一份 termInput.ts（生产代码路径） */
-const { resolveMouseDown, resolveTermKey, resolveGlobalKey } = require('../src/renderer/src/components/termInput')
+const { resolveMouseDown, resolveTermKey, resolveGlobalKey, localEchoFor } = require('../src/renderer/src/components/termInput')
 
 let pass = 0
 let fail = 0
@@ -59,6 +59,14 @@ check('Ctrl+L → 发清屏', (() => { const a = resolveGlobalKey({ ctrlKey: tru
 check('Ctrl+V 非编辑目标 → 忽略', resolveGlobalKey({ ctrlKey: true, altKey: false, metaKey: false, key: 'v', editableTarget: false, hasSelection: false }).kind === 'none')
 // 不在控制键表的键忽略
 check('Ctrl+X → 忽略', resolveGlobalKey({ ctrlKey: true, altKey: false, metaKey: false, key: 'x', editableTarget: false, hasSelection: false }).kind === 'none')
+
+console.log('== localEchoFor（本地回显的显示翻译） ==')
+check('普通字符原样回显', localEchoFor('ab') === 'ab')
+check('\\x7f 翻译为擦除序列 \\b \\b', localEchoFor('\x7f') === '\b \b')
+check('\\b 同样翻译为擦除序列', localEchoFor('\b') === '\b \b')
+check('\\r 翻译为 \\r\\n（回显换行形态）', localEchoFor('\r') === '\r\n')
+check('混合序列逐字符翻译', localEchoFor('ab\x7f\r') === 'ab\b \b\r\n')
+check('空串不变', localEchoFor('') === '')
 
 console.log(`\n终端交互判定: ${pass} 通过, ${fail} 失败`)
 process.exit(fail > 0 ? 1 : 0)

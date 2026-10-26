@@ -1,6 +1,6 @@
 /* 串口日志文本清洗纯函数测试：剥 ANSI / 归一换行 / 制表符保留
    与辅助串口自动日志（src/shared/logtext.ts）共用同一份生产代码路径 */
-const { cleanLogBody, stripAnsi, normalizeLines, fmtStamp, fileNameStamp, estimateBytes, splitTerminalLines, dateStamp, stampLines } = require('../src/shared/logtext')
+const { cleanLogBody, stripAnsi, normalizeLines, fmtStamp, fileNameStamp, estimateBytes, splitTerminalLines, dateStamp, stampLines, txAuditLine, hasBareCr, crToNewline, fmtDuration } = require('../src/shared/logtext')
 
 let pass = 0
 let fail = 0
@@ -143,6 +143,52 @@ check('空行流任意切点：终端含空行戳共 3 行戳', (() => {
   return true
 })())
 check('ANSI 序列跨批：清洗后无残留', logPipeline(['\x1b[36;22mhe', 'llo\x1b[0m\r\r\n']).join('|') === 'hello')
+
+console.log('== txAuditLine（一发送 = 一日志行，控制符转字面量） ==')
+check('单独回车不再是两行空日志', txAuditLine('\r') === '<CR>' && txAuditLine('\r').split('\n').length === 1)
+check('\\r\\n → <CR><LF> 单行', txAuditLine('\r\n') === '<CR><LF>')
+check('文本 + 回车 → 一行', txAuditLine('debug\r') === 'debug<CR>')
+check('Ctrl+C → <03>', txAuditLine('\x03') === '<03>')
+check('Ctrl+U(0x15) → <15>', txAuditLine('\x15') === '<15>')
+check('制表符 → <TAB>', txAuditLine('a\tb') === 'a<TAB>b')
+check('制表符以外的可打印字符原样保留', txAuditLine('ls -al /tmp') === 'ls -al /tmp')
+check('中文原样保留', txAuditLine('重启\r') === '重启<CR>')
+check('DEL(0x7f) 转字面量', txAuditLine('\x7f') === '<7F>')
+check('空串 → 空串', txAuditLine('') === '')
+check('任何输入都只有一行（不含换行符）', ['\r', '\n', '\r\n\u0000\x03', 'a\r\nb'].every((s) => !/[\r\n]/.test(txAuditLine(s))))
+
+console.log('== hasBareCr（裸 CR 判定） ==')
+check('中间裸 CR 判定为真', hasBareCr('a\rb') === true)
+check('CRLF 不判为裸 CR', hasBareCr('a\r\nb') === false)
+check('结尾单独 \\r 不判（可能是被切开的 CRLF 前半）', hasBareCr('abc\r') === false)
+// \r\r\n 行结束符设备：批边界可能切在 `\r\r` | `\n`，整串结尾 \r 都要豁免
+check('结尾 \\r\\r 不判（\\r\\r\\n 被切开的前半）', hasBareCr('abc\r\r') === false)
+check('整批 \\r\\r\\n 行结束符不判为裸 CR', hasBareCr('AC\r\r\nBD\r\r\nCE') === false)
+check('结尾 \\r\\r 但中间有真裸 CR 仍判为真', hasBareCr('a\rb\r\r') === true)
+check('\\r\\r 单独成批不判（纯行结束符残段）', hasBareCr('\r\r') === false)
+check('纯 \\r\\r\\n 不判', hasBareCr('\r\r\n') === false)
+check('\\r\\n 后接 \\r\\r\\n 不判', hasBareCr('x\r\ny\r\r\nz') === false)
+check('多行 \\r\\r\\n 结束符不判', hasBareCr('AC\r\r\nBD\r\r\n') === false)
+check('裸 CR 后面还有 \\r\\r\\n 行尾仍判为真', hasBareCr('line1\rline2\r\r\n') === true)
+check('CRLF 与裸 CR 混排判为真', hasBareCr('a\r\nb\rc') === true)
+check('结尾 \\r 且前面有裸 CR 仍为真', hasBareCr('a\rb\r') === true)
+check('无 CR 为假', hasBareCr('abc') === false)
+check('空串为假', hasBareCr('') === false)
+
+console.log('== crToNewline（裸 CR 按换行显示） ==')
+check('裸 CR → 换行', crToNewline('a\rb') === 'a\nb')
+check('CRLF → 单换行', crToNewline('a\r\nb') === 'a\nb')
+check('\\r\\r\\n 折叠为单换行', crToNewline('a\r\r\nb') === 'a\nb')
+check('无 CR 原样', crToNewline('a\nb') === 'a\nb')
+check('与日志归一规则一致（normalizeLines 的 CR 处理）', crToNewline('a\rb\rc') === 'a\nb\nc')
+
+console.log('== fmtDuration（休眠时长人读格式） ==')
+check('毫秒级', fmtDuration(500) === '500ms')
+check('秒级', fmtDuration(30_000) === '30s')
+check('分类', fmtDuration(90_000) === '1m30s')
+check('整分不带秒', fmtDuration(120_000) === '2m')
+check('小时分', fmtDuration(41_901_800) === '11h38m')
+check('负数兜底', fmtDuration(-1) === '0s')
 
 console.log(`\n日志文本清洗: ${pass} 通过, ${fail} 失败`)
 process.exit(fail > 0 ? 1 : 0)

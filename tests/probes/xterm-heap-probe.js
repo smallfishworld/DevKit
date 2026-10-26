@@ -2,7 +2,9 @@
  * 无头 xterm 堆压力探针（tests/probes/，不在 npm test 内）
  * 量化：scrollback 行数 -> xterm 缓冲堆内存 + 单次 GC 暂停时长
  * 不调 term.open()（无 DOM），write()/buffer 是纯 JS，堆行为与真实渲染一致
- * 用法：node --expose-gc tests/probes/xterm-heap-probe.js [行数步长]
+ * 用法：node --expose-gc tests/probes/xterm-heap-probe.js [行数步长] [scrollback]
+ * 默认按当前产品默认回滚 20 万行压测；[scrollback] 可指定其他值对比
+ * （实测 36 万行满缓冲堆 ~138MB、GC 暂停 48-54ms，是维持 20 万行的依据）。
  */
 const { Terminal } = require('@xterm/xterm')
 
@@ -16,10 +18,11 @@ const LINE = '2026-10-13 12:00:00.000 [INFO] device log line with some ascii pay
 // xterm 主包不依赖 DOM 也能 write（不 open）；write 有内部异步节流，批量后需等 flush
 function main() {
   const stepLines = Number(process.argv[2]) || 50_000
-  const term = new Terminal({ scrollback: 500_000, convertEol: false, cols: 120, rows: 30 })
+  const scrollback = Number(process.argv[3]) || 200_000
+  const term = new Terminal({ scrollback, convertEol: false, cols: 120, rows: 30 })
   const start = process.memoryUsage().heapUsed
-  console.log(`初始 heapUsed: ${(start / 1048576).toFixed(1)} MB`)
-  for (let total = 0; total < 500_000; total += stepLines) {
+  console.log(`初始 heapUsed: ${(start / 1048576).toFixed(1)} MB，scrollback=${scrollback}`)
+  for (let total = 0; total < scrollback; total += stepLines) {
     for (let i = 0; i < stepLines; i++) term.write(LINE)
     // xterm write 是异步节流的：等它把队列全部解析完再测
     const wait = () =>

@@ -12,8 +12,10 @@ import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
 import { WebglAddon } from '@xterm/addon-webgl'
 import '@xterm/xterm/css/xterm.css'
-import { resolveGlobalKey, resolveMouseDown, resolveTermKey } from './termInput'
-import { fmtStamp, stampLines } from '../../../shared/logtext'
+import { resolveGlobalKey, resolveMouseDown, resolveTermKey, localEchoFor } from './termInput'
+import { DEFAULT_FLOW_LIMITS, dropNotice, pushDisplay } from './termFlow'
+import { crToNewline, fmtStamp, stampLines } from '../../../shared/logtext'
+import { VtGuard, reopenResetSequence, type VtGuardStats } from '../../../shared/vtguard'
 import { useAppearanceStore } from '@renderer/stores/appearance'
 import { toXtermTheme } from '@renderer/theme'
 
@@ -27,8 +29,27 @@ const props = withDefaults(
     localEcho?: boolean
     /** 显示时间戳：每批接收数据前插灰色本地时间 [HH:MM:SS.mmm]（与日志落盘格式一致） */
     showTime?: boolean
+    /**
+     * 裸 \r 的显示模式：
+     * - raw（默认）：真实 VT 语义，\r 只把光标移回行首覆盖重绘
+     * - newline：\r 当换行（与日志归一规则一致），用于设备用 \r 刷进度/失步重绘时看清每一帧
+     */
+    crMode?: 'raw' | 'newline'
+    /**
+     * 回滚保护（默认关，串口面板显式开启）：中和 `CSI 3J`（擦回滚）、`ESC c`（硬复位）、
+     * 备用屏切换 —— 这三者会销毁已滚出屏幕的内容，表现为「前半段看不见、滚动也看不见」。
+     * SSH/本地终端不开：vim/top 依赖备用屏，`clear` 擦回滚也是远端终端的正常语义。
+     */
+    guardScrollback?: boolean
   }>(),
-  { font: 'Consolas', fontSize: 13, localEcho: false, showTime: false }
+  {
+    font: 'Consolas',
+    fontSize: 13,
+    localEcho: false,
+    showTime: false,
+    crMode: 'raw',
+    guardScrollback: false
+  }
 )
 
 const appearance = useAppearanceStore()
@@ -40,6 +61,10 @@ const emit = defineEmits<{
   (e: 'resize', size: { cols: number; rows: number }): void
   /** 缩放/换字号时同步（父组件持久化） */
   (e: 'update:fontSize', size: number): void
+  /** 回滚保护命中（每批最多一次，已累计）：父组件用来提示「设备发了清回滚/复位」 */
+  (e: 'guard', stats: VtGuardStats): void
+  /** 设备切了备用屏（原样放行，仅统计）：父组件用来在日志里留痕，便于事后归因 */
+  (e: 'altscreen', count: number): void
 }>()
 
 const DEFAULT_FONT_SIZE = 13
@@ -104,9 +129,10 @@ onMounted(() => {
     lineHeight: 1.2,
     cursorBlink: true,
     convertEol: true, // 兼容只发 \n 的裸设备；\r\n 设备不受影响
-    // 回滚 20 万行：50 万行时 xterm JS 堆实测涨至 ~190MB，Major GC 暂停 50-90ms，
-    // 长会话持续打印下表现为周期性卡顿（清空即恢复，tests/probes/xterm-heap-probe.js 可复测）；
-    // 20 万行把堆压到 ~80MB 内。全量历史不丢：日志双通道（主进程 Buffer 堆外，不受 GC 影响）
+    // 回滚 20 万行：真实日志长度（60~100 字符/行）实测 36 万行满缓冲堆 ~138MB、
+    // Major GC 暂停 48-54ms（20 万行 ~80MB / 17-27ms，tests/probes/xterm-heap-probe.js 可复测）；
+    // 长会话持续打印下 50ms 级暂停就是肉眼可见的周期性卡顿，故维持 20 万行。
+    // 全量历史不丢：日志双通道（主进程 Buffer 堆外，不受 GC 影响）
     scrollback: 200_000,
     // addon-search 的结果高亮依赖 registerDecoration（proposed API）
     allowProposedApi: true,
@@ -140,7 +166,8 @@ onMounted(() => {
   // 键盘直入：xterm 捕获按键后交给父组件发送
   term.onData((data) => {
     if (props.localEcho) {
-      term?.write(data)
+      // \x7f/\b 被 VT 解析器当无操作，直接回写屏幕删除会失效（见 localEchoFor）
+      writeRaw(localEchoFor(data))
       midLine = !/[\r\n]$/.test(data)
     }
     emit('data', data)
@@ -245,6 +272,9 @@ onUnmounted(() => {
   resizeObserver = null
   webglAddon?.dispose()
   webglAddon = null
+  // 作废挂起的显示块：term 即将释放，drain 的回调不应再触碰它
+  displayQueue = []
+  draining = false
   term?.dispose()
   term = null
   fitAddon = null
@@ -466,30 +496,149 @@ async function onSearchContextmenu(e: MouseEvent): Promise<void> {
   })
 }
 
+// ---------- 显示队列（有界 + 背压） ----------
+// 入队的文本由 drain() 用 xterm 的 write 完成回调逐块推进，在途字节恒为一块。
+// xterm 的 WriteBuffer 累积 50MB 会 throw，throw 穿出 IPC 监听器会打断该面板后续数据处理；
+// 这里在 8MB 就丢最旧的显示块（只丢屏幕，日志在主进程独立通道，完整性不受影响）。
+let displayQueue: string[] = []
+let draining = false
+/** 清屏请求：等在途块落地后再执行（见 clear()） */
+let clearAfterFlight: (() => void) | null = null
+/** 上次丢弃提示的时刻：刷屏时每块都提示会淹没屏幕，1s 内只报一次累计量 */
+let lastDropNoticeAt = 0
+let pendingDropBytes = 0
+
+function drain(): void {
+  if (draining || !term || displayQueue.length === 0) return
+  const next = displayQueue.shift()
+  if (next === undefined) return
+  draining = true
+  try {
+    // 完成回调在 xterm 解析完这一块后触发，再写下一块 —— 这就是端到端背压
+    term.write(next, () => {
+      draining = false
+      // 有待执行的清屏：作废在此期间新到的块，清完再继续，保证清屏排在被清历史之后
+      const pendingClear = clearAfterFlight
+      if (pendingClear) {
+        clearAfterFlight = null
+        pendingClear()
+      }
+      drain()
+    })
+  } catch {
+    // 极端情况下 xterm 仍可能抛（数据被丢弃/实例已释放）：丢掉该块继续，不中断后续数据
+    draining = false
+    midLine = false
+    setTimeout(drain, 0)
+  }
+}
+
+/**
+ * 队列本身按"最新优先"保留，但被丢掉的可能是**未完行**——直接接上提示行会把
+ * `[DevKit] ...` 黏在半截设备输出后面。所以在队尾补一个换行：若停在行首（多数情况）
+ * 它只会产生一个空行；若停在行中间，提示行才能独占一行。宁可多一个空行也不能拼错。
+ */
+function enqueue(text: string): void {
+  if (!text) return
+  const r = pushDisplay(displayQueue, text, DEFAULT_FLOW_LIMITS)
+  displayQueue = r.queue
+  if (r.droppedBytes > 0) {
+    pendingDropBytes += r.droppedBytes
+    const now = Date.now()
+    if (now - lastDropNoticeAt >= 1000) {
+      // 提示行也走 pushDisplay：直接 push 会绕过字节上限，队列可能越界增长，
+      // 且绕过 FIFO 账目后提示行自己在下次丢弃时被当成「最旧块」先删掉，用户永远看不到
+      lastDropNoticeAt = now
+      const a = pushDisplay(displayQueue, '\r\n', DEFAULT_FLOW_LIMITS)
+      const b = pushDisplay(a.queue, dropNotice(pendingDropBytes), DEFAULT_FLOW_LIMITS)
+      displayQueue = b.queue
+      pendingDropBytes = 0
+    }
+  }
+  drain()
+}
+
+/** 真落队列的出口：所有显示文本（含本地提示行）都从这里进，保证顺序与背压一致 */
+function writeRaw(text: string): void {
+  enqueue(text)
+}
+
 /** 时间戳逐行补戳逻辑见 shared/logtext.ts 的 stampLines（纯函数，可单测） */
 let midLine = false
+/** 回滚保护：跨批拼回被切开的序列，命中即回报（逻辑见 shared/vtguard.ts） */
+const vtGuard = new VtGuard()
+
 function write(text: string): void {
   if (!text) return
+  // 回滚保护先做：CSI 3J / ESC c 会销毁已滚出屏幕的内容，且日志里被剥掉看不见。
+  // （备用屏序列只统计不改写——中和它会把全屏程序画到主屏上覆盖现有内容，见 vtguard.ts 文件头）
+  let src = text
+  if (props.guardScrollback) {
+    const g = vtGuard.push(text)
+    src = g.out
+    // 只在实际中和了序列时上报（备用屏是原样放行的，不能对用户说「已拦下」）
+    if (g.stats.eraseScrollback > 0 || g.stats.hardReset > 0) emit('guard', g.stats)
+    // 备用屏单独上报：只用于可追溯（写进日志/提示一次），不改写字节
+    if (g.stats.altScreen > 0) emit('altscreen', g.stats.altScreen)
+    if (!src) return
+  }
+  // 裸 CR 显示模式：设备用 \r 重绘同一行时，按换行展开才看得到每一帧
+  if (props.crMode === 'newline') src = crToNewline(src)
   if (!props.showTime) {
-    term?.write(text)
-    midLine = !/[\r\n]$/.test(text)
+    writeRaw(src)
+    midLine = !/[\r\n]$/.test(src)
     return
   }
-  const r = stampLines(text, `\x1b[90m[${fmtStamp()}]\x1b[0m `, midLine)
-  term?.write(r.out)
+  const r = stampLines(src, `\x1b[90m[${fmtStamp()}]\x1b[0m `, midLine)
+  writeRaw(r.out)
   midLine = r.midLine
 }
 
 /** 灌入本地灰色提示行 */
 function info(text: string): void {
-  term?.write(`\x1b[90m[DevKit] ${text}\x1b[0m\r\n`)
+  writeRaw(`\x1b[90m[DevKit] ${text}\x1b[0m\r\n`)
   midLine = false
 }
 
-/** 清屏（含滚动缓冲区）；清屏后光标回到行首 */
+/**
+ * 清屏（含滚动缓冲区）；清屏后光标回到行首。挂起的显示块一并作废（属于被清掉的历史）。
+ *
+ * 在途块是拦不住的：xterm 的 WriteBuffer 没有取消接口，已经交给它解析的块一定会画出来。
+ * 所以「清空」不能只是丢队列后立刻 term.clear()——那样在途块会落在清屏**之后**，
+ * 用户看到清完还残留一屏。这里改为：先作废队列，等在途块落地（draining 归 false）再真正清屏。
+ */
 function clear(): void {
-  term?.clear()
-  term?.write('\x1b[2J\x1b[H')
+  vtGuard.reset()
+  const doClear = (): void => {
+    // 作废「清空之前」收到的内容（含等待期间新到的块：它们早于清屏，属于被清历史）
+    displayQueue = []
+    pendingDropBytes = 0
+    term?.clear()
+    term?.write('\x1b[2J\x1b[H')
+    midLine = false
+  }
+  if (draining) {
+    // 在途块会晚于清屏落地，等它画完再清，避免清完又冒出一屏
+    clearAfterFlight = doClear
+    return
+  }
+  doClear()
+}
+
+/**
+ * 把终端从「上一会话遗留的 VT 状态」里拉回来，但保留回滚内容（重开串口时调用）。
+ * 场景：设备在备用屏里断线（vi/top 被打断），不退出就再也看不到主屏历史。
+ *
+ * `?1049l` **只在确实处于备用屏时才发**：在主屏上发它会让 xterm 的 restoreCursor()
+ * 把光标倒回未初始化的 savedY=0，新会话的输出就会原地上覆回滚顶部
+ * （实测见 tests/probes/normal-screen-1049l-probe.js：顶部历史被覆盖成新内容）。
+ * DECSTR(`ESC[!p`) 只复位模式，不碰光标，单独发对主屏无副作用；但它**不能**退出备用屏
+ * （实测见 altscreen-exit-strategy-probe.js），所以两者按需组合。
+ */
+function resetVtState(): void {
+  // 是否真的在备用屏，以 xterm 的 buffer.active.type 为准（与「保护回滚」开关无关，权威）
+  vtGuard.reset()
+  writeRaw(reopenResetSequence(term?.buffer.active.type === 'alternate' ? 'alternate' : 'normal'))
   midLine = false
 }
 
@@ -497,7 +646,7 @@ function focus(): void {
   term?.focus()
 }
 
-defineExpose({ write, info, clear, focus, openSearch })
+defineExpose({ write, info, clear, resetVtState, focus, openSearch })
 </script>
 
 <template>

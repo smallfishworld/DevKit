@@ -12,11 +12,11 @@ import { basename, dirname, join } from 'node:path'
 import type { ToolService } from '../../ipc'
 import { emitToolEvent } from '../../ipc'
 import type { SerialConfig, SerialEncoding, SerialParams, SerialTransferEvt, TransferProtocol } from '../../../shared/serial'
-import { DEFAULT_SERIAL_CONFIG } from '../../../shared/serial'
+import { DEFAULT_SERIAL_CONFIG, SUSPEND_FLUSH_MS } from '../../../shared/serial'
 import { getSection, setSection } from '../macro/configStore'
 import { ByteQueue, TransferCancelled, ymodemRecv, ymodemSend } from './ymodem'
 import { zmodemRecv, zmodemSend } from './zmodem'
-import { cleanLogBody, fileNameStamp, fmtStamp, splitTerminalLines } from '../../../shared/logtext'
+import { cleanLogBody, fileNameStamp, fmtDuration, fmtStamp, splitTerminalLines, txAuditLine } from '../../../shared/logtext'
 
 interface RxPiece {
   buf: Buffer
@@ -67,6 +67,8 @@ interface SerialSession {
   memBytes: number
   /** 超限后置位：停止记录（渲染端收到事件后同时停止终端显示） */
   memFull: boolean
+  /** 系统休眠开始时刻（唤醒时算时长并在日志标注；null = 未处于休眠） */
+  suspendedAt: number | null
 }
 
 /** 进行中的传输（每面板最多一个） */
@@ -132,11 +134,13 @@ class SerialService implements ToolService {
    *  空行照常落盘（设备真实空行可追溯）。
    *  同格式整行始终累积进内存全量日志 memBuf（自动落盘关闭/失败时仍可「存日志」导出）；
    *  行先拼进 pendingMem 字符串，攒满一段再 Buffer.from 成块（大块存储，见 MEM_CHUNK_PIECES） */
-  private appendLog(panelId: string, s: SerialSession, parts: string[]): void {
+  private appendLog(panelId: string, s: SerialSession, parts: string[], splitLines = true): void {
     if (parts.length === 0) return
     const stamp = fmtLogTime(Date.now(), true)
     for (const part of parts) {
-      for (const line of cleanLogBody(part).split('\n')) {
+      // TX 审计段已在 txAuditLine 里转成单行字面量，不能再过 cleanLogBody 拆行
+      // （否则一个 \r 会被归一成 \n 再 split 出两行空日志）
+      for (const line of splitLines ? cleanLogBody(part).split('\n') : [part]) {
         const piece = `[${stamp}] ${line}\r\n`
         if (!s.memFull) {
           s.pendingMem += piece
@@ -153,14 +157,16 @@ class SerialService implements ToolService {
     }
   }
 
-  /** 把 pendingMem 字符串封成一块 Buffer 入 memBuf（memBytes 以封块时实测为准） */
+  /** 把 pendingMem 字符串封成一块 Buffer 入 memBuf。
+   *  字节数**不在这里累加**：每行在 appendLog 里已按 Buffer.byteLength(piece) 计过一次，
+   *  这里再加 b.length 会把同一批内容算两遍（实测 2.0×），导致 500MB 上限在约 250MB
+   *  实际内容时就触发，用户的内存日志窗口平白砍半。 */
   private sealMemChunk(panelId: string, s: SerialSession): void {
     if (!s.pendingMem) return
     const b = Buffer.from(s.pendingMem, 'utf8')
     s.pendingMem = ''
     s.memPieces = 0
     s.memBuf.push(b)
-    s.memBytes += b.length
     if (s.memBytes > MEM_LOG_LIMIT) this.tripMemFull(panelId, s)
   }
 
@@ -170,6 +176,16 @@ class SerialService implements ToolService {
     s.pendingMem = ''
     s.memPieces = 0
     this.emit(panelId, 'memlog', { full: true })
+  }
+
+  /** 渲染端的可追溯备注（回滚保护拦下破坏性序列等）：写进日志通道，
+   *  否则这类事件在日志里完全不可见（原序列落盘前就被剥掉了） */
+  private noteLog(panelId: string, text: string): { ok: boolean } {
+    const s = sessions.get(panelId)
+    if (!s || !text) return { ok: false }
+    this.appendLog(panelId, s, [`[DevKit] ${txAuditLine(text)}`], false)
+    if (s.logHandle && s.logBuf.length >= 64) void this.flushLog(s)
+    return { ok: true }
   }
 
   /** 日志落盘：串口会话断开或缓冲超限时把缓冲一次性写入持久句柄 */
@@ -283,6 +299,8 @@ class SerialService implements ToolService {
       case 'log:mem-clear':
         this.clearMemLog(panelId)
         return { ok: true }
+      case 'log:note':
+        return this.noteLog(panelId, (payload as { text: string }).text)
       case 'log:set-dir':
         return this.setLogDir()
       case 'log:get-dir':
@@ -315,6 +333,60 @@ class SerialService implements ToolService {
   /** 面板关闭时断开串口（ipc dispose 分支调用） */
   dispose(panelId: string): void {
     if (sessions.has(panelId)) void this.close(panelId)
+  }
+
+  /**
+   * 系统进入休眠（powerMonitor 'suspend'）：在日志标注，并记下时刻用于唤醒时算时长。
+   * 休眠期间进程被冻结，收不到任何数据；USB 转串口芯片 FIFO 溢出丢字节是硬件行为，软件补不回来。
+   */
+  onSystemSuspend(): void {
+    const now = Date.now()
+    for (const [panelId, s] of sessions) {
+      s.suspendedAt = now
+      this.appendLog(panelId, s, ['===== 系统休眠 ====='])
+      void this.flushLog(s)
+    }
+  }
+
+  /**
+   * 系统唤醒（powerMonitor 'resume'）：
+   * - 日志标注休眠时长，便于事后定位"为什么这里缺了一段"；
+   * - 休眠够久时丢弃驱动里积压的陈旧数据（port.flush = 丢弃已接收未读取的字节）。
+   *   实测唤醒瞬间会一次性吐出几百 KB 的重复/残片（曾见单批 6611 行、单行 2.7KB 无终止符），
+   *   把这些当新数据渲染进终端，用户看到的就是"终端在放录像、输入不生效"；
+   * - 只通知渲染端，不擅自复位设备（改 DTR 会复位部分嵌入式板，交给用户点按钮决定）。
+   */
+  onSystemResume(): void {
+    const now = Date.now()
+    for (const [panelId, s] of sessions) {
+      const gap = s.suspendedAt === null ? 0 : now - s.suspendedAt
+      s.suspendedAt = null
+      this.appendLog(panelId, s, [
+        gap > 0 ? `===== 系统唤醒（休眠 ${fmtDuration(gap)}） =====` : '===== 系统唤醒 ====='
+      ])
+      void this.flushLog(s)
+      if (gap >= SUSPEND_FLUSH_MS) {
+        // 先丢掉应用层已攒的批次与未完行，避免半截数据被拼进新内容
+        if (s.flushTimer) {
+          clearTimeout(s.flushTimer)
+          s.flushTimer = null
+        }
+        s.pending = []
+        s.logCarry = ''
+        // 只清接收侧：serialport 的 flush() 在 Windows 上是
+        // PurgeComm(PURGE_RXCLEAR | PURGE_TXABORT | PURGE_TXCLEAR)，
+        // 会把**尚未发出的发送数据**一并丢弃——用户休眠前敲的命令、定时循环刚发的一帧
+        // 会在无任何提示的情况下消失（设备端永远收不到）。这里先 drain 等发送队列清空，
+        // drain 失败（超时/已关闭）就跳过清理：多显示几行陈旧数据，远比丢命令可接受。
+        if (s.port.isOpen) {
+          s.port.drain((err) => {
+            if (err || !s.port.isOpen) return
+            s.port.flush(() => {})
+          })
+        }
+      }
+      this.emit(panelId, 'resume', { gapMs: gap })
+    }
   }
 
   private async open(panelId: string, params: SerialParams): Promise<{ ok: boolean; error?: string }> {
@@ -404,7 +476,8 @@ class SerialService implements ToolService {
           pendingMem: '',
           memPieces: 0,
           memBytes: 0,
-          memFull: false
+          memFull: false,
+          suspendedAt: null
         })
         // 低流量场景：周期性把日志缓冲落盘
         if (logHandle) {
@@ -541,8 +614,8 @@ class SerialService implements ToolService {
     s.txBytes += buf.length
     // HEX 发送按字节审计记录（二进制过 toString('utf8') 会把 0x1b 当 ANSI 剥掉、非法字节变 U+FFFD）
     // ASCII 发送记录解码前文本（buf 可能是 GBK 编码，toString('utf8') 会乱码；hex 模式不存在多字节问题）
-    const auditText = p.mode === 'hex' ? buf.toString('hex').replace(/../g, '$& ').trim() : p.text + nl
-    this.appendLog(panelId, s, [auditText])
+    const auditText = p.mode === 'hex' ? buf.toString('hex').replace(/../g, '$& ').trim() : txAuditLine(p.text + nl)
+    this.appendLog(panelId, s, [auditText], false)
     this.emit(panelId, 'tx', {
       text: auditText,
       bytes: buf.length,
