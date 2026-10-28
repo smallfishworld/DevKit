@@ -54,6 +54,34 @@ async function main() {
     assert.equal(port.isOpen, false)
     console.log('  PASS serial disconnect/export and duplicate panel disposal')
 
+    // Multiple serial sessions must share exactly one power-save blocker.
+    assert.equal((await serialService.invoke('sleep-a', 'open', { ...DEFAULT_SERIAL_PARAMS, path: 'COM8' })).ok, true)
+    const sleepPort = SerialPort.ports.at(-1)
+    assert.equal((await serialService.invoke('sleep-b', 'open', { ...DEFAULT_SERIAL_PARAMS, path: 'COM9' })).ok, true)
+    assert.equal(powerSaveBlocker.activeCount, 1)
+    sleepPort.emit('data', Buffer.from('BEFORE-SLEEP\r\n'))
+    serialService.onSystemSuspend() // must flush queued RX before the marker
+    sleepPort.emit('data', Buffer.from('RECOVERED-BY-DRIVER\r\n'))
+    serialService.onSystemResume() // must flush queued RX before the marker
+    assert.equal(powerSaveBlocker.activeCount, 1)
+    await serialService.invoke('sleep-a', 'close')
+    assert.equal(powerSaveBlocker.activeCount, 1, 'other session still holds the blocker')
+    await serialService.invoke('sleep-b', 'close')
+    assert.equal(powerSaveBlocker.activeCount, 0)
+    const wakePage = await serialService.invoke('sleep-a', 'history:query', {})
+    const wakeText = wakePage.rows.map(row => row.text).join('\n')
+    const positions = [
+      wakeText.indexOf('BEFORE-SLEEP'),
+      wakeText.indexOf('===== 系统休眠'),
+      wakeText.indexOf('RECOVERED-BY-DRIVER'),
+      wakeText.indexOf('===== 系统唤醒')
+    ]
+    assert.ok(positions.every(i => i >= 0), wakeText)
+    assert.ok(positions.every((i, n) => n === 0 || positions[n - 1] < i), 'wake markers must follow received data')
+    await serialService.dispose('sleep-a')
+    await serialService.dispose('sleep-b')
+    console.log('  PASS multi-session power lock and ordered suspend/resume recording')
+
     const opening = serialService.invoke('serial-pending', 'open', { ...DEFAULT_SERIAL_PARAMS, path: 'COM2' })
     const disposing = serialService.dispose('serial-pending')
     await Promise.all([opening, disposing]); await tick()

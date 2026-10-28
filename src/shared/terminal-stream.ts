@@ -72,6 +72,7 @@ export class OutputWindow {
   private inFlight = 0
   private pressured = false
   private stopped = false
+  private deliveryPaused = false
 
   constructor(
     readonly generation: string,
@@ -83,6 +84,14 @@ export class OutputWindow {
   ) {}
 
   get pending(): number { return this.queued + this.inFlight }
+
+  /** Suspend NEW frames while hidden; already-sent frames retain normal ACKs. */
+  suspendDelivery(): void { this.deliveryPaused = true }
+  resumeDelivery(): void {
+    if (!this.deliveryPaused) return
+    this.deliveryPaused = false
+    this.drain()
+  }
 
   write(text: string): void {
     if (this.stopped || !text) return
@@ -111,7 +120,7 @@ export class OutputWindow {
   }
 
   private drain(): void {
-    while (this.head < this.queue.length && this.inFlight < this.high && !this.stopped) {
+    while (this.head < this.queue.length && this.inFlight < this.high && !this.stopped && !this.deliveryPaused) {
       const text = this.queue[this.head]
       this.queue[this.head++] = ''
       this.queued -= text.length
@@ -128,6 +137,7 @@ export class OutputWindow {
 
   dispose(): void {
     this.stopped = true
+    this.deliveryPaused = false
     this.queue = []; this.head = 0; this.queued = 0; this.inFlight = 0
     this.outstanding.clear()
     if (this.pressured) { this.pressured = false; this.pressure(false) }
@@ -198,9 +208,20 @@ export class DisplayBacklog {
 
   push(text: string): void {
     if (!text) return
-    this.chunks.push(text)
-    this.length += text.length
-    while (this.length > this.limit) this.dropPrefix(this.length - this.limit)
+    // Preserve UTF-16 surrogate pairs if the source splits them across chunks.
+    const lastIndex = this.chunks.length - 1
+    if (lastIndex >= this.head &&
+        /[\uD800-\uDBFF]/.test(this.chunks[lastIndex].slice(-1)) &&
+        /^[\uDC00-\uDFFF]/.test(text)) {
+      this.chunks[lastIndex] += text[0]
+      this.length++
+      text = text.slice(1)
+    }
+    if (text) { this.chunks.push(text); this.length += text.length }
+    if (this.length > this.limit) {
+      this.dropPrefix(this.length - this.limit)
+      this.alignToNextLine()
+    }
   }
 
   /** Drop only the oldest text; never split a UTF-16 surrogate pair. */
@@ -217,6 +238,26 @@ export class DisplayBacklog {
       this.length -= n
       this.dropped += n
       if (this.offset === chunk.length) this.advanceChunk()
+    }
+  }
+
+  /** Prefer a complete log line after an overflow to a partial VT command.
+   * Bounded search: no extra scan beyond 4 Ki; CR-only streams retain a tail.
+   */
+  private alignToNextLine(): void {
+    if (!this.length) return
+    let scanned = 0
+    let pos = this.offset
+    for (let i = this.head; i < this.chunks.length && scanned < 4096; i++) {
+      const chunk = this.chunks[i]
+      const end = Math.min(chunk.length, pos + 4096 - scanned)
+      const lf = chunk.indexOf('\n', pos)
+      if (lf >= 0 && lf < end) {
+        this.dropPrefix(scanned + lf - pos + 1)
+        return
+      }
+      scanned += end - pos
+      pos = 0
     }
   }
 

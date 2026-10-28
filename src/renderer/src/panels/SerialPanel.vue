@@ -312,7 +312,7 @@ onMounted(async () => {
     window.api.on('serial', props.panelId, 'resume', (p) => {
       // Genuine system suspend may cause a non-recoverable hardware gap.
       const gap = (p as { gapMs: number }).gapMs
-      if (!open.value || gap <= 0) return
+      if (!open.value || gap < 30_000) return
       resumeHint.value = `系统休眠 ${fmtDuration(gap)}，串口可能已失步（设备不回显、屏幕不刷新）。`
     }),
 
