@@ -207,6 +207,10 @@ class SerialService implements ToolService {
   onSystemSuspend(): void {
     const now = Date.now()
     for (const [panelId, s] of sessions) {
+      // Flush already received bytes before the sleep marker, otherwise a pending
+      // 32 ms batch can appear *after* the suspend timestamp in the disk log.
+      if (s.flushTimer) { clearTimeout(s.flushTimer); s.flushTimer = null }
+      this.flush(panelId)
       s.suspendedAt = now
       this.runtime.note(panelId, '===== 系统休眠 =====')
     }
@@ -223,6 +227,9 @@ class SerialService implements ToolService {
   onSystemResume(): void {
     const now = Date.now()
     for (const [panelId, s] of sessions) {
+      // Capture data already delivered by the OS before writing the wake marker.
+      if (s.flushTimer) { clearTimeout(s.flushTimer); s.flushTimer = null }
+      this.flush(panelId)
       const gap = s.suspendedAt === null ? 0 : now - s.suspendedAt
       s.suspendedAt = null
       this.runtime.note(
