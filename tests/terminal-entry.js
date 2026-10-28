@@ -2,7 +2,7 @@ const assert = require('node:assert/strict')
 const fs = require('node:fs/promises')
 const { tmpdir } = require('node:os')
 const { join } = require('node:path')
-const { LogFormatter, OutputWindow, DisplayBacklog, PanelTasks, ByteCounterThrottle } = require('../src/shared/terminal-stream')
+const { LogFormatter, OutputWindow, DisplayBacklog, SERIAL_BACKGROUND_CACHE_CHARS, SERIAL_REPLAY_HIGH_WATER_CHARS, PanelTasks, ByteCounterThrottle } = require('../src/shared/terminal-stream')
 const { SessionHistory, readHistoryPage } = require('../src/main/services/terminal/history')
 const { TerminalRuntime } = require('../src/main/services/terminal/runtime')
 const { setMainWindow } = require('../src/main/ipc')
@@ -44,6 +44,84 @@ async function main() {
       runtime.setVisible('h', true)
       assert.equal(events.filter(e => e.type === 'data').length, count)
       await runtime.dispose('h'); runtime.forgetVisible('h')
+    })
+    await test('default background cache retains 16 Mi UTF-16 code units, not 512 Ki', async () => {
+      assert.equal(SERIAL_BACKGROUND_CACHE_CHARS, 16 * 1024 * 1024)
+      const backlog = new DisplayBacklog()
+      backlog.push('x'.repeat(2 * 1024 * 1024))
+      assert.equal(backlog.pending, 2 * 1024 * 1024)
+      assert.equal(backlog.droppedChars, 0)
+      // Exercise the actual maximum, including a split surrogate pair at eviction.
+      backlog.push('中'.repeat(14 * 1024 * 1024))
+      assert.equal(backlog.pending, SERIAL_BACKGROUND_CACHE_CHARS)
+      backlog.push('😀END')
+      assert.ok(backlog.pending <= SERIAL_BACKGROUND_CACHE_CHARS)
+      assert.ok(backlog.droppedChars >= 5)
+      let last = ''
+      while (backlog.pending) last = backlog.read(16 * 1024)
+      assert.ok(last.endsWith('😀END'))
+      assert.equal(backlog.pending, 0)
+    })
+    await test('multi-Mi hidden replay is ACK paced, lossless and ordered with incoming live data', async () => {
+      const events = []
+      setMainWindow({ isDestroyed: () => false, webContents: { send: (_ch, e) => events.push(e) } })
+      const runtime = new TerminalRuntime('serial')
+      runtime.setVisible('stress', false)
+      await runtime.start('stress', { dir, name: 'STRESS', temporary: true, pause: () => {}, fatal: () => assert.fail() })
+      const batch = 'A'.repeat(64 * 1024)
+      for (let i = 0; i < 96; i++) {
+        runtime.data('stress', batch)
+        if (i % 4 === 3) await runtime.histories.get('stress').flush()
+      }
+      assert.equal(events.filter(e => e.type === 'data').length, 0)
+      assert.equal(runtime.backlogs.get('stress').pending, 6 * 1024 * 1024)
+      runtime.setVisible('stress', true)
+      assert.ok(runtime.outputs.get('stress').pending <= SERIAL_REPLAY_HIGH_WATER_CHARS + 2)
+      assert.ok(runtime.replays.has('stress'), '6 Mi cannot be enqueued as one display write')
+      runtime.data('stress', 'LIVE\r\n')
+      let cursor = 0
+      let rendered = ''
+      for (; cursor < events.length && cursor < 2000; cursor++) {
+        const e = events[cursor]
+        if (e.type !== 'data') continue
+        rendered += e.payload.text
+        runtime.invoke('stress', 'output:ack', e.payload)
+        assert.ok(runtime.outputs.get('stress').pending <= SERIAL_REPLAY_HIGH_WATER_CHARS + 16 * 1024)
+      }
+      assert.equal(rendered, 'A'.repeat(6 * 1024 * 1024) + 'LIVE\r\n')
+      assert.ok(!events.some(e => e.type === 'output:overflow'))
+      assert.equal(runtime.replays.size, 0)
+      assert.equal(runtime.outputs.get('stress').pending, 0)
+      await runtime.histories.get('stress').flush()
+      const content = await fs.readFile(runtime.histories.get('stress').path, 'utf8')
+      assert.ok(content.includes('LIVE'))
+      await runtime.dispose('stress'); runtime.forgetVisible('stress')
+    })
+    await test('hide again during replay preserves FIFO and resumes without duplication', async () => {
+      const events = []
+      setMainWindow({ isDestroyed: () => false, webContents: { send: (_ch, e) => events.push(e) } })
+      const runtime = new TerminalRuntime('serial')
+      runtime.setVisible('toggle', false)
+      await runtime.start('toggle', { dir, name: 'TOGGLE', temporary: true, pause: () => {}, fatal: () => assert.fail() })
+      const text = 'abc\r\n'.repeat(50_000)
+      runtime.data('toggle', text)
+      runtime.setVisible('toggle', true)
+      const before = runtime.replays.get('toggle').pending
+      assert.ok(before > 0)
+      runtime.setVisible('toggle', false)
+      assert.equal(runtime.replays.has('toggle'), false)
+      assert.equal(runtime.backlogs.get('toggle').pending, before)
+      runtime.data('toggle', 'LATER\r\n')
+      runtime.setVisible('toggle', true)
+      let rendered = ''
+      for (let i = 0; i < events.length && i < 1000; i++) {
+        if (events[i].type !== 'data') continue
+        rendered += events[i].payload.text
+        runtime.invoke('toggle', 'output:ack', events[i].payload)
+      }
+      assert.equal(rendered, text + 'LATER\r\n')
+      assert.ok(!events.some(e => e.type === 'output:overflow'))
+      await runtime.dispose('toggle'); runtime.forgetVisible('toggle')
     })
     await test('counter throttle publishes the final burst value and cancels on disposal', async () => {
       const values = []
