@@ -167,33 +167,100 @@ export class ByteCounterThrottle {
   }
 }
 
-/** Bounded VT text accumulated only while the serial terminal is hidden.
- * Disk session history is independent and remains complete. */
+/**
+ * Serial background cache (UTF-16 code units). Unlike xterm scrollback this is
+ * strictly memory-bounded and does not require the renderer to stay active.
+ * 16 Mi code units retain 32x the original 512 Ki window.
+ */
+export const SERIAL_BACKGROUND_CACHE_CHARS = 16 * 1024 * 1024
+export const SERIAL_REPLAY_HIGH_WATER_CHARS = 128 * 1024
+export const SERIAL_REPLAY_FRAME_CHARS = 16 * 1024
+
+/**
+ * Bounded FIFO with incremental reads. O(1) amortized consumption: do not join
+ * the entire backlog or hand multiple MiB to the renderer in a single write.
+ * Text is retained with its original VT escape sequences for terminal replay;
+ * the independent disk history remains authoritative for complete logs.
+ */
 export class DisplayBacklog {
   private chunks: string[] = []
+  private head = 0
+  private offset = 0
   private length = 0
   private dropped = 0
-  constructor(private readonly limit = 512 * 1024) {}
+
+  constructor(readonly limit = SERIAL_BACKGROUND_CACHE_CHARS) {
+    if (!Number.isSafeInteger(limit) || limit < 2) throw new RangeError('invalid background cache limit')
+  }
+
+  get pending(): number { return this.length }
+  get droppedChars(): number { return this.dropped }
+
   push(text: string): void {
     if (!text) return
     this.chunks.push(text)
     this.length += text.length
-    while (this.length > this.limit && this.chunks.length) {
-      const first = this.chunks[0]
-      let n = Math.min(first.length, this.length - this.limit)
-      if (n > 0 && n < first.length &&
-          /[\uD800-\uDBFF]/.test(first[n - 1]) && /[\uDC00-\uDFFF]/.test(first[n])) n++
+    while (this.length > this.limit) this.dropPrefix(this.length - this.limit)
+  }
+
+  /** Drop only the oldest text; never split a UTF-16 surrogate pair. */
+  private dropPrefix(count: number): void {
+    while (count > 0 && this.head < this.chunks.length) {
+      const chunk = this.chunks[this.head]
+      const available = chunk.length - this.offset
+      let n = Math.min(available, count)
+      if (n < available && n > 0 &&
+        /[\uD800-\uDBFF]/.test(chunk[this.offset + n - 1]) &&
+        /[\uDC00-\uDFFF]/.test(chunk[this.offset + n])) n++
+      this.offset += n
+      count -= n
       this.length -= n
       this.dropped += n
-      if (n === first.length) this.chunks.shift()
-      else this.chunks[0] = first.slice(n)
+      if (this.offset === chunk.length) this.advanceChunk()
     }
   }
-  take(): { chunks: string[]; dropped: number } {
-    const data = { chunks: this.chunks, dropped: this.dropped }
-    this.chunks = []
-    this.length = 0
+
+  private advanceChunk(): void {
+    this.chunks[this.head++] = ''
+    this.offset = 0
+    if (this.head === this.chunks.length) {
+      this.chunks = []
+      this.head = 0
+    } else if (this.head >= 256) {
+      this.chunks = this.chunks.slice(this.head)
+      this.head = 0
+    }
+  }
+
+  /** Pop at most maxChars while leaving all later data queued in order. */
+  read(maxChars: number): string {
+    if (this.length === 0) return ''
+    if (!Number.isSafeInteger(maxChars) || maxChars < 2) throw new RangeError('invalid replay frame size')
+    const chunk = this.chunks[this.head]
+    const remaining = chunk.length - this.offset
+    let n = Math.min(maxChars, remaining)
+    if (n < remaining &&
+      /[\uD800-\uDBFF]/.test(chunk[this.offset + n - 1]) &&
+      /[\uDC00-\uDFFF]/.test(chunk[this.offset + n])) n--
+    if (!n) n = Math.min(2, remaining)
+    const text = chunk.slice(this.offset, this.offset + n)
+    this.offset += n
+    this.length -= n
+    if (this.offset === chunk.length) this.advanceChunk()
+    return text
+  }
+
+  /** Consume the number of characters evicted since the last replay warning. */
+  takeDropped(): number {
+    const count = this.dropped
     this.dropped = 0
-    return data
+    return count
+  }
+
+  /** Compatibility helper for small test cases; production replay uses read(). */
+  take(): { chunks: string[]; dropped: number } {
+    const result: string[] = []
+    while (this.pending) result.push(this.read(SERIAL_REPLAY_FRAME_CHARS))
+    return { chunks: result, dropped: this.takeDropped() }
   }
 }

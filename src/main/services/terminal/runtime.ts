@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { emitToolEvent } from '../../ipc'
 import { fileNameStamp } from '../../../shared/logtext'
-import { OutputWindow, PanelTasks, DisplayBacklog, type HistoryQuery, type OutputAck } from '../../../shared/terminal-stream'
+import { OutputWindow, PanelTasks, DisplayBacklog, SERIAL_REPLAY_HIGH_WATER_CHARS, SERIAL_REPLAY_FRAME_CHARS, type HistoryQuery, type OutputAck } from '../../../shared/terminal-stream'
 import { SessionHistory, readHistoryPage } from './history'
 
 interface RuntimeOptions {
@@ -25,6 +25,8 @@ export class TerminalRuntime {
   private pressure = new Map<string, Set<string>>()
   private hiddenViews = new Set<string>()
   private backlogs = new Map<string, DisplayBacklog>()
+  private replays = new Map<string, DisplayBacklog>()
+  private pumpingReplays = new Set<string>()
 
   constructor(private tool: string) {}
   get ids(): string[] { return [...new Set([...this.tasks.ids, ...this.histories.keys(), ...this.outputs.keys(), ...this.selected.keys()])] }
@@ -36,21 +38,62 @@ export class TerminalRuntime {
     this.options.get(id)?.pause(reasons.size > 0)
   }
 
-  /** Suspend only terminal drawing, not serial capture or disk logging. */
+  /**
+   * Hidden serial tabs stop only xterm rendering, never capture to disk. On return
+   * replay in small ACK-paced frames instead of queuing all 16 Mi code units.
+   */
   setVisible(id: string, visible: boolean): void {
-    if (!visible) { this.hiddenViews.add(id); return }
+    if (!visible) {
+      this.hiddenViews.add(id)
+      const replay = this.replays.get(id)
+      if (replay) {
+        this.replays.delete(id)
+        this.backlogs.set(id, replay)
+      }
+      return
+    }
     if (!this.hiddenViews.delete(id)) return
-    const data = this.backlogs.get(id)?.take()
+    const backlog = this.backlogs.get(id)
     this.backlogs.delete(id)
+    if (!backlog || !this.outputs.has(id)) return
+    this.replays.set(id, backlog)
+    this.pumpReplay(id)
+  }
+
+  /**
+   * Never exceed the normal OutputWindow high-water limit while catching up.
+   * New serial bytes are appended to this FIFO until it has been fully emitted,
+   * so an incoming live frame cannot overtake older background output.
+   * Actual xterm parsing completion is still acknowledged by the renderer.
+   */
+  private pumpReplay(id: string): void {
+    if (this.pumpingReplays.has(id) || this.hiddenViews.has(id)) return
+    const backlog = this.replays.get(id)
     const output = this.outputs.get(id)
-    if (!output || !data) return
-    if (data.dropped) output.write('\r\n[DevKit] 后台输出过多，终端仅补齐最近记录；完整内容请查看「历史日志」。\r\n')
-    for (const chunk of data.chunks) output.write(chunk)
+    if (!backlog || !output) return
+    this.pumpingReplays.add(id)
+    try {
+      const dropped = backlog.takeDropped()
+      if (dropped > 0) {
+        output.write('\r\n[DevKit] 后台输出已超过终端热缓存，只恢复最近的打印；完整内容请查看「历史日志」。\r\n')
+      }
+      while (backlog.pending && output.pending < SERIAL_REPLAY_HIGH_WATER_CHARS) {
+        const available = SERIAL_REPLAY_HIGH_WATER_CHARS - output.pending
+        const frame = backlog.read(Math.min(SERIAL_REPLAY_FRAME_CHARS, Math.max(2, available)))
+        if (!frame) break
+        output.write(frame)
+      }
+      if (!backlog.pending) this.replays.delete(id)
+    } finally {
+      this.pumpingReplays.delete(id)
+    }
   }
 
   forgetVisible(id: string): void {
     this.hiddenViews.delete(id)
     this.backlogs.delete(id)
+    this.replays.delete(id)
+    this.pumpingReplays.delete(id)
   }
 
   async start(id: string, options: RuntimeOptions): Promise<void> {
@@ -75,6 +118,8 @@ export class TerminalRuntime {
   }
 
   resetOutput(id: string): void {
+    this.replays.delete(id)
+    this.backlogs.delete(id)
     this.outputs.get(id)?.dispose()
     this.outputs.delete(id)
     emitToolEvent(this.tool, id, 'output:reset')
@@ -92,7 +137,13 @@ export class TerminalRuntime {
       let backlog = this.backlogs.get(id)
       if (!backlog) { backlog = new DisplayBacklog(); this.backlogs.set(id, backlog) }
       backlog.push(text)
-    } else this.outputs.get(id)?.write(text)
+    } else {
+      const replay = this.replays.get(id)
+      if (replay) {
+        replay.push(text)
+        this.pumpReplay(id)
+      } else this.outputs.get(id)?.write(text)
+    }
   }
   note(id: string, text: string): void { this.histories.get(id)?.note(text) }
 
@@ -105,6 +156,8 @@ export class TerminalRuntime {
 
   async dispose(id: string): Promise<void> {
     this.backlogs.delete(id)
+    this.replays.delete(id)
+    this.pumpingReplays.delete(id)
     this.options.delete(id)
     this.pressure.delete(id)
     this.outputs.get(id)?.dispose()
@@ -133,7 +186,10 @@ export class TerminalRuntime {
 
   invoke(id: string, action: string, payload: unknown): unknown {
     switch (action) {
-      case 'output:ack': this.outputs.get(id)?.ack(payload as OutputAck); return true
+      case 'output:ack':
+        this.outputs.get(id)?.ack(payload as OutputAck)
+        this.pumpReplay(id)
+        return true
       case 'output:reset': this.resetOutput(id); return true
       case 'history:query': return this.query(id, (payload ?? {}) as HistoryQuery)
       case 'history:pick': return this.pick(id)
