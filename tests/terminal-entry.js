@@ -123,6 +123,75 @@ async function main() {
       assert.ok(!events.some(e => e.type === 'output:overflow'))
       await runtime.dispose('toggle'); runtime.forgetVisible('toggle')
     })
+    await test('hidden OutputWindow stops NEW frames, then resumes in FIFO order', () => {
+      const frames = []
+      const output = new OutputWindow('pause-test', frame => frames.push(frame), () => {}, () => assert.fail('overflow'), 32 * 1024)
+      const text = 'x'.repeat(160 * 1024)
+      output.write(text)
+      const alreadySent = frames.length
+      assert.ok(alreadySent > 0 && output.pending > 32 * 1024)
+      output.suspendDelivery()
+      for (let i = 0; i < alreadySent; i++) output.ack(frames[i])
+      assert.equal(frames.length, alreadySent, 'hidden view must not dispatch queued frames after ACK')
+      output.resumeDelivery()
+      let replayed = ''
+      for (let i = 0; i < frames.length && i < 40; i++) {
+        replayed += frames[i].text
+        output.ack(frames[i])
+      }
+      assert.equal(replayed, text)
+      assert.equal(output.pending, 0)
+    })
+    await test('background cache aligns evicted prefix to next complete log line', () => {
+      const b = new DisplayBacklog(16)
+      b.push('A'.repeat(16))
+      b.push('1234\nNEXT\n')
+      assert.equal(b.take().chunks.join(''), 'NEXT\n')
+      const fragmented = new DisplayBacklog(3)
+      fragmented.push('\ud83d')
+      fragmented.push('\ude00A')
+      assert.equal(fragmented.read(2), '😀')
+      assert.equal(fragmented.read(2), 'A')
+      assert.equal(fragmented.pending, 0)
+    })
+    await test('hide in the middle of foreground frames keeps ordered output and releases display pause', async () => {
+      const events = []
+      const pauses = []
+      setMainWindow({ isDestroyed: () => false, webContents: { send: (_ch, evt) => events.push(evt) } })
+      const runtime = new TerminalRuntime('serial')
+      await runtime.start('hide-mid', {
+        dir, name: 'HIDE-MID', temporary: true, pause: value => pauses.push(value), fatal: () => assert.fail()
+      })
+      const foreground = 'A'.repeat(512 * 1024)
+      const background = 'B'.repeat(64 * 1024)
+      runtime.data('hide-mid', foreground)
+      // Disk pressure must drain first; only display pressure should remain.
+      await runtime.histories.get('hide-mid').flush()
+      const dispatched = events.filter(e => e.type === 'data')
+      assert.ok(dispatched.length > 0 && dispatched.length < 20)
+      assert.equal(pauses.at(-1), true, 'initial display pressure can pause RTS/CTS')
+      runtime.setVisible('hide-mid', false)
+      assert.equal(pauses.at(-1), false, 'hidden display pressure must not block disk capture')
+      for (const event of dispatched) runtime.invoke('hide-mid', 'output:ack', event.payload)
+      assert.equal(events.filter(e => e.type === 'data').length, dispatched.length, 'no additional hidden frames')
+      runtime.data('hide-mid', background)
+      assert.equal(runtime.backlogs.get('hide-mid').pending, background.length)
+      runtime.setVisible('hide-mid', true)
+      let cursor = 0
+      let received = ''
+      for (; cursor < events.length && cursor < 200; cursor++) {
+        const event = events[cursor]
+        if (event.type !== 'data') continue
+        received += event.payload.text
+        runtime.invoke('hide-mid', 'output:ack', event.payload)
+      }
+      assert.equal(received, foreground + background)
+      assert.ok(!events.some(e => e.type === 'output:overflow'))
+      assert.equal(runtime.outputs.get('hide-mid').pending, 0)
+      const disk = await runtime.invoke('hide-mid', 'history:query', { query: 'BBBB' })
+      assert.ok(disk.rows.length > 0, 'disk logging continues while hidden')
+      await runtime.dispose('hide-mid'); runtime.forgetVisible('hide-mid')
+    })
     await test('counter throttle publishes the final burst value and cancels on disposal', async () => {
       const values = []
       const counter = new ByteCounterThrottle((rx, tx) => values.push([rx, tx]), 5)

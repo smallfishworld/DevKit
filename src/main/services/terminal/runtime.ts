@@ -34,6 +34,9 @@ export class TerminalRuntime {
   private setPressure(id: string, reason: string, paused: boolean): void {
     const reasons = this.pressure.get(id)
     if (!reasons) return
+    // An inactive serial view must not pause its transport just because xterm
+    // still has older frames waiting for ACK; disk backpressure remains active.
+    if (reason === 'display' && this.hiddenViews.has(id)) paused = false
     if (paused) reasons.add(reason); else reasons.delete(reason)
     this.options.get(id)?.pause(reasons.size > 0)
   }
@@ -45,6 +48,8 @@ export class TerminalRuntime {
   setVisible(id: string, visible: boolean): void {
     if (!visible) {
       this.hiddenViews.add(id)
+      this.outputs.get(id)?.suspendDelivery()
+      this.setPressure(id, 'display', false)
       const replay = this.replays.get(id)
       if (replay) {
         this.replays.delete(id)
@@ -53,6 +58,9 @@ export class TerminalRuntime {
       return
     }
     if (!this.hiddenViews.delete(id)) return
+    const output = this.outputs.get(id)
+    output?.resumeDelivery()
+    this.setPressure(id, 'display', (output?.pending ?? 0) >= SERIAL_REPLAY_HIGH_WATER_CHARS)
     const backlog = this.backlogs.get(id)
     this.backlogs.delete(id)
     if (!backlog || !this.outputs.has(id)) return
@@ -75,7 +83,9 @@ export class TerminalRuntime {
     try {
       const dropped = backlog.takeDropped()
       if (dropped > 0) {
-        output.write('\r\n[DevKit] 后台输出已超过终端热缓存，只恢复最近的打印；完整内容请查看「历史日志」。\r\n')
+        // Close any unterminated OSC/DCS and restore the default rendition before
+        // the tail; overflow may have evicted the opening half of a VT sequence.
+        output.write('\x1b\\\x1b[0m\r\n[DevKit] 后台缓存已满，较早的显示内容请查看「历史日志」。\r\n')
       }
       while (backlog.pending && output.pending < SERIAL_REPLAY_HIGH_WATER_CHARS) {
         const available = SERIAL_REPLAY_HIGH_WATER_CHARS - output.pending
@@ -128,6 +138,7 @@ export class TerminalRuntime {
       (frame) => emitToolEvent(this.tool, id, 'data', { ...this.options.get(id)?.stats?.(), ...frame }),
       (paused) => this.setPressure(id, 'display', paused),
       () => emitToolEvent(this.tool, id, 'output:overflow', { message: '终端显示积压已达上限，显示已暂停，磁盘日志继续记录。可打开历史日志；点击清屏恢复显示。无硬件流控的串口无法保证无限速实时显示。' }))
+    if (this.hiddenViews.has(id)) output.suspendDelivery()
     this.outputs.set(id, output)
   }
 
