@@ -20,15 +20,6 @@ export const DEFAULT_SERIAL_PARAMS: SerialParams = {
   rtscts: false
 }
 
-/**
- * 休眠超过该时长才在唤醒时丢弃驱动积压的陈旧字节（毫秒）。
- * 短暂休眠不会有明显积压，丢掉反而丢真数据。
- *
- * 主进程（决定是否真丢缓冲）与渲染端（决定是否显示「串口可能已失步」提示）**必须用同一个值**：
- * 两者不一致会出现「主进程没丢、界面却提示失步」或反之的矛盾状态。故放在 shared。
- */
-export const SUSPEND_FLUSH_MS = 30_000
-
 /** 常用波特率（下拉可编辑，仍可手输 1200~12000000） */
 export const BAUD_RATES = [9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600, 1000000, 2000000, 4000000, 8000000, 12000000]
 
@@ -57,19 +48,6 @@ export interface SerialConfig {
   autoLog: boolean
   /** 终端显示时间戳（每批接收数据前插本地时间 [HH:MM:SS.mmm]，与日志格式一致） */
   showTime: boolean
-  /**
-   * 裸 \r 按换行显示（默认关闭）：设备用 \r 原地重绘同一行时（进度条、休眠失步），
-   * 真实 VT 语义下屏幕看不到新内容；开启后与日志归一规则一致，每帧单独成行。
-   */
-  crAsNewline?: boolean
-  /**
-   * 回滚保护（默认开启）：拦下设备发来的 `CSI 3J`（擦回滚）、`ESC c`（硬复位）。
-   * 它们会销毁已滚出屏幕的内容，滚动也看不到；日志里这些序列已被剥掉，
-   * 所以不拦的话用户无法察觉。关闭后完全按设备原始字节渲染。
-   * 备用屏切换（`?1049h`）不在此列：中和它会让全屏程序覆盖主屏现存内容，
-   * 改由重开串口时按终端实际状态复位（见 shared/vtguard.ts）。
-   */
-  guardScrollback?: boolean
   /** 左侧会话栏宽度（拖动分隔条调整，重启记忆） */
   sidebarWidth: number
   /** 左侧会话/快捷命令栏显示/隐藏 */
@@ -102,8 +80,6 @@ export const DEFAULT_SERIAL_CONFIG: SerialConfig = {
   logDir: '',
   autoLog: true,
   showTime: false,
-  crAsNewline: false,
-  guardScrollback: true,
   sidebarWidth: 210,
   encoding: 'utf8'
 }

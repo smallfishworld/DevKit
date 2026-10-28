@@ -5,6 +5,7 @@ const { join } = require('node:path')
 const { generateKeyPairSync } = require('node:crypto')
 const { Server } = require('ssh2')
 const { SerialPort } = require('serialport')
+const { powerSaveBlocker } = require('electron')
 const { serialService } = require('../src/main/services/serial')
 const { sshService } = require('../src/main/services/ssh')
 const { SessionHistory } = require('../src/main/services/terminal/history')
@@ -37,10 +38,12 @@ async function main() {
   try {
     assert.equal((await serialService.invoke('serial-1', 'open', { ...DEFAULT_SERIAL_PARAMS, path: 'COM1' })).ok, true)
     const port = SerialPort.ports.at(-1)
+    assert.equal(powerSaveBlocker.activeCount, 1)
     // The final incomplete UTF-8 chunk must be flushed on disconnect, not left in a timer.
     const text = Buffer.from('开头\r\n中文😀TAIL')
     port.emit('data', text.subarray(0, text.length - 3)); port.emit('data', text.subarray(text.length - 3))
     await serialService.invoke('serial-1', 'close')
+    assert.equal(powerSaveBlocker.activeCount, 0)
     const page = await serialService.invoke('serial-1', 'history:query', {})
     assert.ok(page.rows.some((r) => r.text.includes('中文😀TAIL')))
     assert.equal(serialService.runtime.options.size, 0)
@@ -71,6 +74,7 @@ async function main() {
     const afterClose = await serialService.invoke('serial-flow', 'history:query', { query: 'AFTER-PAUSE' })
     assert.ok(afterClose.rows.some((r) => r.text.includes('AFTER-PAUSE')))
     await serialService.dispose('*'); acknowledge = true
+    assert.equal(powerSaveBlocker.activeCount, 0)
     console.log('  PASS serial hardware flow control and unexpected close tail flushing')
 
     const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048, privateKeyEncoding: { type: 'pkcs1', format: 'pem' }, publicKeyEncoding: { type: 'pkcs1', format: 'pem' } })

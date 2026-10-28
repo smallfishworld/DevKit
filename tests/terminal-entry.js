@@ -2,7 +2,7 @@ const assert = require('node:assert/strict')
 const fs = require('node:fs/promises')
 const { tmpdir } = require('node:os')
 const { join } = require('node:path')
-const { LogFormatter, OutputWindow, PanelTasks, ByteCounterThrottle } = require('../src/shared/terminal-stream')
+const { LogFormatter, OutputWindow, DisplayBacklog, PanelTasks, ByteCounterThrottle } = require('../src/shared/terminal-stream')
 const { SessionHistory, readHistoryPage } = require('../src/main/services/terminal/history')
 const { TerminalRuntime } = require('../src/main/services/terminal/runtime')
 const { setMainWindow } = require('../src/main/ipc')
@@ -15,6 +15,36 @@ async function main() {
   const dir = await fs.mkdtemp(join(tmpdir(), 'devkit-terminal-test-'))
   globalThis.terminalTestDir = dir
   try {
+    await test('hidden display backlog keeps bounded Unicode text in original order', async () => {
+      const backlog = new DisplayBacklog(8)
+      backlog.push('start')
+      backlog.push('中文😀A')
+      const data = backlog.take()
+      assert.equal(data.dropped, 2)
+      assert.equal(data.chunks.join(''), 'art中文😀A')
+      assert.deepEqual(backlog.take(), { chunks: [], dropped: 0 })
+      const pair = new DisplayBacklog(3)
+      pair.push('x😀y')
+      assert.equal(pair.take().chunks.join(''), '😀y')
+    })
+    await test('invisible serial view records everything and resumes output exactly once', async () => {
+      const events = []
+      setMainWindow({ isDestroyed: () => false, webContents: { send: (_ch, evt) => events.push(evt) } })
+      const runtime = new TerminalRuntime('serial')
+      runtime.setVisible('h', false)
+      await runtime.start('h', { dir, name: 'HIDDEN', temporary: true, pause: () => {}, fatal: () => assert.fail() })
+      runtime.data('h', 'before ')
+      runtime.data('h', 'after\r\n')
+      assert.equal(events.filter(e => e.type === 'data').length, 0)
+      const page = await runtime.invoke('h', 'history:query', {})
+      assert.ok(page.rows.some(r => r.text.includes('before after')))
+      runtime.setVisible('h', true)
+      assert.equal(events.filter(e => e.type === 'data').map(e => e.payload.text).join(''), 'before after\r\n')
+      const count = events.filter(e => e.type === 'data').length
+      runtime.setVisible('h', true)
+      assert.equal(events.filter(e => e.type === 'data').length, count)
+      await runtime.dispose('h'); runtime.forgetVisible('h')
+    })
     await test('counter throttle publishes the final burst value and cancels on disposal', async () => {
       const values = []
       const counter = new ByteCounterThrottle((rx, tx) => values.push([rx, tx]), 5)

@@ -166,3 +166,34 @@ export class ByteCounterThrottle {
     this.timer = null
   }
 }
+
+/** Bounded VT text accumulated only while the serial terminal is hidden.
+ * Disk session history is independent and remains complete. */
+export class DisplayBacklog {
+  private chunks: string[] = []
+  private length = 0
+  private dropped = 0
+  constructor(private readonly limit = 512 * 1024) {}
+  push(text: string): void {
+    if (!text) return
+    this.chunks.push(text)
+    this.length += text.length
+    while (this.length > this.limit && this.chunks.length) {
+      const first = this.chunks[0]
+      let n = Math.min(first.length, this.length - this.limit)
+      if (n > 0 && n < first.length &&
+          /[\uD800-\uDBFF]/.test(first[n - 1]) && /[\uDC00-\uDFFF]/.test(first[n])) n++
+      this.length -= n
+      this.dropped += n
+      if (n === first.length) this.chunks.shift()
+      else this.chunks[0] = first.slice(n)
+    }
+  }
+  take(): { chunks: string[]; dropped: number } {
+    const data = { chunks: this.chunks, dropped: this.dropped }
+    this.chunks = []
+    this.length = 0
+    this.dropped = 0
+    return data
+  }
+}

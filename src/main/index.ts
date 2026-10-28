@@ -118,7 +118,7 @@ app.whenReady().then(() => {
   registerWindowIpc()
 
   // 休眠/唤醒：串口链路在长休眠后会失步（驱动缓冲一次性倾倒 + 设备原地重绘），
-  // 主进程需要知道"刚睡过"才能在日志标注并丢掉陈旧字节（见 serialService.onSystemResume）
+  // 主进程记录系统休眠区间；唤醒后不丢弃已接收字节
   powerMonitor.on('suspend', () => serialService.onSystemSuspend())
   powerMonitor.on('resume', () => serialService.onSystemResume())
 

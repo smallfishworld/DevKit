@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { emitToolEvent } from '../../ipc'
 import { fileNameStamp } from '../../../shared/logtext'
-import { OutputWindow, PanelTasks, type HistoryQuery, type OutputAck } from '../../../shared/terminal-stream'
+import { OutputWindow, PanelTasks, DisplayBacklog, type HistoryQuery, type OutputAck } from '../../../shared/terminal-stream'
 import { SessionHistory, readHistoryPage } from './history'
 
 interface RuntimeOptions {
@@ -23,6 +23,8 @@ export class TerminalRuntime {
   private options = new Map<string, RuntimeOptions>()
   private selected = new Map<string, string>()
   private pressure = new Map<string, Set<string>>()
+  private hiddenViews = new Set<string>()
+  private backlogs = new Map<string, DisplayBacklog>()
 
   constructor(private tool: string) {}
   get ids(): string[] { return [...new Set([...this.tasks.ids, ...this.histories.keys(), ...this.outputs.keys(), ...this.selected.keys()])] }
@@ -32,6 +34,23 @@ export class TerminalRuntime {
     if (!reasons) return
     if (paused) reasons.add(reason); else reasons.delete(reason)
     this.options.get(id)?.pause(reasons.size > 0)
+  }
+
+  /** Suspend only terminal drawing, not serial capture or disk logging. */
+  setVisible(id: string, visible: boolean): void {
+    if (!visible) { this.hiddenViews.add(id); return }
+    if (!this.hiddenViews.delete(id)) return
+    const data = this.backlogs.get(id)?.take()
+    this.backlogs.delete(id)
+    const output = this.outputs.get(id)
+    if (!output || !data) return
+    if (data.dropped) output.write('\r\n[DevKit] 后台输出过多，终端仅补齐最近记录；完整内容请查看「历史日志」。\r\n')
+    for (const chunk of data.chunks) output.write(chunk)
+  }
+
+  forgetVisible(id: string): void {
+    this.hiddenViews.delete(id)
+    this.backlogs.delete(id)
   }
 
   async start(id: string, options: RuntimeOptions): Promise<void> {
@@ -69,7 +88,11 @@ export class TerminalRuntime {
 
   data(id: string, text: string): void {
     this.histories.get(id)?.append(text)
-    this.outputs.get(id)?.write(text)
+    if (this.hiddenViews.has(id)) {
+      let backlog = this.backlogs.get(id)
+      if (!backlog) { backlog = new DisplayBacklog(); this.backlogs.set(id, backlog) }
+      backlog.push(text)
+    } else this.outputs.get(id)?.write(text)
   }
   note(id: string, text: string): void { this.histories.get(id)?.note(text) }
 
@@ -81,6 +104,7 @@ export class TerminalRuntime {
   }
 
   async dispose(id: string): Promise<void> {
+    this.backlogs.delete(id)
     this.options.delete(id)
     this.pressure.delete(id)
     this.outputs.get(id)?.dispose()

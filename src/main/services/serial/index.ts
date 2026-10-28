@@ -5,13 +5,13 @@
 import { SerialPort } from 'serialport'
 import { StringDecoder } from 'node:string_decoder'
 import * as iconv from 'iconv-lite'
-import { dialog, app, shell } from 'electron'
+import { dialog, app, shell, powerSaveBlocker } from 'electron'
 import { promises as fs } from 'node:fs'
 import { basename, join } from 'node:path'
 import type { ToolService } from '../../ipc'
 import { emitToolEvent } from '../../ipc'
 import type { SerialConfig, SerialEncoding, SerialParams, SerialTransferEvt, TransferProtocol } from '../../../shared/serial'
-import { DEFAULT_SERIAL_CONFIG, SUSPEND_FLUSH_MS } from '../../../shared/serial'
+import { DEFAULT_SERIAL_CONFIG } from '../../../shared/serial'
 import { getSection, setSection } from '../macro/configStore'
 import { ByteQueue, TransferCancelled, ymodemRecv, ymodemSend } from './ymodem'
 import { zmodemRecv, zmodemSend } from './zmodem'
@@ -69,6 +69,17 @@ function serialLogDir(): string {
 
 class SerialService implements ToolService {
   private runtime = new TerminalRuntime('serial')
+  private powerBlockerId: number | null = null
+
+  /** Prevent automatic idle sleep while any serial session is capturing. */
+  private syncCapturePower(): void {
+    if (sessions.size && this.powerBlockerId === null) {
+      this.powerBlockerId = powerSaveBlocker?.start?.('prevent-app-suspension') ?? null
+    } else if (!sessions.size && this.powerBlockerId !== null) {
+      powerSaveBlocker?.stop?.(this.powerBlockerId)
+      this.powerBlockerId = null
+    }
+  }
   private emit(panelId: string, type: string, payload: unknown): void {
     emitToolEvent('serial', panelId, type, payload)
   }
@@ -99,6 +110,9 @@ class SerialService implements ToolService {
   invoke(panelId: string, action: string, payload: unknown): Promise<unknown> | unknown {
     if (this.runtime.handles(action)) return this.runtime.invoke(panelId, action, payload)
     switch (action) {
+      case 'view:visible':
+        this.runtime.setVisible(panelId, Boolean((payload as { visible: boolean }).visible))
+        return { ok: true }
       case 'attach':
         return getSection<SerialConfig>('serial', DEFAULT_SERIAL_CONFIG).then((config) => ({
           config,
@@ -170,7 +184,7 @@ class SerialService implements ToolService {
   async dispose(panelId: string): Promise<void> {
     const ids = panelId === '*' ? [...new Set([...sessions.keys(), ...this.runtime.ids])] : [panelId]
     await Promise.all(ids.map((id) => this.runtime.tasks.run(id, async () => {
-      try { await this.close(id) } finally { await this.runtime.dispose(id) }
+      try { await this.close(id) } finally { await this.runtime.dispose(id); this.runtime.forgetVisible(id) }
     })))
   }
 
@@ -201,7 +215,7 @@ class SerialService implements ToolService {
   /**
    * 系统唤醒（powerMonitor 'resume'）：
    * - 日志标注休眠时长，便于事后定位"为什么这里缺了一段"；
-   * - 休眠够久时丢弃驱动里积压的陈旧数据（port.flush = 丢弃已接收未读取的字节）。
+   * - 不自动清除驱动缓存：尽量保存唤醒后仍可读取的所有数据。
    *   实测唤醒瞬间会一次性吐出几百 KB 的重复/残片（曾见单批 6611 行、单行 2.7KB 无终止符），
    *   把这些当新数据渲染进终端，用户看到的就是"终端在放录像、输入不生效"；
    * - 只通知渲染端，不擅自复位设备（改 DTR 会复位部分嵌入式板，交给用户点按钮决定）。
@@ -215,28 +229,7 @@ class SerialService implements ToolService {
         panelId,
         gap > 0 ? `===== 系统唤醒（休眠 ${fmtDuration(gap)}） =====` : '===== 系统唤醒 ====='
       )
-      if (gap >= SUSPEND_FLUSH_MS) {
-        // 先丢掉应用层已攒的批次，并整只替换解码器——旧解码器里可能滞留着
-        // 唤醒瞬间陈旧字节的半个多字节序列，留着会把新内容拼出错位字符
-        if (s.flushTimer) {
-          clearTimeout(s.flushTimer)
-          s.flushTimer = null
-        }
-        s.pending = []
-        s.pendingBytes = 0
-        s.decoder = makeDecoder(s.encoding)
-        // 只清接收侧：serialport 的 flush() 在 Windows 上是
-        // PurgeComm(PURGE_RXCLEAR | PURGE_TXABORT | PURGE_TXCLEAR)，
-        // 会把**尚未发出的发送数据**一并丢弃——用户休眠前敲的命令、定时循环刚发的一帧
-        // 会在无任何提示的情况下消失（设备端永远收不到）。这里先 drain 等发送队列清空，
-        // drain 失败（超时/已关闭）就跳过清理：多显示几行陈旧数据，远比丢命令可接受。
-        if (s.port.isOpen) {
-          s.port.drain((err) => {
-            if (err || !s.port.isOpen) return
-            s.port.flush(() => {})
-          })
-        }
-      }
+      // Preserve all bytes the OS still delivers after wake; never purge RX on resume.
       this.emit(panelId, 'resume', { gapMs: gap })
     }
   }
@@ -282,6 +275,7 @@ class SerialService implements ToolService {
         stats: () => ({ rxBytes: session.rxBytes, txBytes: session.txBytes })
       })
       sessions.set(panelId, session)
+      this.syncCapturePower()
       port.on('error', (err: Error) => this.emit(panelId, 'error', { message: err.message }))
       port.on('data', (chunk: Buffer) => {
         if (sessions.get(panelId) !== session) return
@@ -311,6 +305,7 @@ class SerialService implements ToolService {
       return null
     } catch (error) {
       if (sessions.get(panelId) === session) sessions.delete(panelId)
+      this.syncCapturePower()
       if (port.isOpen) await new Promise<void>((resolve) => port.close(() => resolve()))
       await this.runtime.dispose(panelId)
       return error instanceof Error ? error : new Error(String(error))
@@ -349,6 +344,7 @@ class SerialService implements ToolService {
     const tail = s.decoder.end()
     if (tail) this.runtime.data(panelId, tail)
     sessions.delete(panelId)
+    this.syncCapturePower()
     this.runtime.note(panelId, '===== 断开 =====')
     this.fileCancel(panelId)
     s.rawConsumer = null

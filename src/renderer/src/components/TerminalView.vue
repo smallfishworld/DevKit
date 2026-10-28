@@ -13,7 +13,7 @@ import { SearchAddon } from '@xterm/addon-search'
 import { WebglAddon } from '@xterm/addon-webgl'
 import '@xterm/xterm/css/xterm.css'
 import { resolveGlobalKey, resolveMouseDown, resolveTermKey, localEchoFor } from './termInput'
-import { crToNewline, fmtStamp, stampLines } from '../../../shared/logtext'
+import { fmtStamp, stampLines } from '../../../shared/logtext'
 import { VtGuard, reopenResetSequence, type VtGuardStats } from '../../../shared/vtguard'
 import { useAppearanceStore } from '@renderer/stores/appearance'
 import { toXtermTheme } from '@renderer/theme'
@@ -29,12 +29,6 @@ const props = withDefaults(
     /** 显示时间戳：每批接收数据前插灰色本地时间 [HH:MM:SS.mmm]（与日志落盘格式一致） */
     showTime?: boolean
     /**
-     * 裸 \r 的显示模式：
-     * - raw（默认）：真实 VT 语义，\r 只把光标移回行首覆盖重绘
-     * - newline：\r 当换行（与日志归一规则一致），用于设备用 \r 刷进度/失步重绘时看清每一帧
-     */
-    crMode?: 'raw' | 'newline'
-    /**
      * 回滚保护（默认关，串口面板显式开启）：中和 `CSI 3J`（擦回滚）、`ESC c`（硬复位）、
      * 备用屏切换 —— 这三者会销毁已滚出屏幕的内容，表现为「前半段看不见、滚动也看不见」。
      * SSH/本地终端不开：vim/top 依赖备用屏，`clear` 擦回滚也是远端终端的正常语义。
@@ -46,7 +40,6 @@ const props = withDefaults(
     fontSize: 13,
     localEcho: false,
     showTime: false,
-    crMode: 'raw',
     guardScrollback: false
   }
 )
@@ -546,8 +539,6 @@ function write(text: string, done?: () => void): void {
     if (g.stats.altScreen > 0) emit('altscreen', g.stats.altScreen)
     if (!src) { done?.(); return }
   }
-  // 裸 CR 显示模式：设备用 \r 重绘同一行时，按换行展开才看得到每一帧
-  if (props.crMode === 'newline') src = crToNewline(src)
   if (!props.showTime) {
     writeTerm(src, done)
     midLine = !/[\r\n]$/.test(src)
