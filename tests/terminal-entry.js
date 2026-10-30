@@ -39,7 +39,7 @@ async function main() {
       const page = await runtime.invoke('h', 'history:query', {})
       assert.ok(page.rows.some(r => r.text.includes('before after')))
       runtime.setVisible('h', true)
-      assert.equal(events.filter(e => e.type === 'data').map(e => e.payload.text).join(''), 'before after\r\n')
+      assert.equal(events.filter(e => e.type === 'data').map(e => e.payload.text).join(''), '\x1b[0mbefore after\r\n')
       const count = events.filter(e => e.type === 'data').length
       runtime.setVisible('h', true)
       assert.equal(events.filter(e => e.type === 'data').length, count)
