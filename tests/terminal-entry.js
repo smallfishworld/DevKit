@@ -298,6 +298,17 @@ async function main() {
       }
       assert.deepEqual(pages, input)
     })
+    await test('long physical lines remain readable at backward-history page boundaries', async () => {
+      const path = join(dir, 'huge-log.log')
+      await fs.writeFile(path, 'A'.repeat(700 * 1024) + 'LATEST\r\n' + 'NOW\r\n')
+      const newest = await readHistoryTail(path, { lines: 5 })
+      assert.ok(newest.rows.some(r => r.text.includes('LATEST')),
+        'last 256 KiB must not drop the tail of a longer physical line')
+      assert.ok(newest.rows.some(r => r.text.includes('NOW')))
+      assert.ok(newest.hasMore)
+      const older = await readHistoryTail(path, { lines: 5, before: newest.before })
+      assert.ok(older.before < newest.before || !older.hasMore)
+    })
     await test('slow disk applies backpressure; backlog overflow reports failure and drains', async () => {
       const pressure = []; const errors = []
       const history = await SessionHistory.create(join(dir, 'slow.log'), true, (p) => pressure.push(p), (e) => errors.push(e))

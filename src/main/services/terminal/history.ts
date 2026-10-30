@@ -209,11 +209,13 @@ export async function readHistoryTail(
     while (pos < content.length) {
       const lf = content.indexOf(10, pos)
       const stop = lf === -1 ? content.length : lf + 1
-      // Do not display an incomplete first line when scanning starts mid-file.
-      if (!(pos === 0 && start > 0)) {
-        const line = content.subarray(pos, stop).toString('utf8').replace(/\r?\n$/, '')
-        if (line || lf !== -1) rows.push({ offset: start + pos, text: line })
-      }
+      // Extremely long physical lines can span many 256 KiB pages. Keep the
+      // visible fragment rather than silently dropping its (often latest) tail.
+      // The ellipsis means its beginning is outside this page, not lost on disk.
+      const fragment = pos === 0 && start > 0
+      const line = content.subarray(pos, stop).toString('utf8').replace(/\r?\n$/, '')
+      if (line || lf !== -1)
+        rows.push({ offset: start + pos, text: fragment ? '…' + line : line })
       pos = stop
     }
     // A single >256KiB physical line must still allow paging backwards.
