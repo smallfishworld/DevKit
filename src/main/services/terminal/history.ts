@@ -205,7 +205,12 @@ export async function readHistoryTail(
     }
     const content = Buffer.concat(parts)
     const rows: HistoryTailPage['rows'] = []
+    // A fixed-size reverse read may start in the middle of a UTF-8 codepoint.
+    // Do not render a spurious replacement character in Chinese/emoji logs.
     let pos = 0
+    if (start > 0) {
+      while (pos < Math.min(3, content.length) && (content[pos] & 0xc0) === 0x80) pos++
+    }
     while (pos < content.length) {
       const lf = content.indexOf(10, pos)
       const stop = lf === -1 ? content.length : lf + 1
@@ -220,8 +225,8 @@ export async function readHistoryTail(
     }
     // A single >256KiB physical line must still allow paging backwards.
     if (rows.length === 0) {
-      const text = content.toString('utf8')
-      return { rows: [{ offset: start, text: '…' + text }], before: start, hasMore: start > 0, size }
+      const text = content.subarray(pos).toString('utf8')
+      return { rows: [{ offset: start + pos, text: '…' + text }], before: start + pos, hasMore: start + pos > 0, size }
     }
     const selected = rows.slice(-lines)
     const before = selected[0].offset

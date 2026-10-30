@@ -355,6 +355,7 @@ function onHistoryWheel(e: WheelEvent): void {
 function backToLive(): void {
   historyVisible.value = false
   term?.scrollToBottom()
+  term?.focus()
 }
 
 function onWheel(e: WheelEvent): void {
@@ -617,6 +618,19 @@ function focus(): void {
   term?.focus()
 }
 
+/**
+ * A hidden serial session has skipped older output, but the current xterm
+ * scrollback is still valuable. Retire stale VT/parser state without RIS
+ * (ESC c): RIS would wipe all the lines the user expects to scroll through.
+ */
+function resync(): void {
+  vtGuard.reset()
+  closeSearch(false)
+  const screen = term?.buffer.active.type === 'alternate' ? 'alternate' : 'normal'
+  writeTerm(reopenResetSequence(screen) + '\x1b[0m\r\n')
+  midLine = false
+}
+
 function reset(): void {
   historyVisible.value = false
   closeSearch(false)
@@ -626,7 +640,7 @@ function reset(): void {
   midLine = false
 }
 
-defineExpose({ write, info, clear, reset, resetVtState, focus, openSearch })
+defineExpose({ write, info, clear, reset, resync, resetVtState, focus, openSearch })
 </script>
 
 <template>
@@ -646,20 +660,22 @@ defineExpose({ write, info, clear, reset, resetVtState, focus, openSearch })
       <button class="search-btn" title="下一个（Enter）" @click="doSearch(true)">↓</button>
       <button class="search-btn" title="关闭（Esc）" @click="closeSearch()">×</button>
     </div>
-    <div
-      ref="termBox"
-      class="term mono"
-      :style="{ background: appearance.terminalTheme.background }"
-    ></div>
-    <TerminalHistoryInline
-      v-if="historyVisible && props.historyPanelId"
-      :panel-id="props.historyPanelId"
-      :font="fontFamilyCss()"
-      :font-size="props.fontSize"
-      :foreground="appearance.terminalTheme.foreground"
-      :background="appearance.terminalTheme.background"
-      @live="backToLive"
-    />
+    <div class="term-stage">
+      <div
+        ref="termBox"
+        class="term mono"
+        :style="{ background: appearance.terminalTheme.background }"
+      ></div>
+      <TerminalHistoryInline
+        v-if="historyVisible && props.historyPanelId"
+        :panel-id="props.historyPanelId"
+        :font="fontFamilyCss()"
+        :font-size="props.fontSize"
+        :foreground="appearance.terminalTheme.foreground"
+        :background="appearance.terminalTheme.background"
+        @live="backToLive"
+      />
+    </div>
   </div>
 </template>
 
@@ -673,6 +689,13 @@ defineExpose({ write, info, clear, reset, resetVtState, focus, openSearch })
   min-height: 0;
   display: flex;
   flex-direction: column;
+  position: relative;
+}
+
+.term-stage {
+  flex: 1;
+  min-height: 0;
+  display: flex;
   position: relative;
 }
 
