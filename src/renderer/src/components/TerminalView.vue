@@ -11,6 +11,7 @@ import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
 import { WebglAddon } from '@xterm/addon-webgl'
+import TerminalHistoryInline from './TerminalHistoryInline.vue'
 import '@xterm/xterm/css/xterm.css'
 import { resolveGlobalKey, resolveMouseDown, resolveTermKey, localEchoFor } from './termInput'
 import { fmtStamp, stampLines } from '../../../shared/logtext'
@@ -34,6 +35,8 @@ const props = withDefaults(
      * SSH/本地终端不开：vim/top 依赖备用屏，`clear` 擦回滚也是远端终端的正常语义。
      */
     guardScrollback?: boolean
+    /** When provided, scrolling beyond xterm's oldest row opens disk-backed history. */
+    historyPanelId?: string
   }>(),
   {
     font: 'Consolas',
@@ -63,6 +66,7 @@ const DEFAULT_FONT_SIZE = 13
 const SIZES = [10, 11, 12, 13, 14, 15, 16, 17, 18, 20, 22, 24, 26, 28]
 
 const termBox = ref<HTMLElement | null>(null)
+const historyVisible = ref(false)
 let term: Terminal | null = null
 let fitAddon: FitAddon | null = null
 let searchAddon: SearchAddon | null = null
@@ -241,6 +245,7 @@ onMounted(() => {
   })
   // Ctrl+滚轮缩放（须非 passive 才能阻止默认滚动）
   termBox.value.addEventListener('wheel', onWheel, { passive: false })
+  termBox.value.addEventListener('wheel', onHistoryWheel, { passive: false })
   // 全局捕获终端控制键：焦点不在输入框时，Ctrl+C/Z/D/\ 等直接发给终端
   // （终端会话期间这些键始终作为终端输入）
   window.addEventListener('keydown', onGlobalKeydown, true)
@@ -250,6 +255,7 @@ onUnmounted(() => {
   window.removeEventListener('keydown', onGlobalKeydown, true)
   document.removeEventListener('visibilitychange', onVisibilityChange)
   termBox.value?.removeEventListener('wheel', onWheel)
+  termBox.value?.removeEventListener('wheel', onHistoryWheel)
   termBox.value?.removeEventListener('mousedown', onMousedown, true)
   termBox.value?.removeEventListener('contextmenu', onContextmenu, true)
   if (fitTrailingTimer) {
@@ -334,6 +340,21 @@ function onGlobalKeydown(e: KeyboardEvent): void {
   e.stopPropagation()
   if (act.kind === 'copy') void window.api.win.writeClipboard(term.getSelection())
   else emit('data', act.seq)
+}
+
+/** Native scrolling uses xterm's existing scrollback first, then disk history.
+ * This does not inject old logs into the live xterm parser or alter live ACKs.
+ */
+function onHistoryWheel(e: WheelEvent): void {
+  if (!props.historyPanelId || e.ctrlKey || e.deltaY >= 0 || historyVisible.value || !term) return
+  if (term.buffer.active.viewportY !== 0) return
+  e.preventDefault()
+  historyVisible.value = true
+}
+
+function backToLive(): void {
+  historyVisible.value = false
+  term?.scrollToBottom()
 }
 
 function onWheel(e: WheelEvent): void {
@@ -561,6 +582,7 @@ function info(text: string): void {
  * 所以排队到在途块落地后再真正清屏——等待期间新到的帧先落地再被清，属于被清历史。
  */
 function clear(): void {
+  historyVisible.value = false
   vtGuard.reset()
   const doClear = (): void => {
     term?.clear()
@@ -596,6 +618,7 @@ function focus(): void {
 }
 
 function reset(): void {
+  historyVisible.value = false
   closeSearch(false)
   // Queue reset after already accepted frames, preserving parser/ACK ordering.
   vtGuard.reset()
@@ -628,6 +651,15 @@ defineExpose({ write, info, clear, reset, resetVtState, focus, openSearch })
       class="term mono"
       :style="{ background: appearance.terminalTheme.background }"
     ></div>
+    <TerminalHistoryInline
+      v-if="historyVisible && props.historyPanelId"
+      :panel-id="props.historyPanelId"
+      :font="fontFamilyCss()"
+      :font-size="props.fontSize"
+      :foreground="appearance.terminalTheme.foreground"
+      :background="appearance.terminalTheme.background"
+      @live="backToLive"
+    />
   </div>
 </template>
 

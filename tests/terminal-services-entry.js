@@ -82,6 +82,30 @@ async function main() {
     await serialService.dispose('sleep-b')
     console.log('  PASS multi-session power lock and ordered suspend/resume recording')
 
+    assert.equal((await serialService.invoke('wake-ui', 'open', { ...DEFAULT_SERIAL_PARAMS, path: 'COM11' })).ok, true)
+    await serialService.invoke('wake-ui', 'view:visible', { visible: true })
+    const wakingPort = SerialPort.ports.at(-1)
+    serialService.onSystemSuspend()
+    const timeNow = Date.now
+    try {
+      Date.now = () => timeNow() + 60_000
+      serialService.onSystemResume()
+    } finally { Date.now = timeNow }
+    const wakeFramesBefore = events.filter(e => e.panelId === 'wake-ui' && e.type === 'data').length
+    wakingPort.emit('data', Buffer.concat([Buffer.alloc(150 * 1024, 120), Buffer.from('\r\nLATEST-WAKE\r\n')]))
+    assert.equal(events.filter(e => e.panelId === 'wake-ui' && e.type === 'data').length, wakeFramesBefore,
+      'post-wake driver burst must not be animated')
+    await waitFor(() => !serialService.resumeHold.has('wake-ui'))
+    const recovered = events.filter(e => e.panelId === 'wake-ui' && e.type === 'data').slice(wakeFramesBefore)
+    const recoveredText = recovered.map(e => e.payload.text).join('')
+    assert.ok(recoveredText.length <= 9 * 1024, 'show only latest context after wake')
+    assert.ok(recoveredText.includes('LATEST-WAKE'))
+    const wakeTail = await serialService.invoke('wake-ui', 'history:tail', { lines: 3 })
+    assert.ok(wakeTail.rows.some(r => r.text.includes('LATEST-WAKE')))
+    await serialService.invoke('wake-ui', 'close')
+    await serialService.dispose('wake-ui')
+    console.log('  PASS post-suspend driver burst remains in history without UI fast-forward')
+
     const opening = serialService.invoke('serial-pending', 'open', { ...DEFAULT_SERIAL_PARAMS, path: 'COM2' })
     const disposing = serialService.dispose('serial-pending')
     await Promise.all([opening, disposing]); await tick()

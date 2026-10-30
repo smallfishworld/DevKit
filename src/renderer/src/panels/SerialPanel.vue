@@ -791,6 +791,7 @@ async function deleteSession(idx: number): Promise<void> {
           :local-echo="localEcho"
           :show-time="showTime"
           :guard-scrollback="true"
+          :history-panel-id="props.panelId"
           @data="onTermData"
           @guard="onGuard"
           @altscreen="onAltScreen"
