@@ -55,11 +55,12 @@ export class TerminalRuntime {
     const backlog = this.backlogs.get(id)
     this.backlogs.delete(id)
     const oldOutput = this.outputs.get(id)
-    if (this.options.has(id) && (backlog?.pending || (oldOutput?.pending ?? 0) > 64 * 1024)) {
+    if (this.options.has(id) && (backlog?.pending || (oldOutput?.pending ?? 0) > 0)) {
       // A fresh output generation cancels queued pre-hide frames; its reset
       // event is delivered before the latest tail. No historical fast-forward.
       const latest = backlog?.recent() ?? ''
-      this.resetOutput(id)
+      // Keep the already rendered xterm scrollback; only retire the IPC queue.
+      this.resetOutput(id, true)
       if (latest) this.outputs.get(id)?.write('\x1b[0m' + latest)
     } else {
       oldOutput?.resumeDelivery()
@@ -92,11 +93,11 @@ export class TerminalRuntime {
     }
   }
 
-  resetOutput(id: string): void {
+  resetOutput(id: string, preserveScrollback = false): void {
     this.backlogs.delete(id)
     this.outputs.get(id)?.dispose()
     this.outputs.delete(id)
-    emitToolEvent(this.tool, id, 'output:reset')
+    emitToolEvent(this.tool, id, preserveScrollback ? 'output:resync' : 'output:reset')
     if (!this.options.has(id)) return
     const output = new OutputWindow(randomUUID(),
       (frame) => emitToolEvent(this.tool, id, 'data', { ...this.options.get(id)?.stats?.(), ...frame }),

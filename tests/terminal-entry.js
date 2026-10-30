@@ -87,7 +87,10 @@ async function main() {
       runtime.setVisible('stress', true)
       const frames = events.filter(e => e.type === 'data')
       const shown = frames.map(e => e.payload.text).join('')
-      assert.ok(events.some(e => e.type === 'output:reset'))
+      assert.ok(events.some(e => e.type === 'output:resync'),
+        'resume must keep xterm scrollback rather than issue ESC c')
+      assert.equal(events.filter(e => e.type === 'output:reset').length, 1,
+        'only session start may hard-reset the terminal')
       assert.ok(shown.length < SERIAL_LIVE_TAIL_CHARS + 100)
       assert.ok(shown.endsWith('LATEST\r\n'))
       for (const frame of frames) runtime.invoke('stress', 'output:ack', frame.payload)
@@ -116,7 +119,30 @@ async function main() {
       runtime.setVisible('toggle', true)
       const next = events.filter(e => e.type === 'data').slice(first.length)
       assert.equal(next.map(e => e.payload.text).join(''), '\x1b[0mNEWEST\r\n')
+      assert.equal(events.filter(e => e.type === 'output:resync').length, 2,
+        'every return should retire stale output without clearing existing scrollback')
       await runtime.dispose('toggle'); runtime.forgetVisible('toggle')
+    })
+    await test('hidden with only in-flight output drops stale IPC without clearing xterm scrollback', async () => {
+      const events = []
+      setMainWindow({ isDestroyed: () => false, webContents: { send: (_ch, e) => events.push(e) } })
+      const runtime = new TerminalRuntime('serial')
+      await runtime.start('pending-only', { dir, name: 'PENDING', temporary: true, pause: () => {}, fatal: () => assert.fail() })
+      runtime.data('pending-only', 'PREVIOUS-CONTEXT\r\n')
+      const prior = events.filter(e => e.type === 'data')
+      assert.ok(prior.length > 0)
+      runtime.setVisible('pending-only', false)
+      runtime.setVisible('pending-only', true)
+      assert.equal(events.filter(e => e.type === 'output:resync').length, 1)
+      assert.equal(events.filter(e => e.type === 'output:reset').length, 1,
+        'visibility must not send RIS and destroy scrollback')
+      const after = events.filter(e => e.type === 'data').length
+      runtime.invoke('pending-only', 'output:ack', prior[0].payload)
+      assert.equal(events.filter(e => e.type === 'data').length, after,
+        'old generation ACKs cannot resume discarded output')
+      runtime.data('pending-only', 'LIVE\r\n')
+      assert.ok(events.filter(e => e.type === 'data').at(-1).payload.text.includes('LIVE'))
+      await runtime.dispose('pending-only'); runtime.forgetVisible('pending-only')
     })
     await test('hidden OutputWindow stops NEW frames, then resumes in FIFO order', () => {
       const frames = []
@@ -308,6 +334,16 @@ async function main() {
       assert.ok(newest.hasMore)
       const older = await readHistoryTail(path, { lines: 5, before: newest.before })
       assert.ok(older.before < newest.before || !older.hasMore)
+    })
+    await test('reverse history starts at valid UTF-8 codepoint boundary', async () => {
+      const path = join(dir, 'unicode-boundary.log')
+      await fs.writeFile(path, '中'.repeat(350_000) + '\n终点😀\n')
+      const first = await readHistoryTail(path, { lines: 2 })
+      assert.ok(first.rows.some(r => r.text.includes('终点😀')))
+      assert.ok(!first.rows.some(r => r.text.includes('�')))
+      const second = await readHistoryTail(path, { before: first.before, lines: 2 })
+      assert.ok(!second.rows.some(r => r.text.includes('�')),
+        'reverse pages must not decode a partial multibyte character')
     })
     await test('slow disk applies backpressure; backlog overflow reports failure and drains', async () => {
       const pressure = []; const errors = []
