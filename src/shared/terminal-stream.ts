@@ -7,6 +7,14 @@ export interface OutputFrame {
 }
 export interface OutputAck { generation: string; sequence: number }
 export interface HistoryQuery { offset?: number; query?: string; selected?: boolean }
+/** Backward disk-log page used by the in-terminal history viewer. */
+export interface HistoryTailPage {
+  rows: Array<{ offset: number; text: string }>
+  before: number
+  hasMore: boolean
+  size: number
+}
+export interface HistoryTailQuery { before?: number; lines?: number }
 export interface HistoryPage {
   path: string
   rows: Array<{ offset: number; text: string }>
@@ -185,6 +193,8 @@ export class ByteCounterThrottle {
 export const SERIAL_BACKGROUND_CACHE_CHARS = 16 * 1024 * 1024
 export const SERIAL_REPLAY_HIGH_WATER_CHARS = 128 * 1024
 export const SERIAL_REPLAY_FRAME_CHARS = 16 * 1024
+/** Only the most recent terminal screen context is shown on return; older output lives on disk. */
+export const SERIAL_LIVE_TAIL_CHARS = 8 * 1024
 
 /**
  * Bounded FIFO with incremental reads. O(1) amortized consumption: do not join
@@ -288,6 +298,32 @@ export class DisplayBacklog {
     this.offset += n
     this.length -= n
     if (this.offset === chunk.length) this.advanceChunk()
+    return text
+  }
+
+  /**
+   * Peek only the newest content. The normal resume path must NOT drain 16 Mi
+   * through xterm: it discards old display history while the disk log retains it.
+   * Work is O(maxChars), regardless of how long the session was hidden.
+   */
+  recent(maxChars = SERIAL_LIVE_TAIL_CHARS): string {
+    if (!Number.isSafeInteger(maxChars) || maxChars < 2) throw new RangeError('invalid live tail limit')
+    let remaining = Math.min(this.length, maxChars)
+    if (!remaining) return ''
+    const pieces: string[] = []
+    for (let i = this.chunks.length - 1; i >= this.head && remaining; i--) {
+      const begin = i === this.head ? this.offset : 0
+      const chunk = this.chunks[i]
+      const from = Math.max(begin, chunk.length - remaining)
+      pieces.push(chunk.slice(from))
+      remaining -= chunk.length - from
+    }
+    let text = pieces.reverse().join('')
+    if (text.length > 1 && /[\uDC00-\uDFFF]/.test(text[0])) text = text.slice(1)
+    // Prefer starting at a complete line, avoiding remnants of an ANSI escape.
+    const firstNewline = text.indexOf('\n')
+    if (this.length > maxChars && firstNewline >= 0 && firstNewline < Math.min(text.length, 2048))
+      text = text.slice(firstNewline + 1)
     return text
   }
 

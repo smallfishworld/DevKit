@@ -1,7 +1,7 @@
 import { promises as fs } from 'node:fs'
 import type { FileHandle } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
-import { LogFormatter, type HistoryPage, type HistoryQuery } from '../../../shared/terminal-stream'
+import { LogFormatter, type HistoryPage, type HistoryQuery, type HistoryTailQuery, type HistoryTailPage } from '../../../shared/terminal-stream'
 
 const HIGH = 256 * 1024
 const MAX_PENDING = 4 * 1024 * 1024
@@ -100,6 +100,14 @@ export class SessionHistory {
     })())
   }
 
+  /** Inspect older log rows without loading earlier GBs into the renderer. */
+  tailPage(request: HistoryTailQuery): Promise<HistoryTailPage> {
+    return this.track((async () => {
+      await this.tail
+      return readHistoryTail(this.path, request, this.committed)
+    })())
+  }
+
   /** Bounded snapshot copy. Never concatenate the whole session, even when exporting GBs. */
   exportTo(target: string): Promise<void> {
     return this.track((async () => {
@@ -163,4 +171,62 @@ export async function readHistoryPage(path: string, request: HistoryQuery = {}, 
     }
     return { path, rows, nextOffset: offset, size, eof: offset >= size }
   } finally { await handle.close() }
+}
+
+/**
+ * Read a bounded number of physical log lines backwards. Offset cursors are
+ * byte positions, stable even while the serial logger keeps appending data.
+ * Each page reads <= 256 KiB; the UI requests another page only on scroll.
+ */
+export async function readHistoryTail(
+  path: string,
+  request: HistoryTailQuery = {},
+  snapshotSize?: number
+): Promise<HistoryTailPage> {
+  const handle = await fs.open(path, 'r')
+  try {
+    const size = Math.min((await handle.stat()).size, snapshotSize ?? Infinity)
+    const lines = Math.max(1, Math.min(200, Number.isSafeInteger(request.lines) ? request.lines! : 100))
+    const end = Number.isSafeInteger(request.before) ? Math.max(0, Math.min(size, request.before!)) : size
+    if (!end) return { rows: [], before: 0, hasMore: false, size }
+    const parts: Buffer[] = []
+    let start = end
+    let newlines = 0
+    while (start > 0 && end - start < 256 * 1024 && newlines <= lines + 1) {
+      const n = Math.min(64 * 1024, start, 256 * 1024 - (end - start))
+      const buffer = Buffer.allocUnsafe(n)
+      const at = start - n
+      const { bytesRead } = await handle.read(buffer, 0, n, at)
+      if (!bytesRead) break
+      const part = buffer.subarray(0, bytesRead)
+      parts.unshift(part)
+      for (const b of part) if (b === 10) newlines++
+      start = at
+    }
+    const content = Buffer.concat(parts)
+    const rows: HistoryTailPage['rows'] = []
+    let pos = 0
+    while (pos < content.length) {
+      const lf = content.indexOf(10, pos)
+      const stop = lf === -1 ? content.length : lf + 1
+      // Extremely long physical lines can span many 256 KiB pages. Keep the
+      // visible fragment rather than silently dropping its (often latest) tail.
+      // The ellipsis means its beginning is outside this page, not lost on disk.
+      const fragment = pos === 0 && start > 0
+      const line = content.subarray(pos, stop).toString('utf8').replace(/\r?\n$/, '')
+      if (line || lf !== -1)
+        rows.push({ offset: start + pos, text: fragment ? '…' + line : line })
+      pos = stop
+    }
+    // A single >256KiB physical line must still allow paging backwards.
+    if (rows.length === 0) {
+      const text = content.toString('utf8')
+      return { rows: [{ offset: start, text: '…' + text }], before: start, hasMore: start > 0, size }
+    }
+    const selected = rows.slice(-lines)
+    const before = selected[0].offset
+    return { rows: selected, before, hasMore: before > 0, size }
+  } finally {
+    await handle.close()
+  }
 }

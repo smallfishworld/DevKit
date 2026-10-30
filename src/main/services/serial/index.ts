@@ -70,6 +70,29 @@ function serialLogDir(): string {
 class SerialService implements ToolService {
   private runtime = new TerminalRuntime('serial')
   private powerBlockerId: number | null = null
+  private viewVisible = new Map<string, boolean>()
+  private resumeHold = new Set<string>()
+  private resumeTimers = new Map<string, ReturnType<typeof setTimeout>>()
+
+  /** Briefly absorb the burst delivered by Windows USB drivers after wake. */
+  private static readonly WAKE_SETTLE_MS = 1200
+
+  private applyViewVisibility(id: string): void {
+    this.runtime.setVisible(id, this.viewVisible.get(id) !== false && !this.resumeHold.has(id))
+  }
+
+  private cancelResumeHold(id: string): void {
+    const timer = this.resumeTimers.get(id)
+    if (timer) clearTimeout(timer)
+    this.resumeTimers.delete(id)
+    this.resumeHold.delete(id)
+  }
+
+  private releaseResumeHold(id: string): void {
+    this.resumeTimers.delete(id)
+    this.resumeHold.delete(id)
+    this.applyViewVisibility(id)
+  }
 
   /** Prevent automatic idle sleep while any serial session is capturing. */
   private syncCapturePower(): void {
@@ -111,7 +134,8 @@ class SerialService implements ToolService {
     if (this.runtime.handles(action)) return this.runtime.invoke(panelId, action, payload)
     switch (action) {
       case 'view:visible':
-        this.runtime.setVisible(panelId, Boolean((payload as { visible: boolean }).visible))
+        this.viewVisible.set(panelId, Boolean((payload as { visible: boolean }).visible))
+        this.applyViewVisibility(panelId)
         return { ok: true }
       case 'attach':
         return getSection<SerialConfig>('serial', DEFAULT_SERIAL_CONFIG).then((config) => ({
@@ -184,7 +208,7 @@ class SerialService implements ToolService {
   async dispose(panelId: string): Promise<void> {
     const ids = panelId === '*' ? [...new Set([...sessions.keys(), ...this.runtime.ids])] : [panelId]
     await Promise.all(ids.map((id) => this.runtime.tasks.run(id, async () => {
-      try { await this.close(id) } finally { await this.runtime.dispose(id); this.runtime.forgetVisible(id) }
+      try { await this.close(id) } finally { await this.runtime.dispose(id); this.runtime.forgetVisible(id); this.viewVisible.delete(id); this.cancelResumeHold(id) }
     })))
   }
 
@@ -213,6 +237,8 @@ class SerialService implements ToolService {
       this.flush(panelId)
       s.suspendedAt = now
       this.runtime.note(panelId, '===== 系统休眠 =====')
+      this.resumeHold.add(panelId)
+      this.applyViewVisibility(panelId)
     }
   }
 
@@ -236,8 +262,16 @@ class SerialService implements ToolService {
         panelId,
         gap > 0 ? `===== 系统唤醒（休眠 ${fmtDuration(gap)}） =====` : '===== 系统唤醒 ====='
       )
-      // Preserve all bytes the OS still delivers after wake; never purge RX on resume.
+      // Never purge RX; prevent the driver's burst from being animated in xterm.
       this.emit(panelId, 'resume', { gapMs: gap })
+      this.cancelResumeHold(panelId)
+      if (gap >= 30_000) {
+        this.resumeHold.add(panelId)
+        this.applyViewVisibility(panelId)
+        this.resumeTimers.set(panelId, setTimeout(
+          () => this.releaseResumeHold(panelId), SerialService.WAKE_SETTLE_MS
+        ))
+      } else this.applyViewVisibility(panelId)
     }
   }
 
@@ -283,6 +317,7 @@ class SerialService implements ToolService {
       })
       sessions.set(panelId, session)
       this.syncCapturePower()
+      this.applyViewVisibility(panelId)
       port.on('error', (err: Error) => this.emit(panelId, 'error', { message: err.message }))
       port.on('data', (chunk: Buffer) => {
         if (sessions.get(panelId) !== session) return
@@ -352,6 +387,7 @@ class SerialService implements ToolService {
     if (tail) this.runtime.data(panelId, tail)
     sessions.delete(panelId)
     this.syncCapturePower()
+    this.cancelResumeHold(panelId)
     this.runtime.note(panelId, '===== 断开 =====')
     this.fileCancel(panelId)
     s.rawConsumer = null

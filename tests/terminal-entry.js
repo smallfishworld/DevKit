@@ -2,8 +2,8 @@ const assert = require('node:assert/strict')
 const fs = require('node:fs/promises')
 const { tmpdir } = require('node:os')
 const { join } = require('node:path')
-const { LogFormatter, OutputWindow, DisplayBacklog, SERIAL_BACKGROUND_CACHE_CHARS, SERIAL_REPLAY_HIGH_WATER_CHARS, PanelTasks, ByteCounterThrottle } = require('../src/shared/terminal-stream')
-const { SessionHistory, readHistoryPage } = require('../src/main/services/terminal/history')
+const { LogFormatter, OutputWindow, DisplayBacklog, SERIAL_BACKGROUND_CACHE_CHARS, SERIAL_LIVE_TAIL_CHARS, PanelTasks, ByteCounterThrottle } = require('../src/shared/terminal-stream')
+const { SessionHistory, readHistoryPage, readHistoryTail } = require('../src/main/services/terminal/history')
 const { TerminalRuntime } = require('../src/main/services/terminal/runtime')
 const { setMainWindow } = require('../src/main/ipc')
 
@@ -39,7 +39,7 @@ async function main() {
       const page = await runtime.invoke('h', 'history:query', {})
       assert.ok(page.rows.some(r => r.text.includes('before after')))
       runtime.setVisible('h', true)
-      assert.equal(events.filter(e => e.type === 'data').map(e => e.payload.text).join(''), 'before after\r\n')
+      assert.equal(events.filter(e => e.type === 'data').map(e => e.payload.text).join(''), '\x1b[0mbefore after\r\n')
       const count = events.filter(e => e.type === 'data').length
       runtime.setVisible('h', true)
       assert.equal(events.filter(e => e.type === 'data').length, count)
@@ -62,65 +62,60 @@ async function main() {
       assert.ok(last.endsWith('😀END'))
       assert.equal(backlog.pending, 0)
     })
-    await test('multi-Mi hidden replay is ACK paced, lossless and ordered with incoming live data', async () => {
+    await test('live tail prefers complete lines but preserves short and Unicode content', () => {
+      const short = new DisplayBacklog()
+      short.push('hello\r\nworld\r\n')
+      assert.equal(short.recent(), 'hello\r\nworld\r\n')
+      const long = new DisplayBacklog()
+      long.push('x'.repeat(10_000))
+      long.push('\r\nRECENT😀\r\n')
+      assert.ok(long.recent().endsWith('RECENT😀\r\n'))
+      assert.ok(long.recent().length <= SERIAL_LIVE_TAIL_CHARS)
+    })
+    await test('6 Mi hidden serial printing opens instantly at latest output without fast-forward', async () => {
       const events = []
       setMainWindow({ isDestroyed: () => false, webContents: { send: (_ch, e) => events.push(e) } })
       const runtime = new TerminalRuntime('serial')
       runtime.setVisible('stress', false)
       await runtime.start('stress', { dir, name: 'STRESS', temporary: true, pause: () => {}, fatal: () => assert.fail() })
-      const batch = 'A'.repeat(64 * 1024)
       for (let i = 0; i < 96; i++) {
-        runtime.data('stress', batch)
+        runtime.data('stress', 'A'.repeat(64 * 1024))
         if (i % 4 === 3) await runtime.histories.get('stress').flush()
       }
-      assert.equal(events.filter(e => e.type === 'data').length, 0)
       assert.equal(runtime.backlogs.get('stress').pending, 6 * 1024 * 1024)
+      runtime.data('stress', 'LATEST\r\n')
       runtime.setVisible('stress', true)
-      assert.ok(runtime.outputs.get('stress').pending <= SERIAL_REPLAY_HIGH_WATER_CHARS + 2)
-      assert.ok(runtime.replays.has('stress'), '6 Mi cannot be enqueued as one display write')
-      runtime.data('stress', 'LIVE\r\n')
-      let cursor = 0
-      let rendered = ''
-      for (; cursor < events.length && cursor < 2000; cursor++) {
-        const e = events[cursor]
-        if (e.type !== 'data') continue
-        rendered += e.payload.text
-        runtime.invoke('stress', 'output:ack', e.payload)
-        assert.ok(runtime.outputs.get('stress').pending <= SERIAL_REPLAY_HIGH_WATER_CHARS + 16 * 1024)
-      }
-      assert.equal(rendered, 'A'.repeat(6 * 1024 * 1024) + 'LIVE\r\n')
+      const frames = events.filter(e => e.type === 'data')
+      const shown = frames.map(e => e.payload.text).join('')
+      assert.ok(events.some(e => e.type === 'output:reset'))
+      assert.ok(shown.length < SERIAL_LIVE_TAIL_CHARS + 100)
+      assert.ok(shown.endsWith('LATEST\r\n'))
+      for (const frame of frames) runtime.invoke('stress', 'output:ack', frame.payload)
+      runtime.data('stress', 'NOW\r\n')
+      assert.ok(events.filter(e => e.type === 'data').at(-1).payload.text.includes('NOW'))
       assert.ok(!events.some(e => e.type === 'output:overflow'))
-      assert.equal(runtime.replays.size, 0)
-      assert.equal(runtime.outputs.get('stress').pending, 0)
-      await runtime.histories.get('stress').flush()
-      const content = await fs.readFile(runtime.histories.get('stress').path, 'utf8')
-      assert.ok(content.includes('LIVE'))
+      const page = await runtime.invoke('stress', 'history:tail', { lines: 5 })
+      assert.ok(page.rows.some(r => r.text.includes('LATEST')))
+      const full = await runtime.histories.get('stress').query({ query: 'AAAA' })
+      assert.ok(full.rows.length > 0)
       await runtime.dispose('stress'); runtime.forgetVisible('stress')
     })
-    await test('hide again during replay preserves FIFO and resumes without duplication', async () => {
+    await test('repeated hide/show displays only fresh tail, not previous hidden content', async () => {
       const events = []
       setMainWindow({ isDestroyed: () => false, webContents: { send: (_ch, e) => events.push(e) } })
       const runtime = new TerminalRuntime('serial')
       runtime.setVisible('toggle', false)
       await runtime.start('toggle', { dir, name: 'TOGGLE', temporary: true, pause: () => {}, fatal: () => assert.fail() })
-      const text = 'abc\r\n'.repeat(50_000)
-      runtime.data('toggle', text)
+      runtime.data('toggle', 'old\r\n'.repeat(70_000))
       runtime.setVisible('toggle', true)
-      const before = runtime.replays.get('toggle').pending
-      assert.ok(before > 0)
+      const first = events.filter(e => e.type === 'data')
+      assert.ok(first.map(e => e.payload.text).join('').length <= SERIAL_LIVE_TAIL_CHARS + 16)
+      for (const e of first) runtime.invoke('toggle', 'output:ack', e.payload)
       runtime.setVisible('toggle', false)
-      assert.equal(runtime.replays.has('toggle'), false)
-      assert.equal(runtime.backlogs.get('toggle').pending, before)
-      runtime.data('toggle', 'LATER\r\n')
+      runtime.data('toggle', 'NEWEST\r\n')
       runtime.setVisible('toggle', true)
-      let rendered = ''
-      for (let i = 0; i < events.length && i < 1000; i++) {
-        if (events[i].type !== 'data') continue
-        rendered += events[i].payload.text
-        runtime.invoke('toggle', 'output:ack', events[i].payload)
-      }
-      assert.equal(rendered, text + 'LATER\r\n')
-      assert.ok(!events.some(e => e.type === 'output:overflow'))
+      const next = events.filter(e => e.type === 'data').slice(first.length)
+      assert.equal(next.map(e => e.payload.text).join(''), '\x1b[0mNEWEST\r\n')
       await runtime.dispose('toggle'); runtime.forgetVisible('toggle')
     })
     await test('hidden OutputWindow stops NEW frames, then resumes in FIFO order', () => {
@@ -154,42 +149,33 @@ async function main() {
       assert.equal(fragmented.read(2), 'A')
       assert.equal(fragmented.pending, 0)
     })
-    await test('hide in the middle of foreground frames keeps ordered output and releases display pause', async () => {
-      const events = []
-      const pauses = []
-      setMainWindow({ isDestroyed: () => false, webContents: { send: (_ch, evt) => events.push(evt) } })
+    await test('hide with old output queued drops stale frames and releases display pressure', async () => {
+      const events = []; const pauses = []
+      setMainWindow({ isDestroyed: () => false, webContents: { send: (_ch, e) => events.push(e) } })
       const runtime = new TerminalRuntime('serial')
       await runtime.start('hide-mid', {
-        dir, name: 'HIDE-MID', temporary: true, pause: value => pauses.push(value), fatal: () => assert.fail()
+        dir, name: 'HIDE-MID', temporary: true,
+        pause: value => pauses.push(value), fatal: () => assert.fail()
       })
-      const foreground = 'A'.repeat(512 * 1024)
-      const background = 'B'.repeat(64 * 1024)
-      runtime.data('hide-mid', foreground)
-      // Disk pressure must drain first; only display pressure should remain.
+      runtime.data('hide-mid', 'A'.repeat(512 * 1024))
       await runtime.histories.get('hide-mid').flush()
-      const dispatched = events.filter(e => e.type === 'data')
-      assert.ok(dispatched.length > 0 && dispatched.length < 20)
-      assert.equal(pauses.at(-1), true, 'initial display pressure can pause RTS/CTS')
+      const sentBefore = events.filter(e => e.type === 'data')
+      assert.ok(sentBefore.length > 0)
+      assert.equal(pauses.at(-1), true)
       runtime.setVisible('hide-mid', false)
-      assert.equal(pauses.at(-1), false, 'hidden display pressure must not block disk capture')
-      for (const event of dispatched) runtime.invoke('hide-mid', 'output:ack', event.payload)
-      assert.equal(events.filter(e => e.type === 'data').length, dispatched.length, 'no additional hidden frames')
-      runtime.data('hide-mid', background)
-      assert.equal(runtime.backlogs.get('hide-mid').pending, background.length)
+      assert.equal(pauses.at(-1), false)
+      for (const e of sentBefore) runtime.invoke('hide-mid', 'output:ack', e.payload)
+      assert.equal(events.filter(e => e.type === 'data').length, sentBefore.length)
+      runtime.data('hide-mid', 'B'.repeat(64 * 1024) + 'CURRENT\r\n')
       runtime.setVisible('hide-mid', true)
-      let cursor = 0
-      let received = ''
-      for (; cursor < events.length && cursor < 200; cursor++) {
-        const event = events[cursor]
-        if (event.type !== 'data') continue
-        received += event.payload.text
-        runtime.invoke('hide-mid', 'output:ack', event.payload)
-      }
-      assert.equal(received, foreground + background)
-      assert.ok(!events.some(e => e.type === 'output:overflow'))
-      assert.equal(runtime.outputs.get('hide-mid').pending, 0)
-      const disk = await runtime.invoke('hide-mid', 'history:query', { query: 'BBBB' })
-      assert.ok(disk.rows.length > 0, 'disk logging continues while hidden')
+      const tail = events.filter(e => e.type === 'data').slice(sentBefore.length)
+      assert.ok(tail.length > 0)
+      const shown = tail.map(e => e.payload.text).join('')
+      assert.ok(shown.length < SERIAL_LIVE_TAIL_CHARS + 100)
+      assert.ok(shown.endsWith('CURRENT\r\n'))
+      assert.ok(!shown.includes('A'.repeat(100)))
+      const complete = await runtime.invoke('hide-mid', 'history:tail', { lines: 8 })
+      assert.ok(complete.rows.some(r => r.text.includes('CURRENT')))
       await runtime.dispose('hide-mid'); runtime.forgetVisible('hide-mid')
     })
     await test('counter throttle publishes the final burst value and cancels on disposal', async () => {
@@ -295,6 +281,33 @@ async function main() {
       await fs.writeFile(path, 'x'.repeat(2 * 1024 * 1024))
       const empty = await readHistoryPage(path, { query: 'absent' })
       assert.equal(empty.rows.length, 0); assert.equal(empty.nextOffset, 1024 * 1024); assert.equal(empty.eof, false)
+    })
+    await test('backward disk-history pagination keeps stable byte offsets and bounded rows', async () => {
+      const path = join(dir, 'backward.log')
+      const input = Array.from({ length: 560 }, (_, i) => `中文日志-${i}`)
+      await fs.writeFile(path, input.join('\n') + '\n')
+      let before
+      const pages = []
+      for (let n = 0; n < 10; n++) {
+        const page = await readHistoryTail(path, { before, lines: 90 })
+        assert.ok(page.rows.length <= 90)
+        pages.unshift(...page.rows.map(r => r.text))
+        if (!page.hasMore) break
+        assert.ok(page.before < (before ?? Infinity))
+        before = page.before
+      }
+      assert.deepEqual(pages, input)
+    })
+    await test('long physical lines remain readable at backward-history page boundaries', async () => {
+      const path = join(dir, 'huge-log.log')
+      await fs.writeFile(path, 'A'.repeat(700 * 1024) + 'LATEST\r\n' + 'NOW\r\n')
+      const newest = await readHistoryTail(path, { lines: 5 })
+      assert.ok(newest.rows.some(r => r.text.includes('LATEST')),
+        'last 256 KiB must not drop the tail of a longer physical line')
+      assert.ok(newest.rows.some(r => r.text.includes('NOW')))
+      assert.ok(newest.hasMore)
+      const older = await readHistoryTail(path, { lines: 5, before: newest.before })
+      assert.ok(older.before < newest.before || !older.hasMore)
     })
     await test('slow disk applies backpressure; backlog overflow reports failure and drains', async () => {
       const pressure = []; const errors = []
