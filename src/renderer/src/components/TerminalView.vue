@@ -245,7 +245,7 @@ onMounted(() => {
   })
   // Ctrl+滚轮缩放（须非 passive 才能阻止默认滚动）
   termBox.value.addEventListener('wheel', onWheel, { passive: false })
-  termBox.value.addEventListener('wheel', onHistoryWheel, { passive: false })
+  termBox.value.addEventListener('wheel', onHistoryWheel, { passive: false, capture: true })
   // 全局捕获终端控制键：焦点不在输入框时，Ctrl+C/Z/D/\ 等直接发给终端
   // （终端会话期间这些键始终作为终端输入）
   window.addEventListener('keydown', onGlobalKeydown, true)
@@ -255,7 +255,7 @@ onUnmounted(() => {
   window.removeEventListener('keydown', onGlobalKeydown, true)
   document.removeEventListener('visibilitychange', onVisibilityChange)
   termBox.value?.removeEventListener('wheel', onWheel)
-  termBox.value?.removeEventListener('wheel', onHistoryWheel)
+  termBox.value?.removeEventListener('wheel', onHistoryWheel, true)
   termBox.value?.removeEventListener('mousedown', onMousedown, true)
   termBox.value?.removeEventListener('contextmenu', onContextmenu, true)
   if (fitTrailingTimer) {
@@ -347,7 +347,7 @@ function onGlobalKeydown(e: KeyboardEvent): void {
  */
 function onHistoryWheel(e: WheelEvent): void {
   if (!props.historyPanelId || e.ctrlKey || e.deltaY >= 0 || historyVisible.value || !term) return
-  if (term.buffer.active.viewportY !== 0) return
+  if (term.buffer.active.type !== 'normal' || term.buffer.active.viewportY !== 0) return
   e.preventDefault()
   historyVisible.value = true
 }
