@@ -1,0 +1,32 @@
+# OpenSpec-compatible project configuration.
+schema: spec-driven
+context: |
+  DevKit is a Windows x64 offline embedded development toolbox based on
+  Electron, Vue 3, TypeScript, xterm.js and Node native modules.
+  Write proposals, requirements, designs and implementation tasks in Chinese.
+  The canonical current behavior is defined by openspec/specs/<capability>/spec.md.
+  Follow AGENTS.md for IPC constraints, tests, packaging and safety.
+  Do not treat past plans and review notes as current implementation.
+  Serial capture, scrollback and disk archive are distinct; preserve user data.
+rules:
+  proposal:
+    - Keep scope and capability boundaries explicit; list impacted existing specs.
+    - State what is already implemented versus still planned.
+  specs:
+    - Each requirement MUST have a WHEN/THEN scenario.
+    - Describe observable behavior, not internal class names.
+  design:
+    - Describe data flow, failure handling and tradeoffs; link the canonical spec.
+    - For serial/terminal changes cover clear, ANSI/VT, UTF-8 and disk histories.
+  tasks:
+    - Include typecheck, unit tests and Windows UI smoke checks when applicable.
+    - List documentation migration or link changes for behavior updates.
+operations:
+  apply:
+    guidance:
+      - Run npm run typecheck and npm test before proposing a merge.
+      - Do not merge if CI is red; GitHub PR review precedes main.
+  archive:
+    guidance:
+      - Sync shipped behavior into openspec/specs/ and retain only durable designs under docs/.
+      - Move finished changes into openspec/changes/archive/ instead of adding new standalone docs.

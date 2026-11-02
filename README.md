@@ -97,7 +97,7 @@ npm run dist
 - **终端直接键入**：打开串口后在终端区直接敲命令；设备不回显的裸模块勾选「本地回显」。**终端控制键已适配**：`Ctrl+C` 中断、`Ctrl+Z` 挂起、`Ctrl+D` EOF、`Ctrl+\` 退出、`Ctrl+U` 删行、`Ctrl+L` 清屏等，即使焦点不在终端上也会发给设备。
 - 字体 / 字号可选，`Ctrl+滚轮` / `Ctrl+=` / `Ctrl+-` 缩放，`Ctrl+0` 复位；设置持久化。
 - 波特率下拉可手输 1200 ~ 12M；数据位/校验/停止位/RTS-CTS 流控可配。接收为批量合并推送，高波特率不卡 UI。
-- **后台连续记录**：串口连接时自动阻止系统空闲睡眠（屏幕仍可关闭），锁屏、最小化和切换工具时持续采集；后台保留 16 Mi 字符代码单元热缓存，返回终端通过 16 Ki 分帧、按 ACK 逐步补齐并与实时输出衔接（更早的内容在磁盘历史中）。真正的系统睡眠无法保证数据完整，休眠区间会记入日志。
+- **后台连续记录与无感恢复**：串口连接时自动阻止系统空闲睡眠（屏幕仍可关闭），锁屏、最小化和切换工具时持续采集；16 Mi 字符代码单元热缓存并不用于全量回放，返回终端只补最近约 8 Ki 上下文并继续实时打印。清屏后不会从普通回滚中翻出清屏前的磁盘文本；需要时仍可显式搜索或导出完整日志。真正系统睡眠无法保证数据完整，休眠区间会记入日志。
 - **自动保存日志**：会话期间所有收发自动落盘 `%APPDATA%/dev-kit/serial-logs/<COM>-<日期>.log`（带毫秒时间戳与 RX/TX 方向标记），可开关。
 - DTR/RTS 一键拉高拉低（部分板子进 Bootloader 用），CTS/DSR/DCD 信号灯 2s 轮询。
 - 会话（端口参数组合）保存后一键载入；发送历史下拉；定时发送（周期 ≥20ms）。
@@ -157,8 +157,19 @@ src/
 ├── shared/               # 主/渲染共享类型与纯逻辑（测试与渲染端共用）
 tests/                     # 单元测试（npm test 依次执行）
 tests/probes/               # 原生能力探针脚本（serialport / desktopCapturer / xterm 验证用，不在 npm test 内）
-docs/spec.md               # 需求文档（设计目标与决策记录）
+openspec/specs/            # 当前能力的可验证需求（OpenSpec）
+openspec/config.yaml       # OpenSpec 项目约定
+docs/terminal-architecture.md # 终端技术设计和验证边界
 ```
+
+## 文档与 OpenSpec 工作流
+
+本仓库采用 **OpenSpec 风格的需求/变更分层**，不再通过大量 `docs/*.md` 阶段性计划维护同一功能的多份版本。
+
+- **现行需求**：`openspec/specs/`，按能力划分，Requirement + WHEN/THEN Scenario 是可验证的行为基线。
+- **技术设计与历史限制**：[终端架构、数据保留与验证](docs/terminal-architecture.md)。
+- **功能变更**：新建 `openspec/changes/<name>/`，使用 `proposal.md`、变更 specs、可选 `design.md`、`tasks.md`；完成后同步 specs 并归档至 `openspec/changes/archive/`。
+- **AI 协作约定**：`AGENTS.md`。OpenSpec CLI 与 Claude/Codex 的 Skills 由官方 `openspec init` 按所用工具生成；本仓库提供兼容目录和项目配置，**未将 Skills 初始化命令冒充成已执行**。详细步骤见 [OpenSpec Setup](https://openspec.dev/docs/setup)。
 
 ## 开发与测试
 
