@@ -29,9 +29,18 @@
  → 用户确认后打包（见下）
 ```
 
-**同步 `docs/spec.md`**：每次新增或修改了功能需求 / 非功能需求，必须同步修正 `docs/spec.md`（对照当前设计检查过时条目，递增文档版本号与日期），再进入 typecheck/打包流程。改代码但没改需求的（纯 bug 修复、重构、性能优化）不用动 spec。
+**同步 OpenSpec**：现行能力需求唯一来源是 `openspec/specs/<capability>/spec.md`。功能行为有变化时，按 OpenSpec propose → apply → sync → archive 工作流维护对应 spec 和验收场景；仅修复实现而不改变可见行为时无需改写既有要求，但应补测试。长期设计仅保留在 `docs/terminal-architecture.md` 等少量稳定文档；阶段性计划和 Review 不再逐篇堆入 `docs/`。
 
 **测试要求**：新增/修改可判定的交互逻辑时，先抽成纯函数模块（参照 `termInput.ts`），并在 `tests/` 加对应 `*-entry.js` + `*-test.js`（esbuild 打包后 node 跑，参照 `term-test.js`），再挂进 `package.json` 的 `test` 链。
+
+## OpenSpec 文档约定（新项目基线）
+
+- `openspec/config.yaml`：统一项目背景与产物质量规则；`openspec/specs/`：已交付的现行行为，以 capability 划分，每个 Requirement 必须包含 `#### Scenario` 的 WHEN/THEN。
+- 新需求使用 `openspec/changes/<change-name>/proposal.md`、`specs/<capability>/spec.md`（delta）、可选 `design.md`、`tasks.md`；完成后同步主 specs 并移入 `changes/archive/`。不要把已做完的设计计划作为新的 `docs/*.md` 反复创建。
+- `docs/` 只保存仍需长期维护的技术设计或验证入口；代码 Review 结论优先放 PR 描述和 Git 历史，避免形成多份过时事实。
+- 已将旧 `docs/spec.md` 按能力迁移为主 specs，已完成的串口缓存/历史类设计合并为单一架构文档。维护时先对照真实代码和测试，不能把 P1/P2 未来设想误写为已交付。
+- OpenSpec 工作流技能（`openspec-propose`、`openspec-apply-change`、`openspec-archive-change`）由官方 CLI `openspec init` 为指定 AI 工具生成；**仅有目录并不代表已安装 CLI 或技能**。新开发环境按 https://openspec.dev/docs/setup 初始化/刷新。
+- 现行 specs 是需求权威，技术细节/限制在 `docs/terminal-architecture.md`，用户操作指引在 `README.md`。有冲突先验证代码，再同步文档。
 
 ## 测试套件清单（`npm test` 依次执行）
 
