@@ -4,6 +4,7 @@ const { tmpdir } = require('node:os')
 const { join } = require('node:path')
 const { LogFormatter, OutputWindow, DisplayBacklog, SERIAL_BACKGROUND_CACHE_CHARS, SERIAL_LIVE_TAIL_CHARS, PanelTasks, ByteCounterThrottle } = require('../src/shared/terminal-stream')
 const { SessionHistory, readHistoryPage, readHistoryTail } = require('../src/main/services/terminal/history')
+const { displayArchiveLine } = require('../src/shared/logtext')
 const { TerminalRuntime } = require('../src/main/services/terminal/runtime')
 const { setMainWindow } = require('../src/main/ipc')
 
@@ -44,6 +45,49 @@ async function main() {
       runtime.setVisible('h', true)
       assert.equal(events.filter(e => e.type === 'data').length, count)
       await runtime.dispose('h'); runtime.forgetVisible('h')
+    })
+    await test('clear screen creates a disk-history floor but preserves searchable and exportable logs', async () => {
+      const events = []
+      setMainWindow({ isDestroyed: () => false, webContents: { send: (_ch, e) => events.push(e) } })
+      const runtime = new TerminalRuntime('serial')
+      await runtime.start('clear-floor', { dir, name: 'CLEAR', temporary: true, pause: () => {}, fatal: () => assert.fail() })
+      runtime.data('clear-floor', 'BEFORE-1\r\nBEFORE-2\r\n')
+      assert.equal(runtime.invoke('clear-floor', 'history:available'), true)
+      assert.equal(runtime.invoke('clear-floor', 'history:available', { truncated: false }), false,
+        'native colored scrollback should be used when no display data was skipped')
+      runtime.invoke('clear-floor', 'output:clear')
+      assert.equal(runtime.invoke('clear-floor', 'history:available'), false)
+      const cleared = await runtime.invoke('clear-floor', 'history:tail', { lines: 100 })
+      assert.equal(cleared.rows.length, 0)
+      assert.equal(cleared.hasMore, false)
+      const archived = await runtime.invoke('clear-floor', 'history:query', { query: 'BEFORE' })
+      assert.ok(archived.rows.length >= 2, 'clearing the screen cannot delete archived logs')
+      runtime.data('clear-floor', 'AFTER-1\r\nAFTER-2\r\n')
+      assert.equal(runtime.invoke('clear-floor', 'history:available'), true)
+      const after = await runtime.invoke('clear-floor', 'history:tail', { lines: 100 })
+      assert.ok(after.rows.some(row => row.text.includes('AFTER-1')))
+      assert.ok(!after.rows.some(row => row.text.includes('BEFORE-1')))
+      assert.equal(after.hasMore, false)
+      runtime.setVisible('clear-floor', false)
+      runtime.data('clear-floor', 'OFFSCREEN\r\n')
+      runtime.setVisible('clear-floor', true)
+      assert.equal(runtime.invoke('clear-floor', 'history:available', { truncated: false }), true,
+        'a skipped background interval makes on-demand disk history useful')
+      runtime.invoke('clear-floor', 'output:clear')
+      assert.equal(runtime.invoke('clear-floor', 'history:available'), false)
+      await runtime.dispose('clear-floor')
+    })
+    await test('disk archive timestamp is controlled by live view setting', () => {
+      const line = '[2026-11-02 21:05:04.123] ERROR colored on device'
+      assert.deepEqual(displayArchiveLine(line, false), {
+        text: 'ERROR colored on device', timestamp: ''
+      })
+      assert.deepEqual(displayArchiveLine(line, true), {
+        text: 'ERROR colored on device', timestamp: '[21:05:04.123] '
+      })
+      assert.deepEqual(displayArchiveLine('device raw text', false), {
+        text: 'device raw text', timestamp: ''
+      })
     })
     await test('default background cache retains 16 Mi UTF-16 code units, not 512 Ki', async () => {
       assert.equal(SERIAL_BACKGROUND_CACHE_CHARS, 16 * 1024 * 1024)
