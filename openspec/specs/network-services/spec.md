@@ -4,6 +4,8 @@
 
 覆盖 TFTP、TCP/UDP 网络调试和多串口 TCP 桥接等独立网络服务。
 
+## Requirements
+
 ### Requirement: TFTP 服务
 
 TFTP 工具 MUST 支持 RFC 1350 读写请求、二进制模式和既有 blksize/timeout/tsize 扩展。

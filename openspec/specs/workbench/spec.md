@@ -4,6 +4,8 @@
 
 DevKit 的 Windows 本地多工具工作台，统一管理工具面板、状态和持久化配置。
 
+## Requirements
+
 ### Requirement: Windows 离线工作台
 
 应用 MUST 在受支持的 Windows x64 环境本地运行，核心工具 MUST 无需云端账户或外网服务。

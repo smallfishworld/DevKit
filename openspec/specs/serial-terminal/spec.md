@@ -4,6 +4,8 @@
 
 记录当前 DevKit 串口终端的外部行为契约；实时视图、磁盘归档和回滚浏览互相独立。未来的完整 VT 归档不是已交付能力。
 
+## Requirements
+
 ### Requirement: 串口连接与输入输出
 
 串口面板 MUST 支持本机串口选择、常用及自定义波特率、数据位、校验、停止位、可选 RTS/CTS、UTF-8/GBK 解码和 ASCII/HEX 收发。

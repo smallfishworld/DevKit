@@ -4,6 +4,8 @@
 
 描述 SSH 及本地 PTY 终端的连接、终端仿真、磁盘历史、输入和流控。
 
+## Requirements
+
 ### Requirement: SSH 连接
 
 SSH 面板 MUST 支持主机、端口、用户凭据以及受支持的密码和私钥认证。
