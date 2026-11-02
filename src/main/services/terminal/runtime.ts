@@ -25,6 +25,8 @@ export class TerminalRuntime {
   private pressure = new Map<string, Set<string>>()
   private hiddenViews = new Set<string>()
   private backlogs = new Map<string, DisplayBacklog>()
+  /** A live display gap means the on-disk archive contains unseen output. */
+  private displayGaps = new Set<string>()
 
   constructor(private tool: string) {}
   get ids(): string[] { return [...new Set([...this.tasks.ids, ...this.histories.keys(), ...this.outputs.keys(), ...this.selected.keys()])] }
@@ -59,6 +61,7 @@ export class TerminalRuntime {
       // A fresh output generation cancels queued pre-hide frames; its reset
       // event is delivered before the latest tail. No historical fast-forward.
       const latest = backlog?.recent() ?? ''
+      this.displayGaps.add(id)
       // Keep the already rendered xterm scrollback; only retire the IPC queue.
       this.resetOutput(id, true)
       if (latest) this.outputs.get(id)?.write('\x1b[0m' + latest)
@@ -74,6 +77,7 @@ export class TerminalRuntime {
 
   async start(id: string, options: RuntimeOptions): Promise<void> {
     await this.dispose(id)
+    this.displayGaps.delete(id)
     this.options.set(id, options)
     this.pressure.set(id, new Set())
     const dir = options.temporary ? join(app.getPath('temp'), 'devkit-history') : options.dir
@@ -98,6 +102,7 @@ export class TerminalRuntime {
    */
   clearDisplay(id: string): void {
     this.histories.get(id)?.markDisplayClear()
+    this.displayGaps.delete(id)
     this.resetOutput(id)
   }
 
@@ -134,6 +139,7 @@ export class TerminalRuntime {
 
   async dispose(id: string): Promise<void> {
     this.backlogs.delete(id)
+    this.displayGaps.delete(id)
     this.options.delete(id)
     this.pressure.delete(id)
     this.outputs.get(id)?.dispose()
@@ -165,7 +171,12 @@ export class TerminalRuntime {
       case 'output:ack': this.outputs.get(id)?.ack(payload as OutputAck); return true
       case 'output:reset': this.resetOutput(id); return true
       case 'output:clear': this.clearDisplay(id); return true
-      case 'history:available': return this.histories.get(id)?.hasVisibleHistory ?? false
+      case 'history:available':
+        // With no screen gap and no xterm scrollback truncation, native VT
+        // history already contains all rows with exact original ANSI colors.
+        return Boolean(this.histories.get(id)?.hasVisibleHistory) &&
+          (payload == null || this.displayGaps.has(id) ||
+            Boolean((payload as { truncated?: boolean }).truncated))
       case 'history:query': return this.query(id, (payload ?? {}) as HistoryQuery)
       case 'history:tail': return this.tailPage(id, (payload ?? {}) as HistoryTailQuery)
       case 'history:pick': return this.pick(id)

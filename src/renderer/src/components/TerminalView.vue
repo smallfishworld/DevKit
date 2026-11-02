@@ -355,7 +355,8 @@ function onHistoryWheel(e: WheelEvent): void {
   if (historyChecking) return
   historyChecking = true
   const requestId = ++historyRequestId
-  void window.api.invoke('serial', 'history:available', props.historyPanelId)
+  const truncated = term.buffer.active.length >= term.rows + (term.options.scrollback ?? 200_000)
+  void window.api.invoke('serial', 'history:available', props.historyPanelId, { truncated })
     .then(available => {
       if (available && requestId === historyRequestId && term && !historyVisible.value)
         historyVisible.value = true

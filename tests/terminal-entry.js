@@ -53,6 +53,8 @@ async function main() {
       await runtime.start('clear-floor', { dir, name: 'CLEAR', temporary: true, pause: () => {}, fatal: () => assert.fail() })
       runtime.data('clear-floor', 'BEFORE-1\r\nBEFORE-2\r\n')
       assert.equal(runtime.invoke('clear-floor', 'history:available'), true)
+      assert.equal(runtime.invoke('clear-floor', 'history:available', { truncated: false }), false,
+        'native colored scrollback should be used when no display data was skipped')
       runtime.invoke('clear-floor', 'output:clear')
       assert.equal(runtime.invoke('clear-floor', 'history:available'), false)
       const cleared = await runtime.invoke('clear-floor', 'history:tail', { lines: 100 })
@@ -66,6 +68,11 @@ async function main() {
       assert.ok(after.rows.some(row => row.text.includes('AFTER-1')))
       assert.ok(!after.rows.some(row => row.text.includes('BEFORE-1')))
       assert.equal(after.hasMore, false)
+      runtime.setVisible('clear-floor', false)
+      runtime.data('clear-floor', 'OFFSCREEN\r\n')
+      runtime.setVisible('clear-floor', true)
+      assert.equal(runtime.invoke('clear-floor', 'history:available', { truncated: false }), true,
+        'a skipped background interval makes on-demand disk history useful')
       runtime.invoke('clear-floor', 'output:clear')
       assert.equal(runtime.invoke('clear-floor', 'history:available'), false)
       await runtime.dispose('clear-floor')
