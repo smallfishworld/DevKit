@@ -67,6 +67,8 @@ const SIZES = [10, 11, 12, 13, 14, 15, 16, 17, 18, 20, 22, 24, 26, 28]
 
 const termBox = ref<HTMLElement | null>(null)
 const historyVisible = ref(false)
+let historyRequestId = 0
+let historyChecking = false
 let term: Terminal | null = null
 let fitAddon: FitAddon | null = null
 let searchAddon: SearchAddon | null = null
@@ -269,6 +271,7 @@ onUnmounted(() => {
   // 作废挂起的清屏与在途计数：term 即将释放，write 回调不应再触发清屏/ACK 逻辑
   clearPending = null
   inFlightWrites = 0
+  historyRequestId++
   term?.dispose()
   term = null
   fitAddon = null
@@ -349,7 +352,16 @@ function onHistoryWheel(e: WheelEvent): void {
   if (!props.historyPanelId || e.ctrlKey || e.deltaY >= 0 || historyVisible.value || !term) return
   if (term.buffer.active.type !== 'normal' || term.buffer.active.viewportY !== 0) return
   e.preventDefault()
-  historyVisible.value = true
+  if (historyChecking) return
+  historyChecking = true
+  const requestId = ++historyRequestId
+  void window.api.invoke('serial', 'history:available', props.historyPanelId)
+    .then(available => {
+      if (available && requestId === historyRequestId && term && !historyVisible.value)
+        historyVisible.value = true
+    })
+    .catch(() => {})
+    .finally(() => { historyChecking = false })
 }
 
 function backToLive(): void {
@@ -583,6 +595,7 @@ function info(text: string): void {
  * 所以排队到在途块落地后再真正清屏——等待期间新到的帧先落地再被清，属于被清历史。
  */
 function clear(): void {
+  historyRequestId++
   historyVisible.value = false
   vtGuard.reset()
   const doClear = (): void => {
@@ -632,6 +645,7 @@ function resync(): void {
 }
 
 function reset(): void {
+  historyRequestId++
   historyVisible.value = false
   closeSearch(false)
   // Queue reset after already accepted frames, preserving parser/ACK ordering.
@@ -671,6 +685,7 @@ defineExpose({ write, info, clear, reset, resync, resetVtState, focus, openSearc
         :panel-id="props.historyPanelId"
         :font="fontFamilyCss()"
         :font-size="props.fontSize"
+        :show-time="props.showTime"
         :foreground="appearance.terminalTheme.foreground"
         :background="appearance.terminalTheme.background"
         @live="backToLive"

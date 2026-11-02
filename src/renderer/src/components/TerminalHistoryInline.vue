@@ -6,8 +6,9 @@
  */
 import { computed, nextTick, onMounted, onUnmounted, ref, shallowRef } from 'vue'
 import type { HistoryTailPage } from '../../../shared/terminal-stream'
+import { displayArchiveLine } from '../../../shared/logtext'
 
-const props = defineProps<{ panelId: string; font: string; fontSize: number; foreground: string; background: string }>()
+const props = defineProps<{ panelId: string; font: string; fontSize: number; showTime: boolean; foreground: string; background: string }>()
 const emit = defineEmits<{ (event: 'live'): void }>()
 const PAGE_LINES = 160
 const MAX_PAGES = 8
@@ -15,7 +16,12 @@ type Page = { end: number; data: HistoryTailPage }
 const viewport = ref<HTMLElement | null>(null)
 const pages = shallowRef<Page[]>([])
 const newerEnds: number[] = []
-const rows = computed(() => pages.value.flatMap(p => p.data.rows))
+// The archival .log format always includes wall-clock timestamps. Display
+// them only when the live terminal's timestamp setting is enabled.
+const rows = computed(() => pages.value.flatMap(p => p.data.rows).map(row => ({
+  offset: row.offset,
+  ...displayArchiveLine(row.text, props.showTime)
+})))
 const busy = ref(false)
 const errorText = ref('')
 let alive = true
@@ -124,7 +130,7 @@ onUnmounted(() => { alive = false })
   >
     <div v-if="busy" class="history-status">正在读取历史日志…</div>
     <div v-if="errorText" class="history-status">{{ errorText }}</div>
-    <div v-for="row in rows" :key="row.offset" :data-history-offset="row.offset" class="history-line">{{ row.text }}</div>
+    <div v-for="row in rows" :key="row.offset" :data-history-offset="row.offset" class="history-line"><span v-if="row.timestamp" class="history-time">{{ row.timestamp }}</span><span>{{ row.text }}</span></div>
     <div v-if="!rows.length && !busy" class="history-status">当前没有可浏览的历史日志</div>
     <div class="history-live-tip">往下滚动回到实时串口 · Esc / End 返回实时打印</div>
   </div>
@@ -146,6 +152,7 @@ onUnmounted(() => { alive = false })
   scrollbar-gutter: stable;
 }
 .history-line { min-height: 1.35em; }
+.history-time { opacity: .60; }
 .history-status, .history-live-tip { font-size: 11px; opacity: .65; padding: 4px 0; }
 .history-live-tip { text-align: center; }
 </style>

@@ -489,7 +489,7 @@ function openTermSearch(): void {
 }
 
 function clearTerm(): void {
-  void window.api.invoke('serial', 'output:reset', props.panelId).catch((error) => ElMessage.error(String(error)))
+  void window.api.invoke('serial', 'output:clear', props.panelId).catch((error) => ElMessage.error(String(error)))
 }
 
 function saveLog(): void {

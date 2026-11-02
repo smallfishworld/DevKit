@@ -17,6 +17,8 @@ export class SessionHistory {
   private closing: Promise<void> | null = null
   private readers = new Set<Promise<unknown>>()
   private committed = 0
+  /** Disk offset where the current on-screen scrollback begins after a user clear. */
+  private displayFloor = 0
   bytes = 0
 
   private constructor(
@@ -33,6 +35,15 @@ export class SessionHistory {
   }
 
   get pendingBytes(): number { return this.pending }
+  get hasVisibleHistory(): boolean { return this.bytes > this.displayFloor }
+
+  /** Clear the visible scrollback, not the durable export/search log.
+   * Finish any pending partial line so the floor is at a complete log boundary.
+   */
+  markDisplayClear(): void {
+    this.formatter.finish(piece => this.enqueue(piece))
+    this.displayFloor = this.bytes
+  }
 
   append(text: string): void {
     if (this.accepting && !this.failure) this.formatter.write(text, (piece) => this.enqueue(piece))
@@ -104,7 +115,7 @@ export class SessionHistory {
   tailPage(request: HistoryTailQuery): Promise<HistoryTailPage> {
     return this.track((async () => {
       await this.tail
-      return readHistoryTail(this.path, request, this.committed)
+      return readHistoryTail(this.path, request, this.committed, this.displayFloor)
     })())
   }
 
@@ -181,19 +192,21 @@ export async function readHistoryPage(path: string, request: HistoryQuery = {}, 
 export async function readHistoryTail(
   path: string,
   request: HistoryTailQuery = {},
-  snapshotSize?: number
+  snapshotSize?: number,
+  minOffset = 0
 ): Promise<HistoryTailPage> {
   const handle = await fs.open(path, 'r')
   try {
     const size = Math.min((await handle.stat()).size, snapshotSize ?? Infinity)
+    const floor = Number.isSafeInteger(minOffset) ? Math.max(0, Math.min(size, minOffset)) : 0
     const lines = Math.max(1, Math.min(200, Number.isSafeInteger(request.lines) ? request.lines! : 100))
-    const end = Number.isSafeInteger(request.before) ? Math.max(0, Math.min(size, request.before!)) : size
-    if (!end) return { rows: [], before: 0, hasMore: false, size }
+    const end = Number.isSafeInteger(request.before) ? Math.max(floor, Math.min(size, request.before!)) : size
+    if (end <= floor) return { rows: [], before: floor, hasMore: false, size }
     const parts: Buffer[] = []
     let start = end
     let newlines = 0
-    while (start > 0 && end - start < 256 * 1024 && newlines <= lines + 1) {
-      const n = Math.min(64 * 1024, start, 256 * 1024 - (end - start))
+    while (start > floor && end - start < 256 * 1024 && newlines <= lines + 1) {
+      const n = Math.min(64 * 1024, start - floor, 256 * 1024 - (end - start))
       const buffer = Buffer.allocUnsafe(n)
       const at = start - n
       const { bytesRead } = await handle.read(buffer, 0, n, at)
@@ -208,7 +221,7 @@ export async function readHistoryTail(
     // A fixed-size reverse read may start in the middle of a UTF-8 codepoint.
     // Do not render a spurious replacement character in Chinese/emoji logs.
     let pos = 0
-    if (start > 0) {
+    if (start > floor) {
       while (pos < Math.min(3, content.length) && (content[pos] & 0xc0) === 0x80) pos++
     }
     while (pos < content.length) {
@@ -217,7 +230,7 @@ export async function readHistoryTail(
       // Extremely long physical lines can span many 256 KiB pages. Keep the
       // visible fragment rather than silently dropping its (often latest) tail.
       // The ellipsis means its beginning is outside this page, not lost on disk.
-      const fragment = pos === 0 && start > 0
+      const fragment = pos === 0 && start > floor
       const line = content.subarray(pos, stop).toString('utf8').replace(/\r?\n$/, '')
       if (line || lf !== -1)
         rows.push({ offset: start + pos, text: fragment ? '…' + line : line })
@@ -226,11 +239,11 @@ export async function readHistoryTail(
     // A single >256KiB physical line must still allow paging backwards.
     if (rows.length === 0) {
       const text = content.subarray(pos).toString('utf8')
-      return { rows: [{ offset: start + pos, text: '…' + text }], before: start + pos, hasMore: start + pos > 0, size }
+      return { rows: [{ offset: start + pos, text: '…' + text }], before: start + pos, hasMore: start + pos > floor, size }
     }
     const selected = rows.slice(-lines)
     const before = selected[0].offset
-    return { rows: selected, before, hasMore: before > 0, size }
+    return { rows: selected, before, hasMore: before > floor, size }
   } finally {
     await handle.close()
   }

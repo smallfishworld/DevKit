@@ -144,6 +144,16 @@ export function fmtStamp(t = Date.now(), withDate = false): string {
   return withDate ? `${dateStamp(d)} ${time}` : time
 }
 
+/** Transform the always-timestamped archival .log row into the current live
+ * terminal presentation. Timestamps are display metadata, not device text.
+ * ANSI colors cannot be recovered from this already-sanitized legacy format.
+ */
+export function displayArchiveLine(line: string, showTime: boolean): { text: string; timestamp: string } {
+  const match = /^\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3})\] /.exec(line)
+  if (!match) return { text: line, timestamp: '' }
+  return { text: line.slice(match[0].length), timestamp: showTime ? '[' + match[1].slice(11) + '] ' : '' }
+}
+
 /** 日志文件名时间戳：以创建时刻为准，YYYYMMDD-HHMMSS（无毫秒） */
 export function fileNameStamp(d = new Date()): string {
   const p = (n: number, w = 2): string => n.toString().padStart(w, '0')

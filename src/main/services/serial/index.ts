@@ -171,7 +171,7 @@ class SerialService implements ToolService {
       case 'log:mem-save':
         return getSection<SerialConfig>('serial', DEFAULT_SERIAL_CONFIG).then((c) => this.runtime.export(panelId, c.logDir || serialLogDir()))
       case 'log:mem-clear':
-        this.runtime.resetOutput(panelId)
+        this.runtime.clearDisplay(panelId)
         return { ok: true }
       case 'log:note':
         return this.noteLog(panelId, (payload as { text: string }).text)

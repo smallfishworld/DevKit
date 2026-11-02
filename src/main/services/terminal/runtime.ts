@@ -93,6 +93,14 @@ export class TerminalRuntime {
     }
   }
 
+  /** Clear the current terminal view and its automatic disk scrollback,
+   * retaining all archived logs for explicit search and export.
+   */
+  clearDisplay(id: string): void {
+    this.histories.get(id)?.markDisplayClear()
+    this.resetOutput(id)
+  }
+
   resetOutput(id: string, preserveScrollback = false): void {
     this.backlogs.delete(id)
     this.outputs.get(id)?.dispose()
@@ -149,13 +157,15 @@ export class TerminalRuntime {
   }
 
   handles(action: string): boolean {
-    return ['output:ack', 'output:reset', 'history:query', 'history:tail', 'history:pick', 'history:save'].includes(action)
+    return ['output:ack', 'output:reset', 'output:clear', 'history:query', 'history:tail', 'history:available', 'history:pick', 'history:save'].includes(action)
   }
 
   invoke(id: string, action: string, payload: unknown): unknown {
     switch (action) {
       case 'output:ack': this.outputs.get(id)?.ack(payload as OutputAck); return true
       case 'output:reset': this.resetOutput(id); return true
+      case 'output:clear': this.clearDisplay(id); return true
+      case 'history:available': return this.histories.get(id)?.hasVisibleHistory ?? false
       case 'history:query': return this.query(id, (payload ?? {}) as HistoryQuery)
       case 'history:tail': return this.tailPage(id, (payload ?? {}) as HistoryTailQuery)
       case 'history:pick': return this.pick(id)
