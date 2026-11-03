@@ -128,8 +128,7 @@ export class TerminalRuntime {
    * the renderer output into one frame for normal 32 ms serial batching.
    */
   dataTimed(id: string, parts: ReadonlyArray<{ text: string; receivedAt: number }>): void {
-    const history = this.histories.get(id)
-    for (const part of parts) history?.append(part.text, part.receivedAt)
+    this.histories.get(id)?.appendTimed(parts)
     const text = parts.map(part => part.text).join('')
     if (!text) return
     if (this.hiddenViews.has(id)) {
