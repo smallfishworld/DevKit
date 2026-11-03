@@ -120,8 +120,18 @@ export class TerminalRuntime {
     this.outputs.set(id, output)
   }
 
-  data(id: string, text: string): void {
-    this.histories.get(id)?.append(text)
+  data(id: string, text: string, receivedAt = Date.now()): void {
+    this.dataTimed(id, [{ text, receivedAt }])
+  }
+
+  /** Preserve each RX callback's timestamp in the archive while coalescing
+   * the renderer output into one frame for normal 32 ms serial batching.
+   */
+  dataTimed(id: string, parts: ReadonlyArray<{ text: string; receivedAt: number }>): void {
+    const history = this.histories.get(id)
+    for (const part of parts) history?.append(part.text, part.receivedAt)
+    const text = parts.map(part => part.text).join('')
+    if (!text) return
     if (this.hiddenViews.has(id)) {
       let backlog = this.backlogs.get(id)
       if (!backlog) { backlog = new DisplayBacklog(); this.backlogs.set(id, backlog) }

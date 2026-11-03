@@ -12,6 +12,7 @@ const { SessionHistory } = require('../src/main/services/terminal/history')
 const { setMainWindow } = require('../src/main/ipc')
 const { DEFAULT_SERIAL_PARAMS } = require('../src/shared/serial')
 const { DEFAULT_SSH_PARAMS } = require('../src/shared/ssh')
+const { fmtStamp } = require('../src/shared/logtext')
 
 const tick = () => new Promise((resolve) => setImmediate(resolve))
 async function waitFor(condition) {
@@ -54,6 +55,47 @@ async function main() {
     assert.equal(port.isOpen, false)
     console.log('  PASS serial disconnect/export and duplicate panel disposal')
 
+    // Drain unflushed RX before clearing; the display must never resurrect it,
+    // and the saved timestamp must be the host RX callback time (not flush time).
+    assert.equal((await serialService.invoke('clear-a', 'open', { ...DEFAULT_SERIAL_PARAMS, path: 'COM20' })).ok, true)
+    const clearPort = SerialPort.ports.at(-1)
+    const rxAt = Date.parse('2026-11-03T00:00:01.123Z')
+    const rxSecondAt = rxAt + 17
+    const oldNow = Date.now
+    try {
+      Date.now = () => rxAt
+      clearPort.emit('data', Buffer.from('BEFORE-CLEAR\r\n'))
+      Date.now = () => rxSecondAt
+      clearPort.emit('data', Buffer.from('SECOND-CALLBACK\r\n'))
+    } finally { Date.now = oldNow }
+    // Simulate a mid-codepoint split across the *clear* boundary. The StringDecoder
+    // must survive clear, while the logging floor stays byte/line aligned.
+    const chinese = Buffer.from('中')
+    clearPort.emit('data', chinese.subarray(0, 1))
+    assert.deepEqual(await serialService.invoke('clear-a', 'output:clear'), { ok: true })
+    const afterClear = await serialService.invoke('clear-a', 'history:tail', { lines: 20 })
+    assert.deepEqual(afterClear.rows, [])
+    assert.equal(afterClear.hasMore, false)
+    clearPort.emit('data', Buffer.concat([chinese.subarray(1), Buffer.from('AFTER-CLEAR\r\n')]))
+    await serialService.invoke('clear-a', 'close')
+    const clearLog = await serialService.invoke('clear-a', 'history:query', {})
+    const clearRows = clearLog.rows.map(r => r.text)
+    const before = clearRows.find(r => r.includes('BEFORE-CLEAR'))
+    assert.ok(before?.startsWith('[' + fmtStamp(rxAt, true) + '] '),
+      'RX timestamp must be captured at serial data callback, not 32 ms flush')
+    const second = clearRows.find(r => r.includes('SECOND-CALLBACK'))
+    assert.ok(second?.startsWith('[' + fmtStamp(rxSecondAt, true) + '] '),
+      'each callback in the same 32 ms batch must keep its own timestamp')
+    assert.ok(clearRows.some(r => r.includes('用户清空终端显示')))
+    assert.ok(clearRows.some(r => r.includes('中AFTER-CLEAR')), 'incomplete UTF-8 must survive clear')
+    assert.ok(!clearRows.some(r => r.includes('�')), 'do not split UTF-8 on clear')
+    const clearTail = await serialService.invoke('clear-a', 'history:tail', { lines: 20 })
+    assert.ok(clearTail.rows.some(r => r.text.includes('中AFTER-CLEAR')))
+    assert.ok(!clearTail.rows.some(r => r.text.includes('BEFORE-CLEAR')))
+    assert.ok(!clearTail.rows.some(r => r.text.includes('用户清空终端显示')))
+    await serialService.dispose('clear-a')
+    console.log('  PASS serial clear drains queued RX, preserves UTF-8 and uses RX callback timestamp')
+
     // Multiple serial sessions must share exactly one power-save blocker.
     assert.equal((await serialService.invoke('sleep-a', 'open', { ...DEFAULT_SERIAL_PARAMS, path: 'COM8' })).ok, true)
     const sleepPort = SerialPort.ports.at(-1)
@@ -78,6 +120,8 @@ async function main() {
     ]
     assert.ok(positions.every(i => i >= 0), wakeText)
     assert.ok(positions.every((i, n) => n === 0 || positions[n - 1] < i), 'wake markers must follow received data')
+    assert.ok(wakeText.includes('设备产生时间不确定'),
+      'data crossing suspend/resume must be marked as provenance-uncertain')
     await serialService.dispose('sleep-a')
     await serialService.dispose('sleep-b')
     console.log('  PASS multi-session power lock and ordered suspend/resume recording')
@@ -100,6 +144,11 @@ async function main() {
     const recoveredText = recovered.map(e => e.payload.text).join('')
     assert.ok(recoveredText.length <= 9 * 1024, 'show only latest context after wake')
     assert.ok(recoveredText.includes('LATEST-WAKE'))
+    const wakeUncertain = await serialService.invoke('wake-ui', 'history:query', {
+      query: '唤醒后驱动积压数据'
+    })
+    assert.ok(wakeUncertain.rows.length > 0,
+      'the first buffered driver burst after a long suspend must carry an uncertainty marker')
     const wakeTail = await serialService.invoke('wake-ui', 'history:tail', { lines: 3 })
     assert.ok(wakeTail.rows.some(r => r.text.includes('LATEST-WAKE')))
     await serialService.invoke('wake-ui', 'close')

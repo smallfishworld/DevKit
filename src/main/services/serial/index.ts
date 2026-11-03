@@ -49,6 +49,10 @@ interface SerialSession {
   pendingBytes: number
   /** 系统休眠开始时刻（唤醒时算时长并在日志标注；null = 未处于休眠） */
   suspendedAt: number | null
+  /** The host may deliver data buffered by the USB driver around resume. */
+  suspendedDataNoted: boolean
+  wakeBurstNotePending: boolean
+  wakeBurstNoted: boolean
 }
 
 /** 进行中的传输（每面板最多一个） */
@@ -90,6 +94,14 @@ class SerialService implements ToolService {
 
   private releaseResumeHold(id: string): void {
     this.resumeTimers.delete(id)
+    // Account for bytes already delivered to our 32 ms RX queue before ending
+    // the uncertainty window; otherwise its closing marker could precede data.
+    const session = sessions.get(id)
+    if (session?.flushTimer) { clearTimeout(session.flushTimer); session.flushTimer = null }
+    this.flush(id)
+    if (session?.wakeBurstNoted)
+      this.runtime.note(id, '===== 唤醒后接收时间不确定窗口结束 =====')
+    if (session) { session.wakeBurstNotePending = false; session.wakeBurstNoted = false }
     this.resumeHold.delete(id)
     this.applyViewVisibility(id)
   }
@@ -124,13 +136,39 @@ class SerialService implements ToolService {
     if (!s || s.pending.length === 0) return
     const pieces = s.pending
     s.pending = []
-    const total = Buffer.concat(pieces.map((p) => p.buf))
-    const text = s.decoder.write(total)
     s.pendingBytes = 0
-    this.runtime.data(panelId, text)
+    // Every serial data callback has its own host receipt time. Preserve
+    // timestamps across the 32 ms group instead of stamping every line at the
+    // timer's flush time. These are never device-generation timestamps.
+    if (s.suspendedAt !== null && !s.suspendedDataNoted) {
+      this.runtime.note(panelId, '===== 休眠/唤醒交界收到的数据：设备产生时间不确定；以下时间戳为主机接收时间 =====')
+      s.suspendedDataNoted = true
+    } else if (s.wakeBurstNotePending) {
+      this.runtime.note(panelId, '===== 唤醒后驱动积压数据：设备产生时间不确定；以下时间戳为主机接收时间 =====')
+      s.wakeBurstNotePending = false
+      s.wakeBurstNoted = true
+    }
+    const decoded: Array<{ text: string; receivedAt: number }> = []
+    for (const piece of pieces) {
+      const text = s.decoder.write(piece.buf)
+      if (text) decoded.push({ text, receivedAt: piece.time })
+    }
+    // Disk records keep per-callback times; the renderer still receives one
+    // coalesced output per 32 ms batch, preserving the existing UI throughput.
+    if (decoded.length) this.runtime.dataTimed(panelId, decoded)
   }
 
   invoke(panelId: string, action: string, payload: unknown): Promise<unknown> | unknown {
+    if (action === 'output:clear' || action === 'log:mem-clear') {
+      // The serial RX batch belongs to the OLD screen if it reached the app
+      // before the user's clear action. Drain it synchronously first.
+      const session = sessions.get(panelId)
+      if (session?.flushTimer) { clearTimeout(session.flushTimer); session.flushTimer = null }
+      this.flush(panelId)
+      this.runtime.note(panelId, '===== 用户清空终端显示（历史日志继续保留） =====')
+      this.runtime.clearDisplay(panelId)
+      return { ok: true }
+    }
     if (this.runtime.handles(action)) return this.runtime.invoke(panelId, action, payload)
     switch (action) {
       case 'view:visible':
@@ -170,9 +208,6 @@ class SerialService implements ToolService {
         return this.signals(panelId)
       case 'log:mem-save':
         return getSection<SerialConfig>('serial', DEFAULT_SERIAL_CONFIG).then((c) => this.runtime.export(panelId, c.logDir || serialLogDir()))
-      case 'log:mem-clear':
-        this.runtime.clearDisplay(panelId)
-        return { ok: true }
       case 'log:note':
         return this.noteLog(panelId, (payload as { text: string }).text)
       case 'log:set-dir':
@@ -236,6 +271,9 @@ class SerialService implements ToolService {
       if (s.flushTimer) { clearTimeout(s.flushTimer); s.flushTimer = null }
       this.flush(panelId)
       s.suspendedAt = now
+      s.suspendedDataNoted = false
+      s.wakeBurstNotePending = false
+      s.wakeBurstNoted = false
       this.runtime.note(panelId, '===== 系统休眠 =====')
       this.resumeHold.add(panelId)
       this.applyViewVisibility(panelId)
@@ -258,9 +296,16 @@ class SerialService implements ToolService {
       this.flush(panelId)
       const gap = s.suspendedAt === null ? 0 : now - s.suspendedAt
       s.suspendedAt = null
+      s.suspendedDataNoted = false
+      // A freshly resumed USB driver can expose data produced before wake.
+      // We cannot infer device production timestamps from host RX callbacks.
+      s.wakeBurstNotePending = gap >= 30_000
+      s.wakeBurstNoted = false
       this.runtime.note(
         panelId,
-        gap > 0 ? `===== 系统唤醒（休眠 ${fmtDuration(gap)}） =====` : '===== 系统唤醒 ====='
+        gap > 0
+          ? `===== 系统唤醒（休眠 ${fmtDuration(gap)}；主机接收时间不代表设备产生时间） =====`
+          : '===== 系统唤醒 ====='
       )
       // Never purge RX; prevent the driver's burst from being animated in xterm.
       this.emit(panelId, 'resume', { gapMs: gap })
@@ -302,7 +347,8 @@ class SerialService implements ToolService {
     const session: SerialSession = {
       port, params, rxBytes: 0, txBytes: 0, pending: [], pendingBytes: 0,
       decoder: makeDecoder(cfg.encoding ?? 'utf8'), encoding: cfg.encoding ?? 'utf8',
-      flushTimer: null, rawConsumer: null, suspendedAt: null
+      flushTimer: null, rawConsumer: null, suspendedAt: null,
+      suspendedDataNoted: false, wakeBurstNotePending: false, wakeBurstNoted: false
     }
     try {
       await this.runtime.start(panelId, {

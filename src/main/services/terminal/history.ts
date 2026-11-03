@@ -45,8 +45,12 @@ export class SessionHistory {
     this.displayFloor = this.bytes
   }
 
-  append(text: string): void {
-    if (this.accepting && !this.failure) this.formatter.write(text, (piece) => this.enqueue(piece))
+  /** receivedAt is the host RX callback timestamp, never a claim about when
+   * the device generated its bytes. Kept separate from the disk flush time.
+   */
+  append(text: string, receivedAt = Date.now()): void {
+    if (this.accepting && !this.failure)
+      this.formatter.write(text, (piece) => this.enqueue(piece), receivedAt)
   }
 
   note(text: string): void {
