@@ -45,8 +45,30 @@ export class SessionHistory {
     this.displayFloor = this.bytes
   }
 
-  append(text: string): void {
-    if (this.accepting && !this.failure) this.formatter.write(text, (piece) => this.enqueue(piece))
+  /** receivedAt is the host RX callback timestamp, never a claim about when
+   * the device generated its bytes. Kept separate from the disk flush time.
+   */
+  append(text: string, receivedAt = Date.now()): void {
+    this.appendTimed([{ text, receivedAt }])
+  }
+
+  /** Batch the disk writes, not the timestamps: hundreds of tiny RX callbacks
+   * may share a 32 ms frame, but must not become hundreds of fs.writeFile calls.
+   * Keep chunks bounded so a long unbroken line cannot allocate an unbounded
+   * buffer or overflow the disk queue in a single append.
+   */
+  appendTimed(parts: ReadonlyArray<{ text: string; receivedAt: number }>): void {
+    if (!this.accepting || this.failure) return
+    let combined = ''
+    const emit = (piece: string): void => {
+      combined += piece
+      if (combined.length >= 16_384) {
+        this.enqueue(combined)
+        combined = ''
+      }
+    }
+    for (const part of parts) this.formatter.write(part.text, emit, part.receivedAt)
+    if (combined) this.enqueue(combined)
   }
 
   note(text: string): void {
