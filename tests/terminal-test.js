@@ -5,6 +5,7 @@ buildSync({
   entryPoints: [path.join(__dirname, 'terminal-entry.js')],
   bundle: true,
   platform: 'node',
+  external: ['@xterm/xterm', '@xterm/addon-search'],
   outfile: path.join(__dirname, '.terminal-test.cjs'),
   alias: { electron: path.join(__dirname, 'terminal-electron-mock.js') },
   logLevel: 'error'

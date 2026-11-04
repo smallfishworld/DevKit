@@ -7,6 +7,7 @@ const { SessionHistory, readHistoryPage, readHistoryTail } = require('../src/mai
 const { displayArchiveLine } = require('../src/shared/logtext')
 const { TerminalRuntime } = require('../src/main/services/terminal/runtime')
 const { setMainWindow } = require('../src/main/ipc')
+const { LiveSearchRefresh, refreshSearchHighlights } = require('../src/renderer/src/components/termSearch')
 
 let count = 0
 async function test(name, run) { await run(); count++; console.log(`  PASS ${name}`) }
@@ -16,6 +17,101 @@ async function main() {
   const dir = await fs.mkdtemp(join(tmpdir(), 'devkit-terminal-test-'))
   globalThis.terminalTestDir = dir
   try {
+    await test('live search refresh is not postponed by continuous writes and cancels on close', async () => {
+      let count = 0
+      let resolveFirst
+      const first = new Promise(resolve => { resolveFirst = resolve })
+      const refresh = new LiveSearchRefresh(() => { count++; resolveFirst() }, 20)
+      const output = setInterval(() => refresh.request(), 5)
+      const timeout = setTimeout(() => resolveFirst(), 1000)
+      try {
+        await first
+        assert.ok(count > 0, 'refresh must fire while output is still running')
+      } finally { clearInterval(output); clearTimeout(timeout); refresh.cancel() }
+      const before = count
+      refresh.request(); refresh.cancel()
+      await new Promise(resolve => setTimeout(resolve, 40))
+      assert.equal(count, before)
+    })
+    await test('live search rebuilds addon highlights while preserving selection and viewport', async () => {
+      const { Terminal } = require('@xterm/xterm')
+      const { SearchAddon } = require('@xterm/addon-search')
+      const terminal = new Terminal({ cols: 80, rows: 5, scrollback: 100, allowProposedApi: true })
+      // Headless xterm has no DOM selection service; supply its public selection
+      // surface while retaining the real parser, search engine and decorations.
+      let selected
+      terminal.select = (x, y, length) => { selected = { start: { x, y }, end: { x: x + length, y } } }
+      terminal.clearSelection = () => { selected = undefined }
+      terminal.getSelectionPosition = () => selected
+      const addon = new SearchAddon()
+      terminal.loadAddon(addon)
+      const options = { decorations: { matchBackground: '#e6c229', matchOverviewRuler: '#e6c229' } }
+      let results
+      addon.onDidChangeResults(value => { results = value })
+      const write = text => new Promise(resolve => terminal.write(text, resolve))
+      try {
+        await write('first NEEDLE\r\n' + 'ordinary\r\n'.repeat(10))
+        addon.findNext('NEEDLE', options)
+        assert.equal(results.resultCount, 1)
+        await write('new NEEDLE\r\n')
+        terminal.scrollToTop()
+        terminal.select(0, 1, 8)
+        const selection = terminal.getSelectionPosition()
+        const viewport = terminal.buffer.active.viewportY
+        refreshSearchHighlights(terminal, addon, 'NEEDLE', options)
+        assert.equal(results.resultCount, 2, 'newly parsed matches must be highlighted before debounce fires')
+        assert.deepEqual(terminal.getSelectionPosition(), selection)
+        assert.equal(terminal.buffer.active.viewportY, viewport)
+        await write('NEEDLE again\r\n')
+        refreshSearchHighlights(terminal, addon, 'NEEDLE', options)
+        assert.equal(results.resultCount, 3)
+      } finally { terminal.dispose() }
+    })
+    await test('continuous serial parsing preserves hidden ANSI, scroll position and ACK order', async () => {
+      const { Terminal } = require('@xterm/xterm')
+      const terminal = new Terminal({ cols: 100, rows: 24, scrollback: 200_000 })
+      const runtime = new TerminalRuntime('serial')
+      const events = []
+      setMainWindow({ isDestroyed: () => false, webContents: { send: (_ch, event) => {
+        events.push(event)
+        if (event.type === 'data') terminal.write(event.payload.text, () => runtime.invoke('continuous', 'output:ack', event.payload))
+      } } })
+      try {
+        runtime.setVisible('continuous', false)
+        await runtime.start('continuous', { dir, name: 'CONTINUOUS', temporary: true,
+          keepParsingWhenHidden: true, pause: () => {}, fatal: () => assert.fail('disk failure') })
+        runtime.data('continuous', 'BEFORE\r\n')
+        runtime.data('continuous', '\x1b[3')
+        runtime.setVisible('continuous', false)
+        runtime.data('continuous', '2m中文😀AFTER\x1b[0m\r\n')
+        for (let i = 0; i < 3000; i++) runtime.data('continuous', `ROW-${i}\r\n`)
+        const drained = async () => {
+          for (let i = 0; i < 1000 && runtime.outputs.get('continuous').pending; i++)
+            await new Promise(resolve => setTimeout(resolve, 5))
+          assert.equal(runtime.outputs.get('continuous').pending, 0)
+        }
+        await drained()
+        terminal.scrollToTop()
+        const viewport = terminal.buffer.active.viewportY
+        runtime.setVisible('continuous', true)
+        runtime.data('continuous', 'LIVE\r\n')
+        await drained()
+        assert.equal(terminal.buffer.active.viewportY, viewport, 'returning must retain the scrolled position')
+        const rows = Array.from({ length: terminal.buffer.active.length }, (_, i) => terminal.buffer.active.getLine(i).translateToString(true))
+        assert.equal(rows[0], 'BEFORE')
+        assert.equal(rows[1], '中文😀AFTER')
+        assert.equal(terminal.buffer.active.getLine(1).getCell(0).getFgColor(), 2)
+        assert.equal(rows.filter(row => row.startsWith('ROW-')).length, 3000)
+        assert.ok(rows.includes('LIVE'))
+        assert.equal(runtime.backlogs.size, 0)
+        assert.equal(events.filter(e => e.type === 'output:resync').length, 0)
+        assert.equal(events.filter(e => e.type === 'output:reset').length, 1)
+        assert.equal(runtime.invoke('continuous', 'history:available', { truncated: false }), false)
+      } finally {
+        await runtime.dispose('continuous')
+        terminal.dispose()
+      }
+    })
     await test('hidden display backlog keeps bounded Unicode text in original order', async () => {
       const backlog = new DisplayBacklog(8)
       backlog.push('start')
