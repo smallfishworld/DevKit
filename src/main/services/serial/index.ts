@@ -9,7 +9,7 @@ import { dialog, app, shell, powerSaveBlocker } from 'electron'
 import { promises as fs } from 'node:fs'
 import { basename, join } from 'node:path'
 import type { ToolService } from '../../ipc'
-import { emitToolEvent } from '../../ipc'
+import { emitToolEvent, setWindowBackgroundThrottling } from '../../ipc'
 import type { SerialConfig, SerialEncoding, SerialParams, SerialTransferEvt, TransferProtocol } from '../../../shared/serial'
 import { DEFAULT_SERIAL_CONFIG } from '../../../shared/serial'
 import { getSection, setSection } from '../macro/configStore'
@@ -108,6 +108,7 @@ class SerialService implements ToolService {
 
   /** Prevent automatic idle sleep while any serial session is capturing. */
   private syncCapturePower(): void {
+    setWindowBackgroundThrottling(sessions.size === 0)
     if (sessions.size && this.powerBlockerId === null) {
       this.powerBlockerId = powerSaveBlocker?.start?.('prevent-app-suspension') ?? null
     } else if (!sessions.size && this.powerBlockerId !== null) {
@@ -285,8 +286,8 @@ class SerialService implements ToolService {
    * - 日志标注休眠时长，便于事后定位"为什么这里缺了一段"；
    * - 不自动清除驱动缓存：尽量保存唤醒后仍可读取的所有数据。
    *   实测唤醒瞬间会一次性吐出几百 KB 的重复/残片（曾见单批 6611 行、单行 2.7KB 无终止符），
-   *   把这些当新数据渲染进终端，用户看到的就是"终端在放录像、输入不生效"；
-   * - 只通知渲染端，不擅自复位设备（改 DTR 会复位部分嵌入式板，交给用户点按钮决定）。
+   *   用现有分帧与 ACK 水位消化积压，保持数据顺序和 VT 解析状态；
+   * - 保持原终端解析与回滚；不自动重开或复位设备。
    */
   onSystemResume(): void {
     const now = Date.now()
@@ -307,7 +308,7 @@ class SerialService implements ToolService {
           ? `===== 系统唤醒（休眠 ${fmtDuration(gap)}；主机接收时间不代表设备产生时间） =====`
           : '===== 系统唤醒 ====='
       )
-      // Never purge RX; prevent the driver's burst from being animated in xterm.
+      // Preserve the terminal parser and scrollback while processing driver output.
       this.emit(panelId, 'resume', { gapMs: gap })
       this.cancelResumeHold(panelId)
       if (gap >= 30_000) {
@@ -353,6 +354,7 @@ class SerialService implements ToolService {
     try {
       await this.runtime.start(panelId, {
         dir: cfg.logDir || serialLogDir(), name: params.path, temporary: !cfg.autoLog,
+        keepParsingWhenHidden: true,
         pause: (paused) => {
           // Without RTS/CTS, keep capturing to disk; pausing the host cannot stop the device.
           if (sessions.get(panelId) !== session || !params.rtscts) return

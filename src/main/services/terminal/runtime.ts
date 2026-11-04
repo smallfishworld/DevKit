@@ -10,6 +10,8 @@ interface RuntimeOptions {
   dir: string
   name: string
   temporary: boolean
+  /** Parse hidden serial output into the same terminal buffer instead of replaying a tail. */
+  keepParsingWhenHidden?: boolean
   pause: (paused: boolean) => void
   fatal: () => void
   stats?: () => Record<string, unknown>
@@ -41,12 +43,11 @@ export class TerminalRuntime {
     this.options.get(id)?.pause(reasons.size > 0)
   }
 
-  /**
-   * Serial terminal visibility controls only drawing. Capture and disk logging
-   * never stop while the tab/window is hidden. The user returns to a LIVE view,
-   * not a fast-forward movie of the hidden interval.
+  /** Continuous serial sessions keep parsing while hidden. Other callers retain
+   * the bounded tail policy for views whose parsers cannot run in the background.
    */
   setVisible(id: string, visible: boolean): void {
+    if (this.options.get(id)?.keepParsingWhenHidden) return
     if (!visible) {
       this.hiddenViews.add(id)
       this.outputs.get(id)?.suspendDelivery()
@@ -78,6 +79,7 @@ export class TerminalRuntime {
   async start(id: string, options: RuntimeOptions): Promise<void> {
     await this.dispose(id)
     this.displayGaps.delete(id)
+    if (options.keepParsingWhenHidden) this.hiddenViews.delete(id)
     this.options.set(id, options)
     this.pressure.set(id, new Set())
     const dir = options.temporary ? join(app.getPath('temp'), 'devkit-history') : options.dir

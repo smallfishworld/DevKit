@@ -21,7 +21,6 @@ import { ByteCounterThrottle } from '../../../shared/terminal-stream'
 import QuickCmdManager from '@renderer/components/QuickCmdManager.vue'
 import type { SerialConfig, SerialEncoding, SerialParams, SerialTransferEvt, TransferProtocol } from '../../../shared/serial'
 import { BAUD_RATES } from '../../../shared/serial'
-import { fmtDuration } from '../../../shared/logtext'
 import type { VtGuardStats } from '../../../shared/vtguard'
 import type { QuickCmdStep } from '../../../shared/term-macro'
 import { useTermMacros } from '../composables/useTermMacros'
@@ -100,16 +99,6 @@ function syncViewVisibility(): void {
 }
 watch(() => tabStore.activeId, syncViewVisibility)
 
-/** 系统长休眠唤醒提示：串口链路可能已失步，给一键重开（不自动复位——DTR 抖动会复位部分设备） */
-const resumeHint = ref<string | null>(null)
-function dismissResumeHint(): void {
-  resumeHint.value = null
-}
-async function reopenFromResumeHint(): Promise<void> {
-  resumeHint.value = null
-  await closePort()
-  await openPort()
-}
 const TERM_SIZES = [10, 11, 12, 13, 14, 15, 16, 17, 18, 20, 22, 24, 26, 28]
 
 
@@ -308,14 +297,7 @@ onMounted(async () => {
     window.api.on('serial', props.panelId, 'error', (p) => {
       ElMessage.warning(`串口错误：${(p as { message: string }).message}`)
     }),
-    window.api.on('serial', props.panelId, 'transfer', onTransferEvt),
-    window.api.on('serial', props.panelId, 'resume', (p) => {
-      // Genuine system suspend may cause a non-recoverable hardware gap.
-      const gap = (p as { gapMs: number }).gapMs
-      if (!open.value || gap < 30_000) return
-      resumeHint.value = `系统休眠 ${fmtDuration(gap)}，串口可能已失步（设备不回显、屏幕不刷新）。`
-    }),
-
+    window.api.on('serial', props.panelId, 'transfer', onTransferEvt)
   )
   const res = (await window.api.invoke('serial', 'attach', props.panelId)) as {
     config: SerialConfig
@@ -373,8 +355,7 @@ async function openPort(): Promise<void> {
     open.value = true
     dtrOn.value = true
     rtsOn.value = true
-    // 重开串口 = 新会话：防护提示/洪泛提示/唤醒横幅全部按新会话重置
-    resumeHint.value = null
+    // 重开串口 = 新会话：防护提示/洪泛提示按新会话重置
     guardNotified = false
     altScreenNoted = false
     // 真正拉高 DTR/RTS（仅改 UI 状态不下发时，部分需要复位才能工作的设备会卡住）
@@ -779,11 +760,6 @@ async function deleteSession(idx: number): Promise<void> {
             RX <b>{{ rxBytes }}</b> TX <b>{{ txBytes }}</b>
           </span>
         </div>
-        <div v-if="resumeHint" class="resume-hint">
-          <span class="resume-text">{{ resumeHint }}</span>
-          <el-button size="small" type="primary" text @click="reopenFromResumeHint">重开串口</el-button>
-          <el-button size="small" text @click="dismissResumeHint">忽略</el-button>
-        </div>
         <TerminalView
           ref="termView"
           v-model:font-size="termFontSize"
@@ -1101,25 +1077,6 @@ async function deleteSession(idx: number): Promise<void> {
   margin-left: auto;
   font-size: 12px;
   color: var(--el-text-color-secondary);
-}
-
-/* 长休眠唤醒提示条：非阻塞，不挡终端输入 */
-.resume-hint {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 8px;
-  margin-bottom: 6px;
-  font-size: 12px;
-  color: var(--el-color-warning);
-  background: var(--el-color-warning-light-9);
-  border: 1px solid var(--el-color-warning-light-5);
-  border-radius: 8px;
-}
-
-.resume-text {
-  flex: 1;
-  min-width: 0;
 }
 
 .counters b {

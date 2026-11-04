@@ -15,6 +15,11 @@ export function setMainWindow(win: BrowserWindow | null): void {
   mainWindow = win
 }
 
+/** Keep parser callbacks running while the main window is receiving serial data. */
+export function setWindowBackgroundThrottling(allowed: boolean): void {
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.setBackgroundThrottling(allowed)
+}
+
 export function registerService(tool: string, service: ToolService): void {
   services.set(tool, service)
 }
