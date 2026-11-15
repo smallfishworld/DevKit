@@ -5,7 +5,9 @@
 
 /** 单个步骤：发命令 / 延时 / 按键 */
 export interface QuickCmdStep {
-  type: 'cmd' | 'sleep' | 'key'
+  type: 'cmd' | 'sleep' | 'key' | 'debug-unlock'
+  /** 本地设备配置 ID（debug-unlock） */
+  profile?: string
   /** 命令文本（cmd） */
   text?: string
   /** 命令格式（cmd，hex 时 text 为十六进制串） */
@@ -68,6 +70,7 @@ export function keyName(seq: string): string {
 
 /** 步骤 → 纯文本预览 */
 export function stepPreview(st: QuickCmdStep): string {
+  if (st.type === 'debug-unlock') return st.profile ? `解锁 Debug（${st.profile}）` : '解锁 Debug'
   if (st.type === 'sleep') return `延时 ${st.ms}ms`
   if (st.type === 'key') return `按键 ${keyName(st.key ?? '')}`
   return st.mode === 'hex' ? `[HEX] ${st.text}` : `${st.text}${st.crlf ? '⏎' : ''}`
@@ -77,7 +80,10 @@ export function stepPreview(st: QuickCmdStep): string {
 export function migrateQuickCmd(c: { name: string; group?: string; mode?: string; text?: string; newline?: string } | QuickCmd): QuickCmd {
   const anyC = c as { steps?: QuickCmdStep[]; mode?: string; text?: string; newline?: string }
   if (Array.isArray(anyC.steps)) {
-    return { name: c.name, group: (c as QuickCmd).group ?? '', steps: anyC.steps }
+    const steps = anyC.steps.map((step) => step?.type === 'debug-unlock'
+      ? { type: 'debug-unlock' as const, profile: typeof step.profile === 'string' ? step.profile : '' }
+      : step)
+    return { name: c.name, group: (c as QuickCmd).group ?? '', steps }
   }
   return {
     name: c.name,
@@ -90,6 +96,22 @@ export function migrateQuickCmd(c: { name: string; group?: string; mode?: string
         crlf: anyC.newline !== 'none'
       }
     ]
+  }
+}
+
+/** Validate the full macro before sending anything to an unsupported terminal. */
+export function validatePlayback(cmd: QuickCmd, debugProfiles?: readonly string[]): string | undefined {
+  for (const step of cmd.steps) {
+    switch (step?.type) {
+      case 'cmd':
+      case 'sleep':
+      case 'key': break
+      case 'debug-unlock':
+        if (!debugProfiles) return '解锁 Debug 仅支持串口终端'
+        if (!step.profile || !debugProfiles.includes(step.profile)) return '找不到此 Debug 解锁的设备配置'
+        break
+      default: return '快捷命令包含不支持的步骤'
+    }
   }
 }
 
