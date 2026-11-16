@@ -5,7 +5,10 @@
 
 /** 单个步骤：发命令 / 延时 / 按键 */
 export interface QuickCmdStep {
-  type: 'cmd' | 'sleep' | 'key' | 'device-action'
+  type: 'cmd' | 'sleep' | 'key' | 'device-action' | 'plugin-action'
+  /** Stable plugin configuration instance and contributed action references. */
+  instanceId?: string
+  actionId?: string
   /** 本地设备动作配置 ID（device-action；具体行为由部署方 device-actions.json 定义） */
   profile?: string
   /** 命令文本（cmd） */
@@ -18,6 +21,13 @@ export interface QuickCmdStep {
   ms?: number
   /** 按键转义序列（key，见 TERM_KEYS） */
   key?: string
+}
+
+export interface PluginActionReference { instanceId: string; actionId: string }
+export interface PluginMacroAction extends PluginActionReference {
+  label: string
+  pluginId: string
+  instanceLabel: string
 }
 
 /** 命名快捷命令：多步骤序列，点击后按顺序执行 */
@@ -70,6 +80,7 @@ export function keyName(seq: string): string {
 
 /** 步骤 → 纯文本预览 */
 export function stepPreview(st: QuickCmdStep): string {
+  if (st.type === 'plugin-action') return st.instanceId && st.actionId ? `插件动作（${st.instanceId} / ${st.actionId}）` : '插件动作'
   if (st.type === 'device-action') return st.profile ? `设备动作（${st.profile}）` : '设备动作'
   if (st.type === 'sleep') return `延时 ${st.ms}ms`
   if (st.type === 'key') return `按键 ${keyName(st.key ?? '')}`
@@ -84,6 +95,13 @@ export function migrateQuickCmd(c: { name: string; group?: string; mode?: string
       // 设备动作步骤只保留 profile 引用，丢弃导入数据可能携带的任何额外字段
       if ((step as { type?: unknown } | undefined)?.type === 'device-action') {
         return { type: 'device-action', profile: typeof step.profile === 'string' ? step.profile : '' }
+      }
+      if ((step as { type?: unknown } | undefined)?.type === 'plugin-action') {
+        return {
+          type: 'plugin-action',
+          instanceId: typeof step.instanceId === 'string' ? step.instanceId : '',
+          actionId: typeof step.actionId === 'string' ? step.actionId : ''
+        }
       }
       return step
     })
@@ -104,7 +122,11 @@ export function migrateQuickCmd(c: { name: string; group?: string; mode?: string
 }
 
 /** Validate the full macro before sending anything to an unsupported terminal. */
-export function validatePlayback(cmd: QuickCmd, deviceProfiles?: readonly string[]): string | undefined {
+export function validatePlayback(
+  cmd: QuickCmd,
+  deviceProfiles?: readonly string[],
+  pluginActions?: readonly PluginActionReference[]
+): string | undefined {
   for (const step of cmd.steps) {
     switch (step?.type) {
       case 'cmd':
@@ -113,6 +135,12 @@ export function validatePlayback(cmd: QuickCmd, deviceProfiles?: readonly string
       case 'device-action':
         if (!deviceProfiles) return '设备动作仅支持串口终端'
         if (!step.profile || !deviceProfiles.includes(step.profile)) return '找不到此设备动作的设备配置'
+        break
+      case 'plugin-action':
+        if (!pluginActions) return '插件动作仅支持串口终端'
+        if (!step.instanceId || !step.actionId || !pluginActions.some(action =>
+          action.instanceId === step.instanceId && action.actionId === step.actionId
+        )) return '找不到此插件动作；请检查插件、配置和启用状态'
         break
       default: return '快捷命令包含不支持的步骤'
     }

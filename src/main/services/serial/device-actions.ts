@@ -29,7 +29,7 @@ export interface DeviceActionContext {
   signal: AbortSignal
   /** auto 模式：watcher 已捕获的挑战码，执行器不再发送起始命令 */
   challenge?: { value: string; receivedAt: number }
-  lock: () => void
+  lock: () => void | Promise<void>
   exchange: Exchange
   waitVerdict: WaitVerdict
   setStage: (stage: DeviceActionStage) => void
@@ -64,10 +64,10 @@ async function runChallengeResponse(
 ): Promise<void> {
   const { signal, setStage } = context
   // auto：设备已停在口令提示前，先把串口锁住，避免登录期间把用户按键送进口令输入
-  if (context.challenge) context.lock()
+  if (context.challenge) await context.lock()
   await provider.authenticate(signal, () => setStage('login'))
   signal.throwIfAborted()
-  if (!context.challenge) context.lock()
+  if (!context.challenge) await context.lock()
 
   let challenge = context.challenge
   if (!challenge) {

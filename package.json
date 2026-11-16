@@ -11,12 +11,14 @@
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json",
     "typecheck:web": "vue-tsc --noEmit -p tsconfig.web.json",
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
-    "test": "node tests/term-test.js && node tests/termflow-test.js && node tests/vtguard-test.js && node tests/logtext-test.js && node tests/diff-test.js && node tests/logic-test.js && node tests/mobamacro-test.js && node tests/quickcmd-test.js && node tests/net-test.js && node tests/tftp-test.js && node tests/ymodem-test.js && node tests/zmodem-test.js && node tests/bridge-test.js && node tests/theme-test.js && node tests/local-terminal-test.js && node tests/terminal-test.js && node tests/terminal-services-test.js && node tests/device-action-match-test.js && node tests/device-config-store-test.js && node tests/device-actions-test.js",
+    "test": "node tests/term-test.js && node tests/termflow-test.js && node tests/vtguard-test.js && node tests/logtext-test.js && node tests/diff-test.js && node tests/logic-test.js && node tests/mobamacro-test.js && node tests/quickcmd-test.js && node tests/net-test.js && node tests/tftp-test.js && node tests/ymodem-test.js && node tests/zmodem-test.js && node tests/bridge-test.js && node tests/theme-test.js && node tests/local-terminal-test.js && node tests/terminal-test.js && node tests/terminal-services-test.js && node tests/device-action-match-test.js && node tests/device-config-store-test.js && node tests/device-actions-test.js && node tests/plugin-backend-test.js && node tests/serial-plugins-test.js && node tests/plugin-ui-test.js && node examples/plugins/text-hex-responder/test.cjs && node tests/plugin-rx-redactor-test.js",
     "test:pty-smoke": "electron scripts/pty-smoke.cjs",
     "test:device-actions-smoke": "node scripts/device-actions-smoke.cjs",
     "dist": "npm run build && electron-builder --win",
     "dist:dir": "npm run build && electron-builder --dir",
-    "dist:zip": "npm run build && electron-builder --win zip --x64"
+    "dist:zip": "npm run build && electron-builder --win zip --x64",
+    "plugin:pack": "node scripts/package-device-plugin.cjs",
+    "test:plugins-smoke": "node scripts/plugins-smoke.cjs"
   },
   "dependencies": {
     "@element-plus/icons-vue": "^2.3.2",

@@ -18,13 +18,16 @@ import {
 import TerminalView from '@renderer/components/TerminalView.vue'
 import TerminalHistory from '@renderer/components/TerminalHistory.vue'
 import DeviceActionsManager from '@renderer/components/DeviceActionsManager.vue'
+import PluginManager from '@renderer/components/PluginManager.vue'
+import { availablePluginActions } from '@renderer/components/plugin-config-form'
+import type { PluginDescriptor, PluginInstance, PluginRuntimeStatus } from '../../../shared/plugins'
 import { useTerminalStream } from '../composables/useTerminalStream'
 import { ByteCounterThrottle } from '../../../shared/terminal-stream'
 import QuickCmdManager from '@renderer/components/QuickCmdManager.vue'
 import type { SerialConfig, SerialEncoding, SerialParams, SerialTransferEvt, TransferProtocol } from '../../../shared/serial'
 import { BAUD_RATES } from '../../../shared/serial'
 import type { VtGuardStats } from '../../../shared/vtguard'
-import type { QuickCmdStep } from '../../../shared/term-macro'
+import type { QuickCmdStep, PluginActionReference, PluginMacroAction } from '../../../shared/term-macro'
 import { useTermMacros } from '../composables/useTermMacros'
 import { useSidebarDrag } from '../composables/useSidebarDrag'
 import { useTabStore } from '@renderer/stores/tabs'
@@ -86,6 +89,75 @@ const deviceConfigOpen = ref(false)
 const deviceConfigInitialTab = ref<'global' | 'profiles'>('global')
 /** 配置保存后自增，通知快捷命令编辑器重新读取可选设备动作 */
 const deviceConfigVersion = ref(0)
+const pluginManagerOpen = ref(false)
+const pluginConfigVersion = ref(0)
+const pluginStatuses = ref<PluginRuntimeStatus[]>([])
+const pluginExecuting = ref('')
+const sessionPluginStatuses = computed(() => pluginStatuses.value.filter(status => status.panelId === props.panelId))
+const pluginBusy = computed(() => !!pluginExecuting.value || sessionPluginStatuses.value.some(status => status.bound && status.state === 'running'))
+const pluginSummary = computed(() => {
+  if (sessionPluginStatuses.value.some(status => status.state === 'error')) return '插件运行异常'
+  if (pluginBusy.value) return '插件动作运行中'
+  const count = sessionPluginStatuses.value.filter(status => status.bound).length
+  return count ? `${count} 个插件配置已绑定` : ''
+})
+async function pluginApi<T>(action: string, payload?: unknown): Promise<T> {
+  const result = await window.api.invoke('plugins', action, props.panelId, payload) as T & { ok: boolean; error?: string }
+  if (!result.ok) throw new Error(result.error || '插件操作失败')
+  return result
+}
+async function refreshPluginStatus(): Promise<void> {
+  try {
+    const result = await pluginApi<{ statuses: PluginRuntimeStatus[] }>('status')
+    pluginStatuses.value = result.statuses
+  } catch { /* Plugin manager displays detailed loading failures when opened. */ }
+}
+async function getPluginActions(): Promise<{ actions: PluginMacroAction[]; error?: string }> {
+  try {
+    const [catalog, configured, runtime] = await Promise.all([
+      pluginApi<{ plugins: PluginDescriptor[] }>('list'),
+      pluginApi<{ instances: PluginInstance[] }>('instance:list'),
+      pluginApi<{ statuses: PluginRuntimeStatus[] }>('status')
+    ])
+    pluginStatuses.value = runtime.statuses
+    return { actions: availablePluginActions(catalog.plugins, configured.instances, runtime.statuses, props.panelId) }
+  } catch (failure) {
+    return { actions: [], error: failure instanceof Error ? failure.message : String(failure) }
+  }
+}
+function onPluginsChanged(): void {
+  pluginConfigVersion.value++
+  void refreshPluginStatus()
+}
+async function runPluginAction(action: PluginActionReference): Promise<void> {
+  if (!open.value) throw new Error('串口未打开')
+  if (pluginBusy.value || actionStage.value) throw new Error('本串口正在执行动作')
+  const generation = connectionGeneration
+  pluginExecuting.value = action.instanceId
+  stopLoop()
+  try {
+    const runtime = await pluginApi<{ statuses: PluginRuntimeStatus[] }>('status')
+    const status = runtime.statuses.find(item => item.instanceId === action.instanceId)
+    if (status?.bound && status.panelId !== props.panelId) throw new Error('此插件配置已绑定到其他串口，请先解除绑定')
+    if (!open.value || generation !== connectionGeneration) throw new Error('串口连接已变化，请重新运行')
+    await pluginApi('bind', { instanceId: action.instanceId })
+    if (!open.value || generation !== connectionGeneration) throw new Error('串口连接已变化，已取消动作')
+    await pluginApi('run', action)
+  } finally {
+    pluginExecuting.value = ''
+    await refreshPluginStatus()
+  }
+}
+async function cancelPluginAction(): Promise<void> {
+  const instanceIds = new Set([
+    ...sessionPluginStatuses.value.filter(status => status.bound && status.state === 'running').map(status => status.instanceId),
+    ...(pluginExecuting.value ? [pluginExecuting.value] : [])
+  ])
+  const results = await Promise.allSettled([...instanceIds].map(instanceId => pluginApi('stop', { instanceId })))
+  const failure = results.find(result => result.status === 'rejected')
+  if (failure?.status === 'rejected') ElMessage.warning(failure.reason instanceof Error ? failure.reason.message : '无法停止插件')
+  await refreshPluginStatus()
+}
 
 function openDeviceConfig(tab: 'global' | 'profiles' = 'global'): void {
   deviceConfigInitialTab.value = tab
@@ -128,7 +200,7 @@ const TERM_SIZES = [10, 11, 12, 13, 14, 15, 16, 17, 18, 20, 22, 24, 26, 28]
 
 /** 键盘直入：原样发串口（Enter 发 \r，与真实终端一致）；录制时同步记录 */
 function onTermData(data: string): void {
-  if (!open.value || actionStage.value) return
+  if (!open.value || actionStage.value || pluginBusy.value) return
   if (recording.value) recordTermKey(data)
   window.api
     .invoke('serial', 'write', props.panelId, { mode: 'ascii', text: data, newline: 'none' })
@@ -416,6 +488,11 @@ onMounted(async () => {
       if (state.ok) ElMessage.success('设备动作成功')
       else if (state.error) ElMessage.warning(state.error)
     }),
+    window.api.on('plugins', props.panelId, 'changed', onPluginsChanged),
+    window.api.on('plugins', props.panelId, 'status', (payload) => {
+      const status = payload as PluginRuntimeStatus
+      pluginStatuses.value = [...pluginStatuses.value.filter(item => item.instanceId !== status.instanceId), status]
+    }),
     window.api.on('serial', props.panelId, 'transfer', onTransferEvt)
   )
   const res = (await window.api.invoke('serial', 'attach', props.panelId)) as {
@@ -436,6 +513,7 @@ onMounted(async () => {
   termView.value?.info('就绪。选择串口后点击「打开」，终端内可直接输入命令。')
   await refreshPorts()
   await refreshAutoProfiles()
+  await refreshPluginStatus()
 })
 
 onUnmounted(() => {
@@ -535,8 +613,8 @@ async function toggleRts(): Promise<void> {
 
 // ---------- 发送 ----------
 function doSend(text: string, mode: 'ascii' | 'hex', newline: 'none' | 'crlf' | 'lf' | 'cr'): void {
-  if (actionStage.value) {
-    ElMessage.warning('设备解锁正在使用此串口')
+  if (actionStage.value || pluginBusy.value) {
+    ElMessage.warning('设备动作正在使用此串口')
     return
   }
   if (!open.value) {
@@ -568,7 +646,7 @@ function send(): void {
 }
 
 function startLoop(): void {
-  if (loopOn.value || actionStage.value) return
+  if (loopOn.value || actionStage.value || pluginBusy.value) return
   if (!sendText.value.trim()) {
     ElMessage.warning('请先填写发送内容')
     return
@@ -784,6 +862,11 @@ async function deleteSession(idx: number): Promise<void> {
             {{ actionStage || autoStage }}
             <el-button size="small" text @click="cancelDeviceAction">取消动作</el-button>
           </div>
+          <div v-if="pluginSummary" role="status" class="plugin-status">
+            <span>{{ pluginSummary }}</span>
+            <el-button v-if="pluginBusy" size="small" text @click="cancelPluginAction">停止插件</el-button>
+            <el-button size="small" text @click="pluginManagerOpen = true">查看</el-button>
+          </div>
           <QuickCmdManager
             :enabled="open"
             :writer="macroWriter"
@@ -791,6 +874,10 @@ async function deleteSession(idx: number): Promise<void> {
             :get-device-profiles="getDeviceProfiles"
             :get-connection-generation="() => connectionGeneration"
             :device-config-version="deviceConfigVersion"
+            :run-plugin-action="runPluginAction"
+            :get-plugin-actions="getPluginActions"
+            :plugin-config-version="pluginConfigVersion"
+            @request-plugin-config="pluginManagerOpen = true"
             @request-device-config="openDeviceConfig('profiles')"
           />
         </div>
@@ -844,6 +931,7 @@ async function deleteSession(idx: number): Promise<void> {
               <el-option value="gbk" label="GBK" />
             </el-select>
           </el-tooltip>
+          <el-button size="small" text :icon="Connection" title="安装插件、配置实例并绑定到当前串口" @click="pluginManagerOpen = true">插件</el-button>
           <el-button
             size="small"
             text
@@ -920,7 +1008,7 @@ async function deleteSession(idx: number): Promise<void> {
           ref="termView"
           v-model:font-size="termFontSize"
           :font="termFont"
-          :local-echo="localEcho && !actionStage && !autoStage"
+          :local-echo="localEcho && !actionStage && !autoStage && !pluginBusy"
           :show-time="showTime"
           :guard-scrollback="true"
           :history-panel-id="props.panelId"
@@ -1051,6 +1139,13 @@ async function deleteSession(idx: number): Promise<void> {
       </template>
     </el-dialog>
 
+    <PluginManager
+      v-model:visible="pluginManagerOpen"
+      :panel-id="props.panelId"
+      :connected="open"
+      @changed="onPluginsChanged"
+      @legacy-config="pluginManagerOpen = false; openDeviceConfig('global')"
+    />
     <DeviceActionsManager
       v-model:visible="deviceConfigOpen"
       :panel-id="props.panelId"
@@ -1061,6 +1156,7 @@ async function deleteSession(idx: number): Promise<void> {
 </template>
 
 <style scoped>
+.plugin-status { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; font-size: 12px; padding: 4px 8px; color: var(--el-text-color-secondary); }
 .serial-panel {
   display: flex;
   flex-direction: column;

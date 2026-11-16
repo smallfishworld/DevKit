@@ -7,9 +7,10 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { ArrowDown, ArrowRight, CopyDocument, Delete, Download, EditPen, FolderAdd, Plus, Timer, Upload, VideoCamera } from '@element-plus/icons-vue'
-import type { QuickCmd, QuickCmdStep } from '../../../shared/term-macro'
+import type { QuickCmd, QuickCmdStep, PluginActionReference, PluginMacroAction } from '../../../shared/term-macro'
 import { TERM_KEYS, keyName, stepPreview, resolveDropInsertion, validatePlayback } from '../../../shared/term-macro'
 import { useTermMacros } from '../composables/useTermMacros'
+import { pluginActionKey } from './plugin-config-form'
 
 const props = defineProps<{
   /** 未连接时点击宏只提示不执行 */
@@ -22,11 +23,17 @@ const props = defineProps<{
   getConnectionGeneration?: () => number
   /** 设备动作配置保存版本号：变化后重新读取可选动作 */
   deviceConfigVersion?: number
+  runPluginAction?: (action: PluginActionReference) => Promise<void>
+  getPluginActions?: () => Promise<{ actions: PluginMacroAction[]; error?: string }>
+  pluginConfigVersion?: number
   /** 空提示文案 */
   emptyHint?: string
 }>()
 
-const emit = defineEmits<{ (e: 'request-device-config'): void }>()
+const emit = defineEmits<{
+  (e: 'request-device-config'): void
+  (e: 'request-plugin-config'): void
+}>()
 
 interface DeviceProfileInfo {
   id: string
@@ -69,6 +76,31 @@ const deviceProfiles = ref<DeviceProfileInfo[]>([])
 /** 只有 manual 档能作为宏步骤；auto 档由串口面板的「自动应答」开关驱动 */
 const manualProfiles = computed(() => deviceProfiles.value.filter((profile) => profile.trigger !== 'auto'))
 const deviceConfigError = ref('')
+const pluginActions = ref<PluginMacroAction[]>([])
+const pluginConfigError = ref('')
+
+async function refreshPluginActions(): Promise<void> {
+  if (!props.getPluginActions) return
+  try {
+    const result = await props.getPluginActions()
+    pluginActions.value = result.actions
+    pluginConfigError.value = result.error || ''
+  } catch (failure) {
+    pluginActions.value = []
+    pluginConfigError.value = failure instanceof Error ? failure.message : '无法读取插件动作'
+  }
+}
+function selectedPluginAction(step: QuickCmdStep): string {
+  return step.instanceId && step.actionId ? pluginActionKey(step.instanceId, step.actionId) : ''
+}
+function selectPluginAction(step: QuickCmdStep, key: string): void {
+  const action = pluginActions.value.find(item => pluginActionKey(item.instanceId, item.actionId) === key)
+  if (action) { step.instanceId = action.instanceId; step.actionId = action.actionId }
+}
+function pluginActionAvailable(step: QuickCmdStep): boolean {
+  return pluginActions.value.some(item => item.instanceId === step.instanceId && item.actionId === step.actionId)
+}
+watch(() => props.pluginConfigVersion, () => { void refreshPluginActions() })
 
 async function refreshDeviceProfiles(): Promise<void> {
   if (!props.getDeviceProfiles) return
@@ -203,6 +235,7 @@ function openCmdDlg(idx = -1, steps?: QuickCmdStep[], prefillGroup?: string): vo
       : []
   cmdDlg.value = true
   void refreshDeviceProfiles()
+  void refreshPluginActions()
 }
 
 async function onSaveCmd(): Promise<void> {
@@ -212,6 +245,10 @@ async function onSaveCmd(): Promise<void> {
   }
   if (cmdDraft.steps.some((step) => step.type === 'device-action' && !step.profile)) {
     ElMessage.warning(deviceConfigError.value || '请选择设备动作的设备配置')
+    return
+  }
+  if (cmdDraft.steps.some(step => step.type === 'plugin-action' && (!step.instanceId || !step.actionId))) {
+    ElMessage.warning(pluginConfigError.value || '请选择插件配置与动作')
     return
   }
   await saveCmd(
@@ -230,6 +267,10 @@ function addStep(type: QuickCmdStep['type']): void {
   if (type === 'cmd') cmdDraft.steps.push({ type: 'cmd', text: '', mode: 'ascii', crlf: true })
   else if (type === 'sleep') cmdDraft.steps.push({ type: 'sleep', ms: 500 })
   else if (type === 'device-action') cmdDraft.steps.push({ type, profile: manualProfiles.value[0]?.id ?? '' })
+  else if (type === 'plugin-action') {
+    const first = pluginActions.value[0]
+    cmdDraft.steps.push({ type, instanceId: first?.instanceId || '', actionId: first?.actionId || '' })
+  }
   else cmdDraft.steps.push({ type: 'key', key: '\r' })
 }
 
@@ -258,20 +299,28 @@ async function onPlay(cmd: QuickCmd): Promise<void> {
     return
   }
   const usesAction = cmd.steps.some((step) => step?.type === 'device-action')
-  const generation = usesAction ? props.getConnectionGeneration?.() : undefined
+  const usesPlugin = cmd.steps.some((step) => step?.type === 'plugin-action')
+  const generation = usesAction || usesPlugin ? props.getConnectionGeneration?.() : undefined
   const canContinue = (): boolean => props.enabled &&
     (generation === undefined || generation === props.getConnectionGeneration?.())
-  if (usesAction && props.runDeviceAction) await refreshDeviceProfiles()
-  const error = validatePlayback(cmd, props.runDeviceAction ? manualProfiles.value.map(({ id }) => id) : undefined)
+  await Promise.all([
+    usesAction && props.runDeviceAction ? refreshDeviceProfiles() : Promise.resolve(),
+    usesPlugin && props.runPluginAction ? refreshPluginActions() : Promise.resolve()
+  ])
+  const error = validatePlayback(
+    cmd,
+    props.runDeviceAction ? manualProfiles.value.map(({ id }) => id) : undefined,
+    props.runPluginAction ? pluginActions.value : undefined
+  )
   if (error) {
-    ElMessage.warning(usesAction && props.runDeviceAction && deviceConfigError.value ? deviceConfigError.value : error)
+    ElMessage.warning(usesPlugin && pluginConfigError.value ? pluginConfigError.value : usesAction && deviceConfigError.value ? deviceConfigError.value : error)
     return
   }
   if (!canContinue()) {
     ElMessage.warning('连接已变化，请重新运行快捷命令')
     return
   }
-  try { await playCmd(cmd, props.writer, canContinue, props.runDeviceAction) } catch (failure) {
+  try { await playCmd(cmd, props.writer, canContinue, props.runDeviceAction, props.runPluginAction) } catch (failure) {
     ElMessage.warning(failure instanceof Error ? failure.message : '快捷命令执行失败')
   }
 }
@@ -629,6 +678,7 @@ async function onImport(): Promise<void> {
           <el-button size="small" text :icon="Plus" @click="addStep('cmd')">命令</el-button>
           <el-button size="small" text :icon="Timer" @click="addStep('sleep')">延时</el-button>
           <el-button size="small" text :icon="EditPen" @click="addStep('key')">按键</el-button>
+          <el-button v-if="runPluginAction" size="small" text :icon="Plus" @click="addStep('plugin-action')">插件动作</el-button>
           <el-tooltip content="运行设备动作：解锁 / 授权等由部署配置定义的流程" placement="top">
             <el-button v-if="runDeviceAction" size="small" text :icon="Plus" @click="addStep('device-action')">设备动作</el-button>
           </el-tooltip>
@@ -662,6 +712,14 @@ async function onImport(): Promise<void> {
             />
             <span class="hint">ms</span>
           </template>
+          <template v-else-if="st.type === 'plugin-action'">
+            <el-tag size="small" effect="plain">插件动作</el-tag>
+            <el-select :model-value="selectedPluginAction(st)" size="small" class="step-input" placeholder="选择插件配置与动作" @change="(value: string) => selectPluginAction(st, value)">
+              <el-option v-if="selectedPluginAction(st) && !pluginActionAvailable(st)" :value="selectedPluginAction(st)" :label="(st.instanceId || '') + ' / ' + (st.actionId || '') + '（不可用）'" disabled />
+              <el-option v-for="action in pluginActions" :key="pluginActionKey(action.instanceId, action.actionId)" :value="pluginActionKey(action.instanceId, action.actionId)" :label="action.instanceLabel + ' · ' + action.label" />
+            </el-select>
+            <el-button link type="primary" size="small" @click="emit('request-plugin-config')">管理插件</el-button>
+          </template>
           <template v-else-if="st.type === 'device-action'">
             <el-tag size="small" effect="plain">{{ deviceActionLabel(st.profile) }}</el-tag>
             <el-select v-model="st.profile" size="small" class="step-input" placeholder="选择设备动作">
@@ -693,6 +751,7 @@ async function onImport(): Promise<void> {
         <div v-if="deviceConfigError && cmdDraft.steps.some((step) => step.type === 'device-action')" class="hint">
           {{ deviceConfigError }}
         </div>
+        <div v-if="pluginConfigError && cmdDraft.steps.some(step => step.type === 'plugin-action')" class="hint">{{ pluginConfigError }}</div>
         <div v-if="cmdDraft.steps.length === 0" class="hint" style="padding: 8px">
           尚无步骤：用上方「命令 / 延时 / 按键」按钮添加，或用录制按钮录下操作序列
         </div>

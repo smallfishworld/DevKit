@@ -101,7 +101,7 @@ function needsLogin(response: Response): boolean {
 function readPath(value: Record<string, unknown>, path: string): unknown {
   let current: unknown = value
   for (const key of path.split('.')) {
-    if (!current || typeof current !== 'object' || Array.isArray(current)) return undefined
+    if (!current || typeof current !== 'object' || Array.isArray(current) || !Object.hasOwn(current, key)) return undefined
     current = (current as Record<string, unknown>)[key]
   }
   return current
@@ -176,7 +176,7 @@ export function createDeviceActionProvider(
       void response.body?.cancel().catch(() => {})
       return true
     }
-    const status = (await readResponse(response))[config.authCheck.field]
+    const status = readPath(await readResponse(response), config.authCheck.field)
     if (typeof status !== 'boolean') throw new Error(`登录检查接口缺少 ${config.authCheck.field} 字段`)
     return status
   }

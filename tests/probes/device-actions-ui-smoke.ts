@@ -10,6 +10,7 @@ import { disposeAllPanels, registerService, registerToolIpc, setMainWindow } fro
 import { setSection } from '../../src/main/services/macro/configStore'
 import { quickCmdsService } from '../../src/main/services/quickcmds'
 import { SerialService } from '../../src/main/services/serial'
+import { PluginService } from '../../src/main/services/plugins'
 import { parseDeviceActionsConfig } from '../../src/main/services/serial/device-actions-config'
 import { createDeviceActionProvider } from '../../src/main/services/serial/device-actions-provider'
 import { settingsService } from '../../src/main/services/settings'
@@ -87,7 +88,7 @@ async function until<T>(check: () => T | Promise<T>, label: string): Promise<Non
 }
 
 async function main(): Promise<void> {
-  app.setPath('userData', process.argv[2])
+  app.setPath('userData', process.env.DEVKIT_SMOKE_USER_DATA ?? process.argv[2])
   await app.whenReady()
   const [loginOrigin, portalOrigin] = await Promise.all([listen(oa), listen(site)])
   authOrigin = loginOrigin
@@ -134,6 +135,9 @@ async function main(): Promise<void> {
   }
   await setSection('serial', { ...DEFAULT_SERIAL_CONFIG, last: { ...DEFAULT_SERIAL_PARAMS, path: portName } })
   registerService('serial', service)
+  registerService('plugins', new PluginService(service.pluginBridge, [service.oaPlugin], {
+    hostPath: join(process.cwd(), 'out/main/plugin-host.js')
+  }))
   registerService('settings', settingsService)
   registerService('quickcmds', quickCmdsService)
   registerToolIpc()
@@ -218,7 +222,7 @@ async function main(): Promise<void> {
   assert.equal(autoCount(), beforeAuto + 1)
 
   // 可视化配置：空目录 → 创建示例 → 保存落盘
-  const userData = process.argv[2]
+  const userData = process.env.DEVKIT_SMOKE_USER_DATA ?? process.argv[2]
   await until(() => click('.term-opts button', '设备动作'), '打开设备动作配置')
   await until(() => js(`[...document.querySelectorAll('.el-dialog__title')].some(x =>
     x.getClientRects().length && x.textContent.includes('设备动作配置'))`), '设备动作配置弹窗')

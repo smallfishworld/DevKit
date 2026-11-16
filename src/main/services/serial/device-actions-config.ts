@@ -137,13 +137,18 @@ function parseHold(value: unknown, trigger: DeviceActionTrigger): false | Device
   }
 }
 
+function fieldPath(value: unknown, label: string): string {
+  if (typeof value !== 'string' || !/^[A-Za-z0-9_$-]{1,64}(\.[A-Za-z0-9_$-]{1,64}){0,3}$/.test(value)) throw new Error(`${label} 无效`)
+  return value
+}
+
 function parseAuthCheck(value: unknown, allowLoopback: boolean): DeviceActionAuthCheck {
   const a = record(value)
   if (a.type === 'json') {
     return {
       type: 'json',
       url: urlField(a.url, 'authCheck.url', allowLoopback).href,
-      field: key(a.field ?? 'authenticated', 'authCheck.field')
+      field: fieldPath(a.field ?? 'authenticated', 'authCheck.field')
     }
   }
   if (a.type === 'http-ok') {

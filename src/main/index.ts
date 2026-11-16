@@ -14,6 +14,7 @@ import { codecService } from './services/codec'
 import { bridgeService } from './services/bridge'
 import { settingsService } from './services/settings'
 import { localTerminalService } from './services/localTerminal'
+import { PluginService } from './services/plugins'
 
 let mainWindow: BrowserWindow | null = null
 
@@ -104,6 +105,7 @@ app.whenReady().then(() => {
   registerService('tftp', tftpService)
   registerService('macro', macroService)
   registerService('serial', serialService)
+  registerService('plugins', new PluginService(serialService.pluginBridge, [serialService.oaPlugin]))
   registerService('ssh', sshService)
   registerService('local-terminal', localTerminalService)
   registerService('quickcmds', quickCmdsService)
