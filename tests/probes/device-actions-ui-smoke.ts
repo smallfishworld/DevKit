@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFile, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import type { Server } from 'node:http'
 import { join } from 'node:path'
@@ -16,6 +17,7 @@ import { DEFAULT_SERIAL_CONFIG, DEFAULT_SERIAL_PARAMS } from '../../src/shared/s
 
 const portName = 'COM-SMOKE'
 const challenge = 'SIM_CHALLENGE_47'
+const autoChallenge = 'QUJDREVGR0hJSktMTU5P='
 const responseCode = 'SIM_UNLOCK_8561'
 const sent: string[] = []
 let oaVisits = 0
@@ -53,7 +55,8 @@ const site = createServer(async (req, res) => {
     cookieSeen ||= authorized
     let body = ''
     for await (const chunk of req) body += chunk
-    if (!authorized || rejectNext || body !== JSON.stringify({ challenge })) {
+    if (!authorized || rejectNext ||
+      (body !== JSON.stringify({ challenge }) && body !== JSON.stringify({ challenge: autoChallenge }))) {
       res.writeHead(403).end('{}')
       return
     }
@@ -90,13 +93,29 @@ async function main(): Promise<void> {
   authOrigin = loginOrigin
   serviceOrigin = portalOrigin
   const config = parseDeviceActionsConfig({
-    loginUrl: `${serviceOrigin}/login`, statusUrl: `${serviceOrigin}/status`, issueUrl: `${serviceOrigin}/issue`,
-    authOrigins: [authOrigin], profiles: [{ id: 'fixture', label: '模拟 Release 设备',
-      challengePrefix: 'Challenge:', successLine: 'Debug unlocked', failureLine: 'Debug denied' }]
+    loginUrl: `${serviceOrigin}/login`,
+    authOrigins: [authOrigin],
+    authCheck: { type: 'json', url: `${serviceOrigin}/status`, field: 'authenticated' },
+    issue: {
+      url: `${serviceOrigin}/issue`, body: { challenge: '$challenge' }, responsePath: 'response',
+      retryLoginOnce: false
+    },
+    profiles: [{
+      id: 'fixture', label: '模拟 Release 设备',
+      detect: { type: 'prefix', prefix: 'Challenge:' },
+      result: { type: 'line', successLine: 'Debug unlocked', failureLine: 'Debug denied' },
+      command: 'debug'
+    }, {
+      id: 'auto-fixture', label: '模拟自动应答设备', trigger: 'auto', triggerWords: ['debug'],
+      detect: { type: 'base64-line' },
+      result: { type: 'prompt-repeat', decisionDelayMs: 150, silenceMs: 3000 },
+      holdInput: { maxBytes: 4096, maxMs: 5000 }
+    }]
   }, true)
   const service = new SerialService(async () => createDeviceActionProvider(config))
   const simulated = SerialPort as unknown as {
     list: () => Promise<unknown[]>
+    ports: Array<{ emit: (name: string, data: Buffer) => void }>
     prototype: { write: (this: { emit: (name: string, data: Buffer) => void }, bytes: Buffer, done?: () => void) => void }
   }
   simulated.list = async () => [{ path: portName, friendlyName: 'Device action fixture' }]
@@ -174,11 +193,51 @@ async function main(): Promise<void> {
   rejectNext = true
   await until(play, '运行被拒绝的快捷命令')
   await until(() => issueRequests === 3, '接口拒绝请求')
-  await until(() => js(`document.body.textContent.includes('取码接口拒绝请求')`), '界面显示拒绝')
+  await until(() => js(`document.body.textContent.includes('登录已失效')`), '界面显示登录失效')
   assert.equal(versionCount(), 2)
   assert.equal(sent.at(-1), 'debug\r')
   assert.equal(await js(`document.body.textContent.includes(${JSON.stringify(responseCode)})`), false)
-  console.log('PASS Electron UI: create macro, OA login, same-session Cookie reuse, serial confirmation and 403 stops playback')
+
+  rejectNext = false
+  const port = simulated.ports.at(-1)!
+  const autoCount = () => sent.filter((text) => text === `${responseCode}\r`).length
+  const beforeAuto = autoCount()
+  await until(() => click('.el-checkbox', '自动应答'), '勾选自动应答')
+  await delay(500)
+  port.emit('data', Buffer.from('debug\r\n'))
+  port.emit('data', Buffer.from(`${autoChallenge}\r\n`))
+  await until(() => autoCount() === beforeAuto + 1, '自动应答注入口令')
+  await until(() => js(`document.body.textContent.includes('设备动作成功')`), '自动应答成功提示')
+  assert.equal(versionCount(), 2)
+  assert.equal(await js(`document.body.textContent.includes(${JSON.stringify(responseCode)})`), false)
+
+  await until(() => click('.el-checkbox', '自动应答'), '取消自动应答')
+  await delay(300)
+  port.emit('data', Buffer.from(`${autoChallenge}\r\n`))
+  await delay(500)
+  assert.equal(autoCount(), beforeAuto + 1)
+
+  // 可视化配置：空目录 → 创建示例 → 保存落盘
+  const userData = process.argv[2]
+  await until(() => click('.term-opts button', '设备动作'), '打开设备动作配置')
+  await until(() => js(`[...document.querySelectorAll('.el-dialog__title')].some(x =>
+    x.getClientRects().length && x.textContent.includes('设备动作配置'))`), '设备动作配置弹窗')
+  await until(() => click('button', '创建示例配置'), '创建示例配置')
+  await until(() => click('button', '保存'), '保存设备动作配置')
+  await until(() => js(`document.body.textContent.includes('设备动作配置已保存')`), '保存成功提示')
+  const saved = JSON.parse(await readFile(join(userData, 'device-actions.json'), 'utf8'))
+  assert.equal(saved.loginUrl, 'https://oa.example.com/login')
+  assert.equal(saved.profiles.length, 2)
+  await until(() => click('button', '关闭'), '关闭设备动作配置')
+
+  // 配置损坏时仍可在弹窗内直接修复
+  await writeFile(join(userData, 'device-actions.json'), '{ broken', 'utf8')
+  await until(() => click('.term-opts button', '设备动作'), '重新打开设备动作配置')
+  await until(() => js(`document.body.textContent.includes('原配置文件无法解析')`), '损坏配置提示')
+  await until(() => js(`[...document.querySelectorAll('textarea')].some(x =>
+    x.getClientRects().length && x.value === '{ broken')`), '损坏内容可直接编辑')
+  await until(() => click('button', '关闭'), '关闭配置修复视图')
+  console.log('PASS Electron UI: create macro, OA login, same-session Cookie reuse, serial confirmation, login-expiry stops playback, auto answer only while armed, visual config saves and repairs')
 }
 
 void main().then(() => 0, (error: unknown) => { console.error(error); return 1 }).then(async (status) => {

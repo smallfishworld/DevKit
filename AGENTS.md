@@ -59,6 +59,7 @@
 | `tests/bridge-test.js` | 串口TCP桥接协议（bridge-protocol.ts：Telnet IAC 状态机 / JSON 行协议 / 身份派生） |
 | `tests/theme-test.js` / `tests/local-terminal-test.js` | 终端主题 / 本地终端 shell profile |
 | `tests/terminal-test.js` / `tests/terminal-services-test.js` | 终端流控（terminal-stream.ts：LogFormatter / OutputWindow ACK 背压）与磁盘历史（SessionHistory 积压背压 / 失败上报） |
+| `tests/device-action-match-test.js` / `tests/device-config-store-test.js` / `tests/device-actions-test.js` | 设备动作匹配（挑战码/结果/触发词）、配置存储与校验、OA 会话、手动流程与自动应答扣键补发（`npm run test:device-actions-smoke` 为 Electron UI 冒烟） |
 
 ## 打包与发布流程（走 GitHub CI，不在本机构建上传）
 

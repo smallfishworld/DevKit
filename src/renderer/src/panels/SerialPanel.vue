@@ -12,10 +12,12 @@ import {
   Plus,
   Refresh,
   Search,
+  Setting,
   UploadFilled
 } from '@element-plus/icons-vue'
 import TerminalView from '@renderer/components/TerminalView.vue'
 import TerminalHistory from '@renderer/components/TerminalHistory.vue'
+import DeviceActionsManager from '@renderer/components/DeviceActionsManager.vue'
 import { useTerminalStream } from '../composables/useTerminalStream'
 import { ByteCounterThrottle } from '../../../shared/terminal-stream'
 import QuickCmdManager from '@renderer/components/QuickCmdManager.vue'
@@ -72,6 +74,22 @@ const actionStage = ref('')
 const stageLabels: Record<string, string> = {
   checking: '检查内网登录', login: '等待 OA 登录', challenge: '等待设备挑战码',
   issue: '获取授权口令', verify: '等待设备确认结果'
+}
+/** 自动应答（device-actions.json 中 trigger=auto）：用户意图与实际挂载状态分开 */
+const autoStage = ref('')
+const autoArmed = ref(false)
+const autoIntent = ref(false)
+const autoProfiles = ref<{ id: string; label: string; actionLabel?: string }[]>([])
+/** 设备动作可视化配置弹窗 */
+const deviceConfigOpen = ref(false)
+/** 打开时落在哪个页签：从快捷命令的「去添加」进入时直接看动作列表 */
+const deviceConfigInitialTab = ref<'global' | 'profiles'>('global')
+/** 配置保存后自增，通知快捷命令编辑器重新读取可选设备动作 */
+const deviceConfigVersion = ref(0)
+
+function openDeviceConfig(tab: 'global' | 'profiles' = 'global'): void {
+  deviceConfigInitialTab.value = tab
+  deviceConfigOpen.value = true
 }
 
 // ---------- 终端（TerminalView 共享组件：xterm.js 封装） ----------
@@ -169,7 +187,11 @@ function macroWriter(st: QuickCmdStep): void {
   else writeCmd(st.text ?? '', 'ascii', st.crlf ? 'crlf' : 'none')
 }
 
-async function getDeviceProfiles(): Promise<{ profiles: { id: string; label: string; actionLabel?: string }[]; error?: string }> {
+async function getDeviceProfiles(): Promise<{
+  profiles: { id: string; label: string; actionLabel?: string; trigger?: 'manual' | 'auto' }[]
+  armed?: boolean
+  error?: string
+}> {
   return await window.api.invoke('serial', 'action:profiles', props.panelId) as Awaited<ReturnType<typeof getDeviceProfiles>>
 }
 
@@ -188,6 +210,46 @@ async function runDeviceAction(profile: string): Promise<void> {
 
 function cancelDeviceAction(): void {
   void window.api.invoke('serial', 'action:cancel', props.panelId).catch(() => ElMessage.warning('无法取消设备动作'))
+}
+
+/** 读取自动应答配置与实际挂载状态（挂载状态用于面板重新渲染后恢复开关） */
+async function refreshAutoProfiles(): Promise<void> {
+  try {
+    const result = await getDeviceProfiles()
+    autoProfiles.value = (result.profiles ?? [])
+      .filter((profile) => profile.trigger === 'auto')
+      .map(({ id, label, actionLabel }) => ({ id, label, actionLabel }))
+    autoArmed.value = result.armed === true
+    if (autoArmed.value) autoIntent.value = true
+  } catch {
+    autoProfiles.value = []
+    autoArmed.value = false
+  }
+}
+
+/** 配置保存后：刷新动作列表；原本开着自动应答且主进程已解除布防时重新挂载。 */
+function onDeviceConfigSaved(): void {
+  deviceConfigVersion.value++
+  void refreshAutoProfiles().then(() => {
+    if (autoIntent.value && !autoArmed.value) void setAutoWatch(true)
+  })
+}
+
+async function setAutoWatch(enabled: boolean): Promise<void> {
+  autoIntent.value = enabled
+  try {
+    const result = await window.api.invoke('serial', 'action:watch', props.panelId, { enabled }) as {
+      ok: boolean
+      error?: string
+    }
+    if (!result.ok) throw new Error(result.error ?? '无法开启自动应答')
+    autoArmed.value = enabled
+    if (enabled) ElMessage.success('自动应答已开启')
+  } catch (error) {
+    autoIntent.value = !enabled
+    autoArmed.value = false
+    ElMessage.warning(error instanceof Error ? error.message : '无法切换自动应答')
+  }
 }
 
 // ---------- 文件传输（YMODEM / ZMODEM） ----------
@@ -318,8 +380,15 @@ onMounted(async () => {
         dtrOn.value = false
         rtsOn.value = false
         signals.value = null
+        autoStage.value = ''
+        autoArmed.value = false
         stopSignalPoll()
         if (s.error) ElMessage.error(`串口已断开：${s.error}`)
+      } else {
+        // 重连后恢复用户此前开启的自动应答（主进程会话是新建的）
+        void refreshAutoProfiles().then(() => {
+          if (autoIntent.value && !autoArmed.value) void setAutoWatch(true)
+        })
       }
     }),
     window.api.on('serial', props.panelId, 'error', (p) => {
@@ -328,6 +397,24 @@ onMounted(async () => {
     window.api.on('serial', props.panelId, 'action:stage', (p) => {
       const label = stageLabels[(p as { stage: string }).stage]
       if (actionStage.value && label) actionStage.value = label
+    }),
+    window.api.on('serial', props.panelId, 'action:state', (p) => {
+      const state = p as {
+        armed?: boolean; running?: boolean; stage?: string; ok?: boolean; error?: string
+      }
+      if (typeof state.armed === 'boolean') {
+        autoArmed.value = state.armed
+        if (!state.running) autoStage.value = ''
+        return
+      }
+      if (state.running) {
+        const label = state.stage ? stageLabels[state.stage] : ''
+        if (label) autoStage.value = label
+        return
+      }
+      autoStage.value = ''
+      if (state.ok) ElMessage.success('设备动作成功')
+      else if (state.error) ElMessage.warning(state.error)
     }),
     window.api.on('serial', props.panelId, 'transfer', onTransferEvt)
   )
@@ -348,6 +435,7 @@ onMounted(async () => {
   sidebarHidden.value = config.value.sidebarHidden === true
   termView.value?.info('就绪。选择串口后点击「打开」，终端内可直接输入命令。')
   await refreshPorts()
+  await refreshAutoProfiles()
 })
 
 onUnmounted(() => {
@@ -692,8 +780,8 @@ async function deleteSession(idx: number): Promise<void> {
             暂无会话。配置好参数后输入名称保存。
           </div>
 
-          <div v-if="actionStage" role="status">
-            {{ actionStage }}
+          <div v-if="actionStage || autoStage" role="status">
+            {{ actionStage || autoStage }}
             <el-button size="small" text @click="cancelDeviceAction">取消动作</el-button>
           </div>
           <QuickCmdManager
@@ -702,6 +790,8 @@ async function deleteSession(idx: number): Promise<void> {
             :run-device-action="runDeviceAction"
             :get-device-profiles="getDeviceProfiles"
             :get-connection-generation="() => connectionGeneration"
+            :device-config-version="deviceConfigVersion"
+            @request-device-config="openDeviceConfig('profiles')"
           />
         </div>
 
@@ -753,6 +843,24 @@ async function deleteSession(idx: number): Promise<void> {
               <el-option value="utf8" label="UTF-8" />
               <el-option value="gbk" label="GBK" />
             </el-select>
+          </el-tooltip>
+          <el-button
+            size="small"
+            text
+            :icon="Setting"
+            title="可视化编辑设备动作配置（OA 登录、取码接口、挑战码与结果判定）"
+            @click="openDeviceConfig('global')"
+          >
+            设备动作
+          </el-button>
+          <el-tooltip
+            v-if="autoProfiles.length"
+            :content="`设备输出出现特征码时自动取口令并注入：${autoProfiles.map((profile) => profile.label).join('、')}`"
+            placement="top"
+          >
+            <el-checkbox v-model="autoIntent" size="small" :disabled="!open" @change="(value: boolean) => setAutoWatch(value)">
+              自动应答
+            </el-checkbox>
           </el-tooltip>
           <el-button size="small" text :icon="Search" title="查找（Ctrl+F）" @click="openTermSearch">查找</el-button>
         <TerminalHistory tool="serial" :panel-id="props.panelId" />
@@ -812,7 +920,7 @@ async function deleteSession(idx: number): Promise<void> {
           ref="termView"
           v-model:font-size="termFontSize"
           :font="termFont"
-          :local-echo="localEcho && !actionStage"
+          :local-echo="localEcho && !actionStage && !autoStage"
           :show-time="showTime"
           :guard-scrollback="true"
           :history-panel-id="props.panelId"
@@ -942,6 +1050,13 @@ async function deleteSession(idx: number): Promise<void> {
         <el-button :disabled="!transferring" @click="cancelTransfer">取消传输</el-button>
       </template>
     </el-dialog>
+
+    <DeviceActionsManager
+      v-model:visible="deviceConfigOpen"
+      :panel-id="props.panelId"
+      :initial-tab="deviceConfigInitialTab"
+      @saved="onDeviceConfigSaved"
+    />
   </div>
 </template>
 

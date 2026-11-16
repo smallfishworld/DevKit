@@ -18,7 +18,11 @@ import { zmodemRecv, zmodemSend } from './zmodem'
 import { TerminalRuntime } from '../terminal/runtime'
 import { fmtDuration, txAuditLine } from '../../../shared/logtext'
 import { DeviceActionLines, runDeviceAction, SerialSecretRedactor } from './device-actions'
-import type { DeviceActionResult, DeviceActionStage } from './device-actions'
+import type { DeviceActionResult, DeviceActionStage, WaitVerdictInput } from './device-actions'
+import { isTriggerWord, matchChallengeLine } from './device-action-match'
+import { parseDeviceActionsConfig } from './device-actions-config'
+import type { DeviceActionHold, DeviceActionProfile } from './device-actions-config'
+import { deviceActionsFilePath, readDeviceActionsFile, writeDeviceActionsFile } from './device-actions-store'
 import { loadDeviceActionProvider } from './device-actions-provider'
 import type { DeviceActionProvider } from './device-actions-provider'
 
@@ -61,6 +65,20 @@ interface SerialSession {
     controller: AbortController
     locked: boolean
     receive?: (text: string, receivedAt: number) => void
+  }
+  /** 自动应答监听：串口输出持续喂给行匹配器，命中特征码即发起动作 */
+  watch?: {
+    provider: DeviceActionProvider
+    profiles: DeviceActionProfile[]
+    lines: DeviceActionLines
+    busy: boolean
+  }
+  /** 自动应答期间的输入保持：判定接受才回放，拒绝/超时丢弃 */
+  hold?: {
+    chunks: { buf: Buffer; audit: string }[]
+    bytes: number
+    maxBytes: number
+    timer: NodeJS.Timeout
   }
   secrets?: SerialSecretRedactor
 }
@@ -165,6 +183,7 @@ export class SerialService implements ToolService {
     for (const piece of pieces) {
       const text = s.decoder.write(piece.buf)
       if (!text) continue
+      if (s.watch) this.watchLines(panelId, s, text, piece.time)
       s.action?.receive?.(text, piece.time)
       if (s.secrets) s.secrets.push(text, piece.time, (part, receivedAt) => decoded.push({ text: part, receivedAt }))
       else decoded.push({ text, receivedAt: piece.time })
@@ -189,13 +208,26 @@ export class SerialService implements ToolService {
     switch (action) {
       case 'action:profiles':
         return this.actionProvider().then(({ config }) => ({
-          profiles: config.profiles.map(({ id, label }) => ({ id, label }))
-        })).catch((error: Error) => ({ profiles: [], error: error.message }))
+          profiles: config.profiles.map(({ id, label, actionLabel, trigger }) => ({
+            id, label, actionLabel, trigger
+          })),
+          armed: !!sessions.get(panelId)?.watch
+        })).catch((error: Error) => ({ profiles: [], armed: false, error: error.message }))
+      case 'action:watch':
+        return this.setWatch(panelId, (payload as { enabled?: unknown } | undefined)?.enabled === true)
       case 'action:run':
         return this.startDeviceAction(panelId, (payload as { profile?: unknown } | undefined)?.profile)
       case 'action:cancel':
         sessions.get(panelId)?.action?.controller.abort(new Error('已取消设备动作'))
         return true
+      case 'device-config:info':
+        return readDeviceActionsFile(app.getPath('userData'))
+      case 'device-config:validate':
+        return this.validateDeviceConfig((payload as { config?: unknown } | undefined)?.config)
+      case 'device-config:save':
+        return this.saveDeviceConfig((payload as { config?: unknown } | undefined)?.config)
+      case 'device-config:open-dir':
+        return this.openDeviceConfigDir()
       case 'view:visible':
         this.viewVisible.set(panelId, Boolean((payload as { visible: boolean }).visible))
         this.applyViewVisibility(panelId)
@@ -292,6 +324,7 @@ export class SerialService implements ToolService {
     const now = Date.now()
     for (const [panelId, s] of sessions) {
       s.action?.controller.abort(new Error('系统进入休眠，设备动作已终止'))
+      this.releaseHold(panelId, s, false)
       // Flush already received bytes before the sleep marker, otherwise a pending
       // 32 ms batch can appear *after* the suspend timestamp in the disk log.
       if (s.flushTimer) { clearTimeout(s.flushTimer); s.flushTimer = null }
@@ -454,6 +487,8 @@ export class SerialService implements ToolService {
     const s = sessions.get(panelId)
     if (!s) return { ok: true }
     s.action?.controller.abort(new Error('串口已断开，设备动作已终止'))
+    delete s.watch
+    this.releaseHold(panelId, s, false)
     if (s.flushTimer) clearTimeout(s.flushTimer)
     s.flushTimer = null
     this.flush(panelId)
@@ -480,10 +515,11 @@ export class SerialService implements ToolService {
   private write(
     panelId: string,
     p: { mode: 'ascii' | 'hex'; text: string; newline: 'none' | 'crlf' | 'lf' | 'cr' }
-  ): { ok: boolean; error?: string; bytes?: number } {
+  ): { ok: boolean; error?: string; bytes?: number; held?: boolean } {
     const s = sessions.get(panelId)
     if (!s) return { ok: false, error: '串口未打开' }
-    if (s.action?.locked) return { ok: false, error: '设备动作正在使用此串口' }
+    // 自动应答的输入保持优先于动作锁：先扣住用户按键，等判定结果再回放/丢弃
+    if (!s.hold && s.action?.locked) return { ok: false, error: '设备动作正在使用此串口' }
     // 与渲染端相同的组包规则（主进程兜底解析）
     const nl = p.newline === 'crlf' ? '\r\n' : p.newline === 'lf' ? '\n' : p.newline === 'cr' ? '\r' : ''
     let buf: Buffer
@@ -497,11 +533,12 @@ export class SerialService implements ToolService {
       buf = s.encoding === 'gbk' ? iconv.encode(p.text + nl, 'gbk') : Buffer.from(p.text + nl, 'utf8')
     }
     if (buf.length === 0) return { ok: false, error: '发送内容为空' }
-    s.port.write(buf)
     // HEX 发送按字节审计记录（二进制过 toString('utf8') 会把 0x1b 当 ANSI 剥掉、非法字节变 U+FFFD）
     // ASCII 发送记录解码前文本（buf 可能是 GBK 编码，toString('utf8') 会乱码；hex 模式不存在多字节问题）；
     // txAuditLine 把控制字符转成可见字面量：一次发送 = 一行日志（否则正文里的 \r 会被换行归一拆成幻影空行）
     const auditText = p.mode === 'hex' ? buf.toString('hex').replace(/../g, '$& ').trim() : txAuditLine(p.text + nl)
+    if (s.hold) return this.holdWrite(s, buf, auditText)
+    s.port.write(buf)
     this.recordWrite(panelId, s, buf.length, auditText)
     return { ok: true, bytes: buf.length }
   }
@@ -518,7 +555,152 @@ export class SerialService implements ToolService {
     })
   }
 
+  private validateDeviceConfig(value: unknown): { ok: boolean; config?: unknown; error?: string } {
+    if (value === undefined) return { ok: false, error: '缺少配置内容' }
+    try {
+      return { ok: true, config: parseDeviceActionsConfig(value) }
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : '设备动作配置无效' }
+    }
+  }
+
+  /** 可视化编辑器保存：校验通过后原子写入，并刷新已布防的自动应答。 */
+  private async saveDeviceConfig(value: unknown): Promise<{ ok: boolean; path?: string; error?: string }> {
+    if (value === undefined) return { ok: false, error: '缺少配置内容' }
+    const result = await writeDeviceActionsFile(value, app.getPath('userData'))
+    if (!result.ok) return result
+    await this.refreshWatches()
+    return { ok: true, path: result.path }
+  }
+
+  private async openDeviceConfigDir(): Promise<{ ok: boolean; path?: string; error?: string }> {
+    const dir = app.getPath('userData')
+    const error = await shell.openPath(dir)
+    return error ? { ok: false, error } : { ok: true, path: deviceActionsFilePath(dir) }
+  }
+
+  /** 配置变更后让已布防的面板立即使用新配置；没有 auto 档或配置失效则自动解除。 */
+  private async refreshWatches(): Promise<void> {
+    const armed = [...sessions].filter(([, session]) => session.watch)
+    if (!armed.length) return
+    let provider: DeviceActionProvider | undefined
+    let error = ''
+    try {
+      provider = await this.actionProvider()
+    } catch (cause) {
+      error = cause instanceof Error ? cause.message : '无法读取设备动作配置'
+    }
+    for (const [panelId, session] of armed) {
+      const watch = session.watch
+      if (!watch) continue
+      const profiles = provider?.config.profiles.filter((profile) => profile.trigger === 'auto') ?? []
+      if (!provider || !profiles.length) {
+        delete session.watch
+        this.releaseHold(panelId, session, false)
+        this.emit(panelId, 'action:state', { source: 'auto', armed: false, running: false, error })
+        continue
+      }
+      session.watch = { provider, profiles, lines: new DeviceActionLines(), busy: watch.busy }
+      this.emit(panelId, 'action:state', {
+        source: 'auto', armed: true, running: watch.busy,
+        profiles: profiles.map(({ id, label, actionLabel }) => ({ id, label, actionLabel }))
+      })
+    }
+  }
+
+  /** 开/关自动应答监听。enabled 时加载配置并只保留 trigger=auto 的动作。 */
+  private async setWatch(panelId: string, enabled: boolean): Promise<{ ok: boolean; error?: string }> {
+    const s = sessions.get(panelId)
+    if (!s?.port.isOpen) return { ok: false, error: '串口未打开' }
+    if (!enabled) {
+      delete s.watch
+      this.releaseHold(panelId, s, false)
+      this.emit(panelId, 'action:state', { source: 'auto', armed: false, running: false })
+      return { ok: true }
+    }
+    try {
+      const provider = await this.actionProvider()
+      const profiles = provider.config.profiles.filter((profile) => profile.trigger === 'auto')
+      if (!profiles.length) return { ok: false, error: 'device-actions.json 没有 trigger 为 auto 的设备动作' }
+      s.watch = { provider, profiles, lines: new DeviceActionLines(), busy: false }
+      this.emit(panelId, 'action:state', {
+        source: 'auto', armed: true, running: false,
+        profiles: profiles.map(({ id, label, actionLabel }) => ({ id, label, actionLabel }))
+      })
+      return { ok: true }
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : '无法读取设备动作配置' }
+    }
+  }
+
+  /** 自动应答：把完整行喂给配置里的匹配器；命中即发起一次动作。 */
+  private watchLines(panelId: string, s: SerialSession, text: string, receivedAt: number): void {
+    const watch = s.watch
+    if (!watch) return
+    watch.lines.push(text, (line) => {
+      if (sessions.get(panelId) !== s) return true
+      if (watch.busy || s.action || transfers.has(panelId)) return false
+      // 输入回显命中触发词时先扣住按键，防止用户在口令提示处多按回车
+      for (const profile of watch.profiles) {
+        if (isTriggerWord(line, profile.triggerWords)) this.beginHold(s, profile.holdInput)
+      }
+      for (const profile of watch.profiles) {
+        let challenge: string | undefined
+        try { challenge = matchChallengeLine(profile.detect, line) } catch { continue }
+        if (!challenge) continue
+        this.beginHold(s, profile.holdInput)
+        watch.busy = true
+        void this.runAutoAction(panelId, s, watch.provider, profile, challenge, receivedAt).finally(() => {
+          if (s.watch === watch) watch.busy = false
+        })
+        return true
+      }
+      return false
+    })
+  }
+
+  private async runAutoAction(
+    panelId: string, s: SerialSession, provider: DeviceActionProvider,
+    profile: DeviceActionProfile, challenge: string, receivedAt: number
+  ): Promise<void> {
+    let ok = false
+    try {
+      const result = await this.runAction(panelId, provider, profile, {
+        source: 'auto', challenge: { value: challenge, receivedAt }
+      })
+      ok = result.ok
+      this.emit(panelId, 'action:state', {
+        source: 'auto', running: false, profileId: profile.id,
+        ok, error: result.ok ? undefined : result.error
+      })
+    } catch (error) {
+      this.emit(panelId, 'action:state', {
+        source: 'auto', running: false, profileId: profile.id,
+        ok: false, error: error instanceof Error ? error.message : '设备动作失败'
+      })
+    } finally {
+      this.releaseHold(panelId, s, ok)
+    }
+  }
+
   private async startDeviceAction(panelId: string, profileId: unknown): Promise<DeviceActionResult> {
+    let provider: DeviceActionProvider
+    let profile: DeviceActionProfile | undefined
+    try {
+      provider = await this.actionProvider()
+      profile = provider.config.profiles.find(({ id }) => id === profileId)
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : '无法读取设备动作配置' }
+    }
+    if (!profile) return { ok: false, error: '找不到此设备动作的配置' }
+    if (profile.trigger === 'auto') return { ok: false, error: '该设备动作配置为自动应答，不通过快捷命令执行' }
+    return this.runAction(panelId, provider, profile, { source: 'manual' })
+  }
+
+  private async runAction(
+    panelId: string, provider: DeviceActionProvider, profile: DeviceActionProfile,
+    options: { source: 'manual' | 'auto'; challenge?: { value: string; receivedAt: number } }
+  ): Promise<DeviceActionResult> {
     const s = sessions.get(panelId)
     if (!s?.port.isOpen) return { ok: false, error: '串口未打开' }
     if (s.action || transfers.has(panelId)) return { ok: false, error: '该串口有设备动作或文件传输正在运行' }
@@ -526,7 +708,10 @@ export class SerialService implements ToolService {
     s.action = task
     const signal = task.controller.signal
     let responseSent = false
-    const setStage = (stage: DeviceActionStage): void => this.emit(panelId, 'action:stage', { stage })
+    const setStage = (stage: DeviceActionStage): void => {
+      if (options.source === 'manual') this.emit(panelId, 'action:stage', { stage })
+      else this.emit(panelId, 'action:state', { source: 'auto', running: true, stage, profileId: profile.id })
+    }
     function checkConnection(): void {
       signal.throwIfAborted()
       if (sessions.get(panelId) !== s || !s?.port.isOpen) throw new Error('串口连接已变化')
@@ -534,61 +719,108 @@ export class SerialService implements ToolService {
 
     try {
       setStage('checking')
-      const provider = await this.actionProvider()
-      const profile = provider.config.profiles.find(({ id }) => id === profileId)
-      if (!profile) throw new Error('找不到此设备动作的配置')
       checkConnection()
-      await runDeviceAction(provider, profile, signal, () => {
-        checkConnection()
-        if (transfers.has(panelId)) throw new Error('已有文件传输进行中')
-        task.locked = true
-      }, async (text, secret, timeoutMs, match) => {
-        checkConnection()
-        // Consume queued output before installing the matcher. Only new RX can satisfy it.
-        this.flush(panelId)
-        const lines = new DeviceActionLines()
-        const bytes = Buffer.from(text, 'ascii')
-        if (secret) {
+      await runDeviceAction(provider, profile, {
+        signal,
+        challenge: options.challenge,
+        setStage,
+        lock: () => {
+          checkConnection()
+          if (transfers.has(panelId)) throw new Error('已有文件传输进行中')
+          task.locked = true
+        },
+        exchange: async (text, secret, timeoutMs, match) => {
+          checkConnection()
+          // Consume queued output before installing the matcher. Only new RX can satisfy it.
+          this.flush(panelId)
+          const lines = new DeviceActionLines()
+          const bytes = Buffer.from(text, 'ascii')
+          if (secret) {
+            s.secrets ??= new SerialSecretRedactor()
+            s.secrets.add(text.trimEnd())
+          }
+          return await new Promise((resolve, reject) => {
+            let settled = false
+            const onAbort = (): void => finish(signal.reason)
+            const timer = setTimeout(() => finish(new Error(secret
+              ? '口令已发送，未收到设备的明确结果'
+              : '等待设备挑战码超时')), timeoutMs)
+            function finish(error?: Error, result?: { value: string; receivedAt: number }): void {
+              if (settled) return
+              settled = true
+              clearTimeout(timer)
+              signal.removeEventListener('abort', onAbort)
+              task.receive = undefined
+              if (result) resolve(result)
+              else reject(error)
+            }
+            signal.addEventListener('abort', onAbort, { once: true })
+            task.receive = (data, receivedAt) => {
+              lines.push(data, (line) => {
+                try {
+                  const value = match(line)
+                  if (!value) return false
+                  finish(undefined, { value, receivedAt })
+                } catch (error) { finish(error as Error) }
+                return true
+              })
+            }
+            try {
+              s.port.write(bytes, (error) => {
+                if (error) finish(new Error(secret ? '口令写入异常，设备结果未确认' : '发送设备动作命令失败'))
+              })
+              responseSent ||= secret
+              this.recordWrite(panelId, s, bytes.length, secret ? '[设备动作口令已隐藏]' : txAuditLine(text))
+            } catch {
+              finish(new Error(secret ? '口令写入异常，设备结果未确认' : '发送设备动作命令失败'))
+            }
+          })
+        },
+        waitVerdict: async (input: WaitVerdictInput) => {
+          checkConnection()
+          // 丢弃注入前已排队输出，避免把旧的 Password: 提示当成拒绝
+          this.flush(panelId)
+          const lines = new DeviceActionLines()
+          const bytes = Buffer.from(input.reply, 'ascii')
           s.secrets ??= new SerialSecretRedactor()
-          s.secrets.add(text.trimEnd())
+          s.secrets.add(input.reply.trimEnd())
+          return await new Promise<'accepted' | 'rejected'>((resolve, reject) => {
+            let settled = false
+            let decision: NodeJS.Timeout | null = null
+            const onAbort = (): void => finish(signal.reason instanceof Error
+              ? signal.reason : new Error('设备动作已终止'))
+            const timer = setTimeout(() => finish('accepted'), input.timeoutMs)
+            function finish(verdict?: 'accepted' | 'rejected' | Error): void {
+              if (settled) return
+              settled = true
+              clearTimeout(timer)
+              if (decision) clearTimeout(decision)
+              signal.removeEventListener('abort', onAbort)
+              task.receive = undefined
+              if (verdict instanceof Error) reject(verdict)
+              else resolve(verdict ?? 'accepted')
+            }
+            signal.addEventListener('abort', onAbort, { once: true })
+            task.receive = (data) => {
+              lines.push(data, (line) => {
+                if (input.isReject(line)) { finish('rejected'); return true }
+                // 首个非重提示输出后留一个观察窗，等可能被拆开的提示行
+                if (!decision) decision = setTimeout(() => finish('accepted'), input.decisionDelayMs)
+                return false
+              })
+            }
+            try {
+              s.port.write(bytes, (error) => {
+                if (error) finish(new Error('口令写入异常，设备结果未确认'))
+              })
+              responseSent = true
+              this.recordWrite(panelId, s, bytes.length, '[设备动作口令已隐藏]')
+            } catch {
+              finish(new Error('口令写入异常，设备结果未确认'))
+            }
+          })
         }
-        return await new Promise((resolve, reject) => {
-          let settled = false
-          const onAbort = (): void => finish(signal.reason)
-          const timer = setTimeout(() => finish(new Error(secret
-            ? '口令已发送，未收到设备的明确结果'
-            : '等待设备挑战码超时')), timeoutMs)
-          function finish(error?: Error, result?: { value: string; receivedAt: number }): void {
-            if (settled) return
-            settled = true
-            clearTimeout(timer)
-            signal.removeEventListener('abort', onAbort)
-            task.receive = undefined
-            if (result) resolve(result)
-            else reject(error)
-          }
-          signal.addEventListener('abort', onAbort, { once: true })
-          task.receive = (data, receivedAt) => {
-            lines.push(data, (line) => {
-              try {
-                const value = match(line)
-                if (!value) return false
-                finish(undefined, { value, receivedAt })
-              } catch (error) { finish(error as Error) }
-              return true
-            })
-          }
-          try {
-            s.port.write(bytes, (error) => {
-              if (error) finish(new Error(secret ? '口令写入异常，设备结果未确认' : '发送设备动作命令失败'))
-            })
-            responseSent ||= secret
-            this.recordWrite(panelId, s, bytes.length, secret ? '[设备动作口令已隐藏]' : txAuditLine(text))
-          } catch {
-            finish(new Error(secret ? '口令写入异常，设备结果未确认' : '发送设备动作命令失败'))
-          }
-        })
-      }, setStage)
+      })
       checkConnection()
       this.runtime.note(panelId, '[DevKit] 设备动作成功')
       return { ok: true }
@@ -600,6 +832,42 @@ export class SerialService implements ToolService {
       return { ok: false, error: error instanceof Error ? error.message : '设备动作失败' }
     } finally {
       if (s.action === task) s.action = undefined
+    }
+  }
+
+  /** 自动应答开始前扣住用户输入；15s 兜底丢弃，绝不把未知内容送进口令提示。 */
+  private beginHold(s: SerialSession, config: false | DeviceActionHold): void {
+    if (!config || s.hold) return
+    const hold: NonNullable<SerialSession['hold']> = {
+      chunks: [], bytes: 0, maxBytes: config.maxBytes,
+      timer: setTimeout(() => {
+        if (s.hold === hold) s.hold = undefined
+      }, config.maxMs)
+    }
+    s.hold = hold
+  }
+
+  private holdWrite(s: SerialSession, buf: Buffer, audit: string): { ok: true; bytes: number; held: true } {
+    const hold = s.hold!
+    hold.chunks.push({ buf, audit })
+    hold.bytes += buf.length
+    while (hold.bytes > hold.maxBytes && hold.chunks.length) {
+      hold.bytes -= hold.chunks.shift()!.buf.length
+    }
+    return { ok: true, bytes: buf.length, held: true }
+  }
+
+  /** 判定接受才回放；拒绝/超时/断开一律丢弃。 */
+  private releaseHold(panelId: string, s: SerialSession, replay: boolean): void {
+    const hold = s.hold
+    if (!hold) return
+    s.hold = undefined
+    clearTimeout(hold.timer)
+    if (!replay) return
+    if (sessions.get(panelId) !== s || !s.port.isOpen) return
+    for (const { buf, audit } of hold.chunks) {
+      try { s.port.write(buf) } catch { break }
+      this.recordWrite(panelId, s, buf.length, audit)
     }
   }
 

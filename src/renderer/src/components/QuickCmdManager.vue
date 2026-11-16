@@ -4,7 +4,7 @@
  * 左侧列表 + 无弹窗录制 + 多步骤编辑（命令 / 延时 / 按键）
  * 宏库与录制状态为全局共享（composables/useTermMacros）
  */
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { ArrowDown, ArrowRight, CopyDocument, Delete, Download, EditPen, FolderAdd, Plus, Timer, Upload, VideoCamera } from '@element-plus/icons-vue'
 import type { QuickCmd, QuickCmdStep } from '../../../shared/term-macro'
@@ -20,15 +20,21 @@ const props = defineProps<{
   runDeviceAction?: (profile: string) => Promise<void>
   getDeviceProfiles?: () => Promise<{ profiles: DeviceProfileInfo[]; error?: string }>
   getConnectionGeneration?: () => number
+  /** 设备动作配置保存版本号：变化后重新读取可选动作 */
+  deviceConfigVersion?: number
   /** 空提示文案 */
   emptyHint?: string
 }>()
+
+const emit = defineEmits<{ (e: 'request-device-config'): void }>()
 
 interface DeviceProfileInfo {
   id: string
   label: string
   /** 展示在步骤标签上的动作名（如「解锁 Debug」） */
   actionLabel?: string
+  /** auto = 常驻自动应答，不出现在快捷命令步骤里 */
+  trigger?: 'manual' | 'auto'
 }
 
 const {
@@ -60,6 +66,8 @@ const cmdDlg = ref(false)
 const cmdEditIdx = ref(-1)
 const cmdDraft = reactive<QuickCmd>({ name: '', group: '', steps: [] })
 const deviceProfiles = ref<DeviceProfileInfo[]>([])
+/** 只有 manual 档能作为宏步骤；auto 档由串口面板的「自动应答」开关驱动 */
+const manualProfiles = computed(() => deviceProfiles.value.filter((profile) => profile.trigger !== 'auto'))
 const deviceConfigError = ref('')
 
 async function refreshDeviceProfiles(): Promise<void> {
@@ -68,11 +76,20 @@ async function refreshDeviceProfiles(): Promise<void> {
     const result = await props.getDeviceProfiles()
     deviceProfiles.value = result.profiles
     deviceConfigError.value = result.error ?? ''
+    // 保存配置后回到编辑弹窗：已添加但还没选中的设备动作步骤自动选第一项
+    const first = manualProfiles.value[0]
+    if (cmdDlg.value && first) {
+      for (const step of cmdDraft.steps) {
+        if (step.type === 'device-action' && !step.profile) step.profile = first.id
+      }
+    }
   } catch {
     deviceProfiles.value = []
     deviceConfigError.value = '无法读取设备动作配置'
   }
 }
+
+watch(() => props.deviceConfigVersion, () => { void refreshDeviceProfiles() })
 
 /** 步骤标签：优先配置的 actionLabel（如「解锁 Debug」），未知配置退回「设备动作」 */
 function deviceActionLabel(profileId?: string): string {
@@ -212,7 +229,7 @@ async function onSaveCmd(): Promise<void> {
 function addStep(type: QuickCmdStep['type']): void {
   if (type === 'cmd') cmdDraft.steps.push({ type: 'cmd', text: '', mode: 'ascii', crlf: true })
   else if (type === 'sleep') cmdDraft.steps.push({ type: 'sleep', ms: 500 })
-  else if (type === 'device-action') cmdDraft.steps.push({ type, profile: deviceProfiles.value[0]?.id ?? '' })
+  else if (type === 'device-action') cmdDraft.steps.push({ type, profile: manualProfiles.value[0]?.id ?? '' })
   else cmdDraft.steps.push({ type: 'key', key: '\r' })
 }
 
@@ -245,7 +262,7 @@ async function onPlay(cmd: QuickCmd): Promise<void> {
   const canContinue = (): boolean => props.enabled &&
     (generation === undefined || generation === props.getConnectionGeneration?.())
   if (usesAction && props.runDeviceAction) await refreshDeviceProfiles()
-  const error = validatePlayback(cmd, props.runDeviceAction ? deviceProfiles.value.map(({ id }) => id) : undefined)
+  const error = validatePlayback(cmd, props.runDeviceAction ? manualProfiles.value.map(({ id }) => id) : undefined)
   if (error) {
     ElMessage.warning(usesAction && props.runDeviceAction && deviceConfigError.value ? deviceConfigError.value : error)
     return
@@ -649,8 +666,17 @@ async function onImport(): Promise<void> {
             <el-tag size="small" effect="plain">{{ deviceActionLabel(st.profile) }}</el-tag>
             <el-select v-model="st.profile" size="small" class="step-input" placeholder="选择设备动作">
               <el-option v-if="st.profile && !deviceProfiles.some(({ id }) => id === st.profile)" :label="st.profile" :value="st.profile" disabled />
-              <el-option v-for="profile in deviceProfiles" :key="profile.id" :label="profile.label" :value="profile.id" />
+              <el-option v-for="profile in manualProfiles" :key="profile.id" :label="profile.label" :value="profile.id" />
             </el-select>
+            <el-button
+              v-if="getDeviceProfiles"
+              link
+              type="primary"
+              size="small"
+              @click="emit('request-device-config')"
+            >
+              {{ manualProfiles.length ? '管理动作' : '尚未配置，去添加' }}
+            </el-button>
           </template>
           <template v-else-if="st.type === 'key'">
             <el-tag size="small" type="warning" effect="plain">按键</el-tag>
