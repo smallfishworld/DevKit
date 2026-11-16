@@ -86,7 +86,7 @@ API v1 外部包是用户信任的本地代码。utilityProcess 隔离卡死/崩
 
 独立协议测试：node examples/plugins/text-hex-responder/test.cjs。
 宿主单元与集成测试挂入 npm test；Electron 插件冒烟验证实际构建后的独立 worker、安装、绑定和动作。
-Box 的模拟串口与 Linux Electron 测试不替代 Windows CI 和真实设备/OA 联调。实际通过项见本变更 tasks.md 和 PR。
+Box 的模拟串口与 Linux Electron 测试不替代 Windows CI 和真实设备/OA 联调。实际通过项见[三阶段验收记录](../openspec/changes/archive/2026-11-16-add-device-plugin-system/tasks.md)和 PR。
 
 ## 插件包生成
 

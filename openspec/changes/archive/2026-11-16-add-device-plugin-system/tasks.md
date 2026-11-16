@@ -23,9 +23,9 @@
 - [x] V2 npm test（完整现有与新增套件）。
 - [x] V3 npm run build，验证 worker 在构建产物中存在且可启动。
 - [x] V4 Box Electron UI 冒烟：插件安装、配置、绑定、自动/手动动作、宏、停止和锁回收；禁用/崩溃/错误另有后端回归。
-- [ ] V5 Windows CI typecheck/test/build/pty/打包检查。
+- [x] V5 Windows CI typecheck/test/build/pty/打包检查。
 - [x] V6 同步 OpenSpec 主规格、README 和插件开发文档。
-- [ ] V7 推送开发分支与 PR；独立插件仓库发布或清晰记录账户阻塞。
+- [x] V7 推送开发分支与 PR；独立插件仓库发布或清晰记录账户阻塞。
 - [x] V8 记录真实硬件/OA 联调未覆盖项，不把模拟测试当作实机通过。
 
 ## 2026-11-16 Box 验收记录
@@ -35,6 +35,8 @@
 - 原有 OA Electron 流程：登录和 Cookie 复用、手动动作、登录失效停止宏、自动布防/取消、可视化保存与损坏配置修复通过。
 - Box 桌面人工打开配置表单和 JSON 页，确认内容可读、滚动和操作入口可用。
 - P1 审查问题均有回归：跨插件即时/分批/迟到回显脱敏；中途订阅与文件传输边界；旧运行实例迟到状态；删除与绑定并发；OA 输入保持归属。
-- Windows 原生模块、PTY 与打包仍以本 PR 的 Windows CI 为准，结果未返回前不记为通过。
+- Windows CI 已通过（实现提交 `1310109af37ab6b498e77316a2f970b499784d84`）：依赖安装、类型检查、完整测试、生产构建、真实 Electron 插件冒烟、PTY、Windows 应用打包及打包后原生模块检查。运行记录：https://github.com/smallfishworld/DevKit/actions/runs/43896587728 。
 - 尚无真实串口硬件和业务 OA 账户，本次模拟串口/本地 OA 夹具不能替代实机联调。
 - 独立 `DevKit-Plugins` 新仓库可按用户授权创建；当前 GitHub 连接没有建库接口，Box 网页等待登录。完整可安装示例、独立协议测试、模板及打包脚本已包含于本 PR，不阻塞插件使用。
+
+- 代码已推送到 `feat/device-plugin-system`，PR：https://github.com/smallfishworld/DevKit/pull/10 。本次验收后只归档需求和完成记录，不改变已通过 CI 的运行代码。
