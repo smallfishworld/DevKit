@@ -5,11 +5,11 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { getMainWindow } from '../../ipc'
-import { DEBUG_UNLOCK_CONFIG_FILE, isDebugToken, parseDebugUnlockConfig } from './debug-unlock-config'
-import type { DebugUnlockConfig } from './debug-unlock-config'
+import { DEVICE_ACTIONS_CONFIG_FILE, isDeviceToken, parseDeviceActionsConfig } from './device-actions-config'
+import type { DeviceActionsConfig } from './device-actions-config'
 
-export interface DebugUnlockProvider {
-  config: DebugUnlockConfig
+export interface DeviceActionProvider {
+  config: DeviceActionsConfig
   authenticate(signal: AbortSignal, onLogin: () => void): Promise<void>
   issue(challenge: string, signal: AbortSignal): Promise<string>
 }
@@ -45,12 +45,12 @@ function needsLogin(response: Response): boolean {
     (response.status >= 300 && response.status < 400)
 }
 
-export function createDebugUnlockProvider(config: DebugUnlockConfig): DebugUnlockProvider {
+export function createDeviceActionProvider(config: DeviceActionsConfig): DeviceActionProvider {
   const origin = new URL(config.loginUrl).origin
   const origins = new Set([origin, ...config.authOrigins])
   const key = createHash('sha256').update([...origins].sort().join('\n')).digest('hex').slice(0, 24)
   // Cookies belong to Chromium, never to the macro or the company profile.
-  const browserSession = session.fromPartition(`persist:devkit-debug-unlock-${key}`)
+  const browserSession = session.fromPartition(`persist:devkit-device-actions-${key}`)
   browserSession.setPermissionCheckHandler(() => false)
   browserSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))
 
@@ -140,19 +140,19 @@ export function createDebugUnlockProvider(config: DebugUnlockConfig): DebugUnloc
       }
       const value = await readResponse(response)
       const code = value[config.responseField]
-      if (value.ok === false || !isDebugToken(code)) throw new Error('取码接口未返回有效口令')
+      if (value.ok === false || !isDeviceToken(code)) throw new Error('取码接口未返回有效口令')
       return code
     }
   }
 }
 
-export async function loadDebugUnlockProvider(): Promise<DebugUnlockProvider> {
+export async function loadDeviceActionProvider(): Promise<DeviceActionProvider> {
   let contents: string
-  try { contents = await readFile(join(app.getPath('userData'), DEBUG_UNLOCK_CONFIG_FILE), 'utf8') } catch {
-    throw new Error('请在 DevKit 用户数据目录配置 debug-unlock.json')
+  try { contents = await readFile(join(app.getPath('userData'), DEVICE_ACTIONS_CONFIG_FILE), 'utf8') } catch {
+    throw new Error('请在 DevKit 用户数据目录配置 device-actions.json')
   }
-  if (contents.length > 65_536) throw new Error('debug-unlock.json 内容超限')
+  if (contents.length > 65_536) throw new Error('device-actions.json 内容超限')
   let value: unknown
-  try { value = JSON.parse(contents) } catch { throw new Error('debug-unlock.json 不是有效 JSON') }
-  return createDebugUnlockProvider(parseDebugUnlockConfig(value))
+  try { value = JSON.parse(contents) } catch { throw new Error('device-actions.json 不是有效 JSON') }
+  return createDeviceActionProvider(parseDeviceActionsConfig(value))
 }

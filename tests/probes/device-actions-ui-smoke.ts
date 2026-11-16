@@ -9,8 +9,8 @@ import { disposeAllPanels, registerService, registerToolIpc, setMainWindow } fro
 import { setSection } from '../../src/main/services/macro/configStore'
 import { quickCmdsService } from '../../src/main/services/quickcmds'
 import { SerialService } from '../../src/main/services/serial'
-import { parseDebugUnlockConfig } from '../../src/main/services/serial/debug-unlock-config'
-import { createDebugUnlockProvider } from '../../src/main/services/serial/debug-unlock-provider'
+import { parseDeviceActionsConfig } from '../../src/main/services/serial/device-actions-config'
+import { createDeviceActionProvider } from '../../src/main/services/serial/device-actions-provider'
 import { settingsService } from '../../src/main/services/settings'
 import { DEFAULT_SERIAL_CONFIG, DEFAULT_SERIAL_PARAMS } from '../../src/shared/serial'
 
@@ -89,17 +89,17 @@ async function main(): Promise<void> {
   const [loginOrigin, portalOrigin] = await Promise.all([listen(oa), listen(site)])
   authOrigin = loginOrigin
   serviceOrigin = portalOrigin
-  const config = parseDebugUnlockConfig({
+  const config = parseDeviceActionsConfig({
     loginUrl: `${serviceOrigin}/login`, statusUrl: `${serviceOrigin}/status`, issueUrl: `${serviceOrigin}/issue`,
     authOrigins: [authOrigin], profiles: [{ id: 'fixture', label: '模拟 Release 设备',
       challengePrefix: 'Challenge:', successLine: 'Debug unlocked', failureLine: 'Debug denied' }]
   }, true)
-  const service = new SerialService(async () => createDebugUnlockProvider(config))
+  const service = new SerialService(async () => createDeviceActionProvider(config))
   const simulated = SerialPort as unknown as {
     list: () => Promise<unknown[]>
     prototype: { write: (this: { emit: (name: string, data: Buffer) => void }, bytes: Buffer, done?: () => void) => void }
   }
-  simulated.list = async () => [{ path: portName, friendlyName: 'Debug fixture' }]
+  simulated.list = async () => [{ path: portName, friendlyName: 'Device action fixture' }]
   simulated.prototype.write = function (bytes, done) {
     const text = bytes.toString()
     sent.push(text)
@@ -118,7 +118,7 @@ async function main(): Promise<void> {
   registerService('settings', settingsService)
   registerService('quickcmds', quickCmdsService)
   registerToolIpc()
-  ipcMain.handle('win:info', () => ({ version: 'debug-smoke' }))
+  ipcMain.handle('win:info', () => ({ version: 'device-actions-smoke' }))
   const win = new BrowserWindow({ width: 1280, height: 900, webPreferences: {
     preload: join(process.cwd(), 'out/preload/index.js'), contextIsolation: true, nodeIntegration: false, sandbox: false
   } })
@@ -142,7 +142,7 @@ async function main(): Promise<void> {
   await until(() => js(`!!document.querySelector('.com-badge')`), '串口连接成功')
   await until(() => click('[aria-label="新建快捷命令"]'), '快捷命令编辑器')
   await until(() => fill('input[placeholder="如：上电自检流程"]', '模拟解锁并查版本'), '宏名称')
-  await until(() => click('.steps-head button', '解锁 Debug'), '添加解锁步骤')
+  await until(() => click('.steps-head button', '设备动作'), '添加设备动作步骤')
   if (!(await js(`document.querySelector('.step-row').textContent.includes('模拟 Release 设备')`))) {
     await until(() => click('.step-row .el-select__wrapper'), '打开设备配置')
     await until(() => click('.el-select-dropdown__item', '模拟 Release 设备'), '选择设备配置')

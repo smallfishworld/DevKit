@@ -1,8 +1,17 @@
-export const DEBUG_UNLOCK_CONFIG_FILE = 'debug-unlock.json'
+export const DEVICE_ACTIONS_CONFIG_FILE = 'device-actions.json'
 
-export interface DebugDeviceProfile {
+/** 设备动作类型：目前支持「挑战应答」（发命令 → 读挑战码 → 换口令 → 验证结果）。
+ *  新增同类动作只需在配置里加条目；新增异类流程在这里扩展 kind 后实现对应执行器。 */
+export type DeviceActionKind = 'challenge-response'
+
+export interface DeviceActionProfile {
   id: string
   label: string
+  /** 显示在步骤选择器里的动作名（如「解锁 Debug」），让一类流程服务多个动作场景 */
+  actionLabel: string
+  kind: DeviceActionKind
+  /** challenge-response：发往设备的起始命令 */
+  command: string
   newline: 'cr' | 'lf' | 'crlf'
   challengePrefix: string
   successLine: string
@@ -12,14 +21,14 @@ export interface DebugDeviceProfile {
   resultTimeoutMs: number
 }
 
-export interface DebugUnlockConfig {
+export interface DeviceActionsConfig {
   loginUrl: string
   statusUrl: string
   issueUrl: string
   authOrigins: string[]
   challengeField: string
   responseField: string
-  profiles: DebugDeviceProfile[]
+  profiles: DeviceActionProfile[]
 }
 
 function record(value: unknown): Record<string, unknown> {
@@ -52,7 +61,7 @@ function timeout(value: unknown, label: string, fallback: number): number {
   return value
 }
 
-export function parseDebugUnlockConfig(value: unknown, allowLoopback = false): DebugUnlockConfig {
+export function parseDeviceActionsConfig(value: unknown, allowLoopback = false): DeviceActionsConfig {
   const cfg = record(value)
   const login = urlField(cfg.loginUrl, 'loginUrl', allowLoopback)
   const status = urlField(cfg.statusUrl, 'statusUrl', allowLoopback)
@@ -67,13 +76,13 @@ export function parseDebugUnlockConfig(value: unknown, allowLoopback = false): D
     return url.origin
   })
   if (!Array.isArray(cfg.profiles) || !cfg.profiles.length || cfg.profiles.length > 32) {
-    throw new Error('profiles 须包含 1 至 32 个设备配置')
+    throw new Error('profiles 须包含 1 至 32 个设备动作配置')
   }
   const ids = new Set<string>()
-  const profiles = cfg.profiles.map((entry: unknown): DebugDeviceProfile => {
+  const profiles = cfg.profiles.map((entry: unknown): DeviceActionProfile => {
     const p = record(entry)
-    const id = field(p.id, '设备配置 ID', 64)
-    if (!/^[a-zA-Z0-9._-]+$/.test(id) || ids.has(id)) throw new Error('设备配置 ID 无效或重复')
+    const id = field(p.id, '设备动作 ID', 64)
+    if (!/^[a-zA-Z0-9._-]+$/.test(id) || ids.has(id)) throw new Error('设备动作 ID 无效或重复')
     ids.add(id)
     const newline = p.newline ?? 'cr'
     if (newline !== 'cr' && newline !== 'lf' && newline !== 'crlf') throw new Error('newline 须为 cr、lf 或 crlf')
@@ -81,7 +90,9 @@ export function parseDebugUnlockConfig(value: unknown, allowLoopback = false): D
     const failureLine = field(p.failureLine, 'failureLine')
     if (successLine === failureLine) throw new Error('成功与失败提示不能相同')
     return {
-      id, label: field(p.label ?? id, '设备配置名称'), newline,
+      id, label: field(p.label ?? id, '设备动作名称'), actionLabel: field(p.actionLabel ?? '设备动作', 'actionLabel'),
+      kind: 'challenge-response', command: field(p.command ?? 'debug', 'command'),
+      newline,
       challengePrefix: field(p.challengePrefix, 'challengePrefix'), successLine, failureLine,
       challengeTimeoutMs: timeout(p.challengeTimeoutMs, 'challengeTimeoutMs', 5000),
       challengeTtlMs: timeout(p.challengeTtlMs, 'challengeTtlMs', 30_000),
@@ -97,6 +108,6 @@ export function parseDebugUnlockConfig(value: unknown, allowLoopback = false): D
 }
 
 /** The device contract uses one bounded ASCII token, without terminal control characters. */
-export function isDebugToken(value: unknown): value is string {
+export function isDeviceToken(value: unknown): value is string {
   return typeof value === 'string' && /^[A-Za-z0-9._~+\/=\-]{4,256}$/.test(value)
 }

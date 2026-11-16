@@ -5,11 +5,11 @@ const { join, resolve } = require('node:path')
 const { buildSync } = require('esbuild')
 
 const root = resolve(__dirname, '..')
-const dir = mkdtempSync(join(tmpdir(), 'devkit-debug-ui-'))
+const dir = mkdtempSync(join(tmpdir(), 'devkit-device-actions-ui-'))
 try {
   const output = join(dir, 'fixture.cjs')
   buildSync({
-    entryPoints: [join(root, 'tests/probes/debug-unlock-ui-smoke.ts')], bundle: true,
+    entryPoints: [join(root, 'tests/probes/device-actions-ui-smoke.ts')], bundle: true,
     platform: 'node', outfile: output, external: ['electron'],
     alias: { serialport: join(root, 'tests/terminal-serial-mock.js') }, logLevel: 'error'
   })

@@ -5,8 +5,8 @@
 
 /** 单个步骤：发命令 / 延时 / 按键 */
 export interface QuickCmdStep {
-  type: 'cmd' | 'sleep' | 'key' | 'debug-unlock'
-  /** 本地设备配置 ID（debug-unlock） */
+  type: 'cmd' | 'sleep' | 'key' | 'device-action'
+  /** 本地设备动作配置 ID（device-action；具体行为由部署方 device-actions.json 定义） */
   profile?: string
   /** 命令文本（cmd） */
   text?: string
@@ -70,7 +70,7 @@ export function keyName(seq: string): string {
 
 /** 步骤 → 纯文本预览 */
 export function stepPreview(st: QuickCmdStep): string {
-  if (st.type === 'debug-unlock') return st.profile ? `解锁 Debug（${st.profile}）` : '解锁 Debug'
+  if (st.type === 'device-action') return st.profile ? `设备动作（${st.profile}）` : '设备动作'
   if (st.type === 'sleep') return `延时 ${st.ms}ms`
   if (st.type === 'key') return `按键 ${keyName(st.key ?? '')}`
   return st.mode === 'hex' ? `[HEX] ${st.text}` : `${st.text}${st.crlf ? '⏎' : ''}`
@@ -80,9 +80,13 @@ export function stepPreview(st: QuickCmdStep): string {
 export function migrateQuickCmd(c: { name: string; group?: string; mode?: string; text?: string; newline?: string } | QuickCmd): QuickCmd {
   const anyC = c as { steps?: QuickCmdStep[]; mode?: string; text?: string; newline?: string }
   if (Array.isArray(anyC.steps)) {
-    const steps = anyC.steps.map((step) => step?.type === 'debug-unlock'
-      ? { type: 'debug-unlock' as const, profile: typeof step.profile === 'string' ? step.profile : '' }
-      : step)
+    const steps = anyC.steps.map((step): QuickCmdStep => {
+      // 设备动作步骤只保留 profile 引用，丢弃导入数据可能携带的任何额外字段
+      if ((step as { type?: unknown } | undefined)?.type === 'device-action') {
+        return { type: 'device-action', profile: typeof step.profile === 'string' ? step.profile : '' }
+      }
+      return step
+    })
     return { name: c.name, group: (c as QuickCmd).group ?? '', steps }
   }
   return {
@@ -100,15 +104,15 @@ export function migrateQuickCmd(c: { name: string; group?: string; mode?: string
 }
 
 /** Validate the full macro before sending anything to an unsupported terminal. */
-export function validatePlayback(cmd: QuickCmd, debugProfiles?: readonly string[]): string | undefined {
+export function validatePlayback(cmd: QuickCmd, deviceProfiles?: readonly string[]): string | undefined {
   for (const step of cmd.steps) {
     switch (step?.type) {
       case 'cmd':
       case 'sleep':
       case 'key': break
-      case 'debug-unlock':
-        if (!debugProfiles) return '解锁 Debug 仅支持串口终端'
-        if (!step.profile || !debugProfiles.includes(step.profile)) return '找不到此 Debug 解锁的设备配置'
+      case 'device-action':
+        if (!deviceProfiles) return '设备动作仅支持串口终端'
+        if (!step.profile || !deviceProfiles.includes(step.profile)) return '找不到此设备动作的设备配置'
         break
       default: return '快捷命令包含不支持的步骤'
     }

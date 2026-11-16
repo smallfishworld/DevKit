@@ -287,16 +287,16 @@ export function useTermMacros() {
     cmd: QuickCmd,
     writer: (st: QuickCmdStep) => void,
     enabled: () => boolean,
-    debugUnlock?: (profile: string) => Promise<void>
+    runDeviceAction?: (profile: string) => Promise<void>
   ): Promise<void> {
     if (!enabled() || playing.value) return
     playing.value = true
     try {
       for (const st of cmd.steps) {
         if (!enabled()) break
-        if (st.type === 'debug-unlock') {
-          if (!debugUnlock || !st.profile) throw new Error('此处无法执行 Debug 解锁')
-          await debugUnlock(st.profile)
+        if (st.type === 'device-action') {
+          if (!runDeviceAction || !st.profile) throw new Error('此处无法执行设备动作')
+          await runDeviceAction(st.profile)
         } else if (st.type === 'sleep') {
           await new Promise((r) => setTimeout(r, Math.max(0, st.ms ?? 0)))
         } else {

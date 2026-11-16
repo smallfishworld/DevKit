@@ -1,9 +1,9 @@
 const { buildSync } = require('esbuild')
 const { join } = require('node:path')
 
-const output = join(__dirname, '.debug-unlock-test.cjs')
+const output = join(__dirname, '.device-actions-test.cjs')
 buildSync({
-  entryPoints: [join(__dirname, 'debug-unlock-entry.js')], bundle: true, platform: 'node', outfile: output,
+  entryPoints: [join(__dirname, 'device-actions-entry.js')], bundle: true, platform: 'node', outfile: output,
   alias: {
     electron: join(__dirname, 'terminal-electron-mock.js'),
     serialport: join(__dirname, 'terminal-serial-mock.js')

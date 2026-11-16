@@ -38,9 +38,9 @@ export function emitToolEvent(tool: string, panelId: string, type: string, paylo
 export function registerToolIpc(): void {
   ipcMain.handle('tool:invoke', async (event, req: ToolInvoke) => {
     const { tool, panelId, action, payload } = req
-    if (tool === 'serial' && typeof action === 'string' && action.startsWith('debug:')) {
+    if (tool === 'serial' && typeof action === 'string' && action.startsWith('action:')) {
       if (!mainWindow || event.sender !== mainWindow.webContents ||
-        event.senderFrame !== mainWindow.webContents.mainFrame) throw new Error('无权调用 Debug 解锁')
+        event.senderFrame !== mainWindow.webContents.mainFrame) throw new Error('无权调用设备动作')
     }
     const service = services.get(tool)
     if (!service) {

@@ -17,10 +17,10 @@ import { ByteQueue, TransferCancelled, ymodemRecv, ymodemSend } from './ymodem'
 import { zmodemRecv, zmodemSend } from './zmodem'
 import { TerminalRuntime } from '../terminal/runtime'
 import { fmtDuration, txAuditLine } from '../../../shared/logtext'
-import { DebugUnlockLines, runDebugUnlock, SerialSecretRedactor } from './debug-unlock'
-import type { DebugUnlockResult, DebugUnlockStage } from './debug-unlock'
-import { loadDebugUnlockProvider } from './debug-unlock-provider'
-import type { DebugUnlockProvider } from './debug-unlock-provider'
+import { DeviceActionLines, runDeviceAction, SerialSecretRedactor } from './device-actions'
+import type { DeviceActionResult, DeviceActionStage } from './device-actions'
+import { loadDeviceActionProvider } from './device-actions-provider'
+import type { DeviceActionProvider } from './device-actions-provider'
 
 interface RxPiece {
   buf: Buffer
@@ -57,7 +57,7 @@ interface SerialSession {
   suspendedDataNoted: boolean
   wakeBurstNotePending: boolean
   wakeBurstNoted: boolean
-  debug?: {
+  action?: {
     controller: AbortController
     locked: boolean
     receive?: (text: string, receivedAt: number) => void
@@ -82,7 +82,7 @@ function serialLogDir(): string {
 }
 
 export class SerialService implements ToolService {
-  constructor(private readonly debugProvider: () => Promise<DebugUnlockProvider> = loadDebugUnlockProvider) {}
+  constructor(private readonly actionProvider: () => Promise<DeviceActionProvider> = loadDeviceActionProvider) {}
 
   private runtime = new TerminalRuntime('serial')
   private powerBlockerId: number | null = null
@@ -165,7 +165,7 @@ export class SerialService implements ToolService {
     for (const piece of pieces) {
       const text = s.decoder.write(piece.buf)
       if (!text) continue
-      s.debug?.receive?.(text, piece.time)
+      s.action?.receive?.(text, piece.time)
       if (s.secrets) s.secrets.push(text, piece.time, (part, receivedAt) => decoded.push({ text: part, receivedAt }))
       else decoded.push({ text, receivedAt: piece.time })
     }
@@ -187,14 +187,14 @@ export class SerialService implements ToolService {
     }
     if (this.runtime.handles(action)) return this.runtime.invoke(panelId, action, payload)
     switch (action) {
-      case 'debug:profiles':
-        return this.debugProvider().then(({ config }) => ({
+      case 'action:profiles':
+        return this.actionProvider().then(({ config }) => ({
           profiles: config.profiles.map(({ id, label }) => ({ id, label }))
         })).catch((error: Error) => ({ profiles: [], error: error.message }))
-      case 'debug:run':
-        return this.startDebugUnlock(panelId, (payload as { profile?: unknown } | undefined)?.profile)
-      case 'debug:cancel':
-        sessions.get(panelId)?.debug?.controller.abort(new Error('已取消 Debug 解锁'))
+      case 'action:run':
+        return this.startDeviceAction(panelId, (payload as { profile?: unknown } | undefined)?.profile)
+      case 'action:cancel':
+        sessions.get(panelId)?.action?.controller.abort(new Error('已取消设备动作'))
         return true
       case 'view:visible':
         this.viewVisible.set(panelId, Boolean((payload as { visible: boolean }).visible))
@@ -291,7 +291,7 @@ export class SerialService implements ToolService {
   onSystemSuspend(): void {
     const now = Date.now()
     for (const [panelId, s] of sessions) {
-      s.debug?.controller.abort(new Error('系统进入休眠，Debug 解锁已终止'))
+      s.action?.controller.abort(new Error('系统进入休眠，设备动作已终止'))
       // Flush already received bytes before the sleep marker, otherwise a pending
       // 32 ms batch can appear *after* the suspend timestamp in the disk log.
       if (s.flushTimer) { clearTimeout(s.flushTimer); s.flushTimer = null }
@@ -453,7 +453,7 @@ export class SerialService implements ToolService {
   private async close(panelId: string): Promise<{ ok: boolean }> {
     const s = sessions.get(panelId)
     if (!s) return { ok: true }
-    s.debug?.controller.abort(new Error('串口已断开，Debug 解锁已终止'))
+    s.action?.controller.abort(new Error('串口已断开，设备动作已终止'))
     if (s.flushTimer) clearTimeout(s.flushTimer)
     s.flushTimer = null
     this.flush(panelId)
@@ -483,7 +483,7 @@ export class SerialService implements ToolService {
   ): { ok: boolean; error?: string; bytes?: number } {
     const s = sessions.get(panelId)
     if (!s) return { ok: false, error: '串口未打开' }
-    if (s.debug?.locked) return { ok: false, error: 'Debug 解锁正在使用此串口' }
+    if (s.action?.locked) return { ok: false, error: '设备动作正在使用此串口' }
     // 与渲染端相同的组包规则（主进程兜底解析）
     const nl = p.newline === 'crlf' ? '\r\n' : p.newline === 'lf' ? '\n' : p.newline === 'cr' ? '\r' : ''
     let buf: Buffer
@@ -518,15 +518,15 @@ export class SerialService implements ToolService {
     })
   }
 
-  private async startDebugUnlock(panelId: string, profileId: unknown): Promise<DebugUnlockResult> {
+  private async startDeviceAction(panelId: string, profileId: unknown): Promise<DeviceActionResult> {
     const s = sessions.get(panelId)
     if (!s?.port.isOpen) return { ok: false, error: '串口未打开' }
-    if (s.debug || transfers.has(panelId)) return { ok: false, error: '该串口有解锁或文件传输正在运行' }
-    const task: NonNullable<SerialSession['debug']> = { controller: new AbortController(), locked: false }
-    s.debug = task
+    if (s.action || transfers.has(panelId)) return { ok: false, error: '该串口有设备动作或文件传输正在运行' }
+    const task: NonNullable<SerialSession['action']> = { controller: new AbortController(), locked: false }
+    s.action = task
     const signal = task.controller.signal
     let responseSent = false
-    const setStage = (stage: DebugUnlockStage): void => this.emit(panelId, 'debug:stage', { stage })
+    const setStage = (stage: DeviceActionStage): void => this.emit(panelId, 'action:stage', { stage })
     function checkConnection(): void {
       signal.throwIfAborted()
       if (sessions.get(panelId) !== s || !s?.port.isOpen) throw new Error('串口连接已变化')
@@ -534,11 +534,11 @@ export class SerialService implements ToolService {
 
     try {
       setStage('checking')
-      const provider = await this.debugProvider()
+      const provider = await this.actionProvider()
       const profile = provider.config.profiles.find(({ id }) => id === profileId)
-      if (!profile) throw new Error('找不到此 Debug 解锁的设备配置')
+      if (!profile) throw new Error('找不到此设备动作的配置')
       checkConnection()
-      await runDebugUnlock(provider, profile, signal, () => {
+      await runDeviceAction(provider, profile, signal, () => {
         checkConnection()
         if (transfers.has(panelId)) throw new Error('已有文件传输进行中')
         task.locked = true
@@ -546,7 +546,7 @@ export class SerialService implements ToolService {
         checkConnection()
         // Consume queued output before installing the matcher. Only new RX can satisfy it.
         this.flush(panelId)
-        const lines = new DebugUnlockLines()
+        const lines = new DeviceActionLines()
         const bytes = Buffer.from(text, 'ascii')
         if (secret) {
           s.secrets ??= new SerialSecretRedactor()
@@ -580,26 +580,26 @@ export class SerialService implements ToolService {
           }
           try {
             s.port.write(bytes, (error) => {
-              if (error) finish(new Error(secret ? '口令写入异常，设备结果未确认' : '发送 debug 命令失败'))
+              if (error) finish(new Error(secret ? '口令写入异常，设备结果未确认' : '发送设备动作命令失败'))
             })
             responseSent ||= secret
-            this.recordWrite(panelId, s, bytes.length, secret ? '[Debug 解锁口令已隐藏]' : txAuditLine(text))
+            this.recordWrite(panelId, s, bytes.length, secret ? '[设备动作口令已隐藏]' : txAuditLine(text))
           } catch {
-            finish(new Error(secret ? '口令写入异常，设备结果未确认' : '发送 debug 命令失败'))
+            finish(new Error(secret ? '口令写入异常，设备结果未确认' : '发送设备动作命令失败'))
           }
         })
       }, setStage)
       checkConnection()
-      this.runtime.note(panelId, '[DevKit] Debug 解锁成功')
+      this.runtime.note(panelId, '[DevKit] 设备动作成功')
       return { ok: true }
     } catch (error) {
       if (task.locked && sessions.get(panelId) === s && !signal.aborted) {
-        this.runtime.note(panelId, '[DevKit] Debug 解锁未完成')
+        this.runtime.note(panelId, '[DevKit] 设备动作未完成')
       }
       if (responseSent && signal.aborted) return { ok: false, error: '口令已发送，设备结果未确认' }
-      return { ok: false, error: error instanceof Error ? error.message : 'Debug 解锁失败' }
+      return { ok: false, error: error instanceof Error ? error.message : '设备动作失败' }
     } finally {
-      if (s.debug === task) s.debug = undefined
+      if (s.action === task) s.action = undefined
     }
   }
 
@@ -607,7 +607,7 @@ export class SerialService implements ToolService {
    *  替换整个流式解码器——旧解码器里滞留的多字节尾巴按新编码解释必然错位 */
   private setEncoding(panelId: string, encoding: SerialEncoding): { ok: boolean; error?: string } {
     const s = sessions.get(panelId)
-    if (s?.debug?.locked) return { ok: false, error: 'Debug 解锁正在使用此串口' }
+    if (s?.action?.locked) return { ok: false, error: '设备动作正在使用此串口' }
     if (s) {
       s.encoding = encoding
       s.decoder = makeDecoder(encoding)
@@ -618,7 +618,7 @@ export class SerialService implements ToolService {
   private setFlow(panelId: string, bits: { dtr?: boolean; rts?: boolean }): Promise<{ ok: boolean; error?: string }> {
     const s = sessions.get(panelId)
     if (!s) return Promise.resolve({ ok: false, error: '串口未打开' })
-    if (s.debug?.locked) return Promise.resolve({ ok: false, error: 'Debug 解锁正在使用此串口' })
+    if (s.action?.locked) return Promise.resolve({ ok: false, error: '设备动作正在使用此串口' })
     return new Promise((resolve) => {
       s.port.set(bits, (err) => resolve(err ? { ok: false, error: err.message } : { ok: true }))
     })
@@ -676,7 +676,7 @@ export class SerialService implements ToolService {
   private async fileSend(panelId: string, p: { protocol: TransferProtocol; path: string }): Promise<{ ok: boolean; error?: string }> {
     const s = sessions.get(panelId)
     if (!s) return { ok: false, error: '串口未打开' }
-    if (s.debug?.locked) return { ok: false, error: 'Debug 解锁正在使用此串口' }
+    if (s.action?.locked) return { ok: false, error: '设备动作正在使用此串口' }
     if (transfers.has(panelId)) return { ok: false, error: '已有传输进行中' }
     let data: Buffer
     try {
@@ -685,7 +685,7 @@ export class SerialService implements ToolService {
       return { ok: false, error: `读取文件失败：${err instanceof Error ? err.message : String(err)}` }
     }
     if (sessions.get(panelId) !== s) return { ok: false, error: '串口连接已变化' }
-    if (s.debug?.locked) return { ok: false, error: 'Debug 解锁正在使用此串口' }
+    if (s.action?.locked) return { ok: false, error: '设备动作正在使用此串口' }
     if (transfers.has(panelId)) return { ok: false, error: '已有传输进行中' }
     const name = basename(p.path)
     const write = (buf: Buffer): void => {
@@ -754,7 +754,7 @@ export class SerialService implements ToolService {
   private async fileRecv(panelId: string, p: { protocol: TransferProtocol; dir: string }): Promise<{ ok: boolean; error?: string; saved?: string[] }> {
     const s = sessions.get(panelId)
     if (!s) return { ok: false, error: '串口未打开' }
-    if (s.debug?.locked) return { ok: false, error: 'Debug 解锁正在使用此串口' }
+    if (s.action?.locked) return { ok: false, error: '设备动作正在使用此串口' }
     if (transfers.has(panelId)) return { ok: false, error: '已有传输进行中' }
     const write = (buf: Buffer): void => {
       s.port.write(buf)

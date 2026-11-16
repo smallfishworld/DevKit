@@ -1,28 +1,52 @@
 import { stripAnsi } from '../../../shared/logtext'
-import { isDebugToken } from './debug-unlock-config'
-import type { DebugDeviceProfile } from './debug-unlock-config'
-import type { DebugUnlockProvider } from './debug-unlock-provider'
+import { isDeviceToken } from './device-actions-config'
+import type { DeviceActionProfile } from './device-actions-config'
+import type { DeviceActionProvider } from './device-actions-provider'
 
-export type DebugUnlockStage = 'checking' | 'login' | 'challenge' | 'issue' | 'verify'
-export type DebugUnlockResult = { ok: true } | { ok: false; error: string }
+export type DeviceActionStage = 'checking' | 'login' | 'challenge' | 'issue' | 'verify'
+export type DeviceActionResult = { ok: true } | { ok: false; error: string }
 type ReceivedLine = { value: string; receivedAt: number }
-type Exchange = (
+export type Exchange = (
   text: string, secret: boolean, timeoutMs: number, match: (line: string) => string | undefined
 ) => Promise<ReceivedLine>
 
-export async function runDebugUnlock(
-  provider: DebugUnlockProvider, profile: DebugDeviceProfile, signal: AbortSignal,
-  lock: () => void, exchange: Exchange, setStage: (stage: DebugUnlockStage) => void
+/** 设备动作执行器接口：一个 kind 一个实现。runDeviceAction 按 kind 分发。
+ *  新增动作类型 = 在这里实现新执行器 + 在 runDeviceAction 注册。 */
+export interface DeviceActionRunner {
+  (
+    provider: DeviceActionProvider, profile: DeviceActionProfile, signal: AbortSignal,
+    lock: () => void, exchange: Exchange, setStage: (stage: DeviceActionStage) => void
+  ): Promise<void>
+}
+
+/** kind → 执行器注册表。新增动作流程时在此追加。 */
+const runners: Partial<Record<DeviceActionProfile['kind'], DeviceActionRunner>> = {
+  'challenge-response': runChallengeResponse
+}
+
+export function runDeviceAction(
+  provider: DeviceActionProvider, profile: DeviceActionProfile, signal: AbortSignal,
+  lock: () => void, exchange: Exchange, setStage: (stage: DeviceActionStage) => void
+): Promise<void> {
+  const runner = runners[profile.kind]
+  if (!runner) throw new Error(`不支持的设备动作类型：${profile.kind}`)
+  return runner(provider, profile, signal, lock, exchange, setStage)
+}
+
+/** 挑战应答式设备动作：先经 OA 会话取授权，再发命令 → 读挑战码 → 换口令 → 验证结果。 */
+async function runChallengeResponse(
+  provider: DeviceActionProvider, profile: DeviceActionProfile, signal: AbortSignal,
+  lock: () => void, exchange: Exchange, setStage: (stage: DeviceActionStage) => void
 ): Promise<void> {
   await provider.authenticate(signal, () => setStage('login'))
   signal.throwIfAborted()
   lock()
   const newline = profile.newline === 'crlf' ? '\r\n' : profile.newline === 'lf' ? '\n' : '\r'
   setStage('challenge')
-  const challenge = await exchange('debug' + newline, false, profile.challengeTimeoutMs, (line) => {
+  const challenge = await exchange(profile.command + newline, false, profile.challengeTimeoutMs, (line) => {
     if (!line.startsWith(profile.challengePrefix)) return
     const value = line.slice(profile.challengePrefix.length).trim()
-    if (!isDebugToken(value)) throw new Error('设备返回的挑战码格式不匹配')
+    if (!isDeviceToken(value)) throw new Error('设备返回的挑战码格式不匹配')
     return value
   })
   signal.throwIfAborted()
@@ -40,17 +64,17 @@ export async function runDebugUnlock(
   if (expires.aborted || Date.now() - challenge.receivedAt >= profile.challengeTtlMs) {
     throw new Error('设备挑战码已过期')
   }
-  if (!isDebugToken(response)) throw new Error('取码接口未返回有效口令')
+  if (!isDeviceToken(response)) throw new Error('取码接口未返回有效口令')
   setStage('verify')
   const result = await exchange(response + newline, true, profile.resultTimeoutMs, (line) => {
     if (line === profile.successLine) return 'unlocked'
     if (line === profile.failureLine) return 'rejected'
   })
-  if (result.value === 'rejected') throw new Error('设备明确拒绝了解锁口令')
+  if (result.value === 'rejected') throw new Error('设备明确拒绝了口令')
 }
 
 /** Match complete device lines, independent of USB callbacks and renderer batching. */
-export class DebugUnlockLines {
+export class DeviceActionLines {
   private partial = ''
   private oversize = false
 
@@ -81,7 +105,7 @@ export class SerialSecretRedactor {
   add(secret: string): void {
     const candidates = this.secrets.get(secret[0]) ?? []
     if (candidates.includes(secret)) return
-    if (this.count >= 64) throw new Error('本连接的解锁次数达到上限，请重新连接设备')
+    if (this.count >= 64) throw new Error('本连接的设备动作次数达到上限，请重新连接设备')
     this.count++
     candidates.push(secret)
     candidates.sort((a, b) => b.length - a.length)

@@ -6,7 +6,7 @@ const { setTimeout: delay } = require('node:timers/promises')
 const { EventEmitter } = require('node:events')
 const electron = require('electron')
 const { SerialPort } = require('serialport')
-const { parseDebugUnlockConfig } = require('../src/main/services/serial/debug-unlock-config')
+const { parseDeviceActionsConfig } = require('../src/main/services/serial/device-actions-config')
 const { DEFAULT_SERIAL_PARAMS } = require('../src/shared/serial')
 const { migrateQuickCmd, validatePlayback } = require('../src/shared/term-macro')
 
@@ -18,14 +18,14 @@ const input = {
     failureLine: 'Debug denied', challengeTimeoutMs: 1000, challengeTtlMs: 2000, resultTimeoutMs: 450 }]
 }
 const code = 'FIXTURE_PASSWORD_756'
-const config = parseDebugUnlockConfig(input)
-const panel = 'serial#debug-test'
+const config = parseDeviceActionsConfig(input)
+const panel = 'serial#action-test'
 let authenticated = false
 let loginOpened = 0
 const browserSessions = new Map()
 electron.session = {
   fromPartition(partition) {
-    assert.match(partition, /^persist:devkit-debug-unlock-/)
+    assert.match(partition, /^persist:devkit-device-actions-/)
     if (!browserSessions.has(partition)) browserSessions.set(partition, {
       setPermissionCheckHandler() {}, setPermissionRequestHandler() {},
       async fetch(url, init) {
@@ -61,7 +61,7 @@ electron.BrowserWindow = class extends EventEmitter {
 
 const { SerialService } = require('../src/main/services/serial')
 const { setMainWindow } = require('../src/main/ipc')
-const { createDebugUnlockProvider } = require('../src/main/services/serial/debug-unlock-provider')
+const { createDeviceActionProvider } = require('../src/main/services/serial/device-actions-provider')
 
 function deferred() {
   let resolve
@@ -78,25 +78,25 @@ async function waitFor(test) {
 }
 
 async function main() {
-  assert.throws(() => parseDebugUnlockConfig({ ...input, issueUrl: 'https://other.example.invalid/issue' }), /同源/)
-  assert.throws(() => parseDebugUnlockConfig({ ...input, loginUrl: 'http://127.0.0.1' }), /HTTPS/)
+  assert.throws(() => parseDeviceActionsConfig({ ...input, issueUrl: 'https://other.example.invalid/issue' }), /同源/)
+  assert.throws(() => parseDeviceActionsConfig({ ...input, loginUrl: 'http://127.0.0.1' }), /HTTPS/)
   const macro = migrateQuickCmd({ name: 'Example', steps: [
-    { type: 'cmd', text: 'version' }, { type: 'debug-unlock', profile: 'fixture', url: base, token: code }
+    { type: 'cmd', text: 'version' }, { type: 'device-action', profile: 'fixture', url: base, token: code }
   ] })
-  assert.deepEqual(macro.steps[1], { type: 'debug-unlock', profile: 'fixture' })
+  assert.deepEqual(macro.steps[1], { type: 'device-action', profile: 'fixture' })
   assert.match(validatePlayback(macro), /仅支持串口/)
   assert.match(validatePlayback(macro, []), /找不到/)
   assert.equal(validatePlayback(macro, ['fixture']), undefined)
 
-  const firstProvider = createDebugUnlockProvider(config)
+  const firstProvider = createDeviceActionProvider(config)
   await firstProvider.authenticate(new AbortController().signal, () => { assert.equal(authenticated, false) })
   assert.equal(loginOpened, 1)
-  const nextProvider = createDebugUnlockProvider(config)
+  const nextProvider = createDeviceActionProvider(config)
   await nextProvider.authenticate(new AbortController().signal, () => assert.fail('有效会话应复用'))
   assert.equal(await nextProvider.issue('FRESH_CHALLENGE_1', new AbortController().signal), code)
   authenticated = false
   await assert.rejects(nextProvider.issue('FRESH_CHALLENGE_1', new AbortController().signal), /403/)
-  console.log('  PASS Debug unlock configured OA session, Cookie request path, session reuse and refusal')
+  console.log('  PASS Device action configured OA session, Cookie request path, session reuse and refusal')
 
   const dir = await mkdtemp(join(tmpdir(), 'devkit-debug-test-'))
   globalThis.terminalTestDir = dir
@@ -143,7 +143,7 @@ async function main() {
     }
     return port
   }
-  const run = () => service.invoke(panel, 'debug:run', { profile: 'fixture' })
+  const run = () => service.invoke(panel, 'action:run', { profile: 'fixture' })
   try {
     const port = await open()
     port.emit('data', Buffer.from('Challenge: OLD_CHALLENGE\r\nDebug unlocked\r\n'))
@@ -173,7 +173,7 @@ async function main() {
     await waitFor(() => requests > beforeCancel)
     assert.match(service.invoke(panel, 'write', { mode: 'ascii', text: 'manual', newline: 'cr' }).error, /正在使用/)
     assert.match((await service.invoke(panel, 'file:recv', { protocol: 'ymodem', dir })).error, /正在使用/)
-    service.invoke(panel, 'debug:cancel')
+    service.invoke(panel, 'action:cancel')
     issueGate.resolve()
     assert.match((await cancelled).error, /取消/)
     assert.equal(sent.at(-1), 'debug\r')
@@ -199,7 +199,7 @@ async function main() {
     assert.match((await run()).error, /挑战码超时/)
     assert.equal(requests, beforeTimeout)
     assert.equal(service.invoke(panel, 'write', { mode: 'ascii', text: 'version', newline: 'cr' }).ok, true)
-    console.log('  PASS Debug unlock profile/macro validation, fresh RX, split echo, rejection, cancel, reconnect and timeouts')
+    console.log('  PASS Device action profile/macro validation, fresh RX, split echo, rejection, cancel, reconnect and timeouts')
   } finally {
     await service.dispose('*')
     setMainWindow(null)
