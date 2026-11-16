@@ -8,17 +8,28 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { ArrowDown, ArrowRight, CopyDocument, Delete, Download, EditPen, FolderAdd, Plus, Timer, Upload, VideoCamera } from '@element-plus/icons-vue'
 import type { QuickCmd, QuickCmdStep } from '../../../shared/term-macro'
-import { TERM_KEYS, keyName, stepPreview, resolveDropInsertion } from '../../../shared/term-macro'
+import { TERM_KEYS, keyName, stepPreview, resolveDropInsertion, validatePlayback } from '../../../shared/term-macro'
 import { useTermMacros } from '../composables/useTermMacros'
 
 const props = defineProps<{
   /** 未连接时点击宏只提示不执行 */
   enabled: boolean
   /** 面板注入的步骤执行器（串口 / SSH / 本地终端写法不同） */
-  writer: (st: QuickCmdStep) => void
+  writer: (st: QuickCmdStep) => Promise<void> | void
+  /** 串口面板注入的设备动作执行器；不传则该面板不支持设备动作步骤 */
+  runDeviceAction?: (profile: string) => Promise<void>
+  getDeviceProfiles?: () => Promise<{ profiles: DeviceProfileInfo[]; error?: string }>
+  getConnectionGeneration?: () => number
   /** 空提示文案 */
   emptyHint?: string
 }>()
+
+interface DeviceProfileInfo {
+  id: string
+  label: string
+  /** 展示在步骤标签上的动作名（如「解锁 Debug」） */
+  actionLabel?: string
+}
 
 const {
   quickCmds,
@@ -48,6 +59,26 @@ const cmdDlg = ref(false)
 /** 正在编辑的宏索引；-1 = 新增 */
 const cmdEditIdx = ref(-1)
 const cmdDraft = reactive<QuickCmd>({ name: '', group: '', steps: [] })
+const deviceProfiles = ref<DeviceProfileInfo[]>([])
+const deviceConfigError = ref('')
+
+async function refreshDeviceProfiles(): Promise<void> {
+  if (!props.getDeviceProfiles) return
+  try {
+    const result = await props.getDeviceProfiles()
+    deviceProfiles.value = result.profiles
+    deviceConfigError.value = result.error ?? ''
+  } catch {
+    deviceProfiles.value = []
+    deviceConfigError.value = '无法读取设备动作配置'
+  }
+}
+
+/** 步骤标签：优先配置的 actionLabel（如「解锁 Debug」），未知配置退回「设备动作」 */
+function deviceActionLabel(profileId?: string): string {
+  if (!profileId) return '设备动作'
+  return deviceProfiles.value.find(({ id }) => id === profileId)?.actionLabel ?? '设备动作'
+}
 
 // ---------- 新建分组 ----------
 const newGroupDlg = ref(false)
@@ -154,11 +185,16 @@ function openCmdDlg(idx = -1, steps?: QuickCmdStep[], prefillGroup?: string): vo
       ? JSON.parse(JSON.stringify(steps))
       : []
   cmdDlg.value = true
+  void refreshDeviceProfiles()
 }
 
 async function onSaveCmd(): Promise<void> {
   if (!cmdDraft.name.trim() || cmdDraft.steps.length === 0) {
     ElMessage.warning('名称与至少一个步骤必填')
+    return
+  }
+  if (cmdDraft.steps.some((step) => step.type === 'device-action' && !step.profile)) {
+    ElMessage.warning(deviceConfigError.value || '请选择设备动作的设备配置')
     return
   }
   await saveCmd(
@@ -176,6 +212,7 @@ async function onSaveCmd(): Promise<void> {
 function addStep(type: QuickCmdStep['type']): void {
   if (type === 'cmd') cmdDraft.steps.push({ type: 'cmd', text: '', mode: 'ascii', crlf: true })
   else if (type === 'sleep') cmdDraft.steps.push({ type: 'sleep', ms: 500 })
+  else if (type === 'device-action') cmdDraft.steps.push({ type, profile: deviceProfiles.value[0]?.id ?? '' })
   else cmdDraft.steps.push({ type: 'key', key: '\r' })
 }
 
@@ -198,12 +235,28 @@ function onRecord(): void {
 }
 
 // ---------- 回放 ----------
-function onPlay(cmd: QuickCmd): void {
+async function onPlay(cmd: QuickCmd): Promise<void> {
   if (!props.enabled) {
     ElMessage.warning('连接未打开')
     return
   }
-  void playCmd(cmd, props.writer, () => props.enabled)
+  const usesAction = cmd.steps.some((step) => step?.type === 'device-action')
+  const generation = usesAction ? props.getConnectionGeneration?.() : undefined
+  const canContinue = (): boolean => props.enabled &&
+    (generation === undefined || generation === props.getConnectionGeneration?.())
+  if (usesAction && props.runDeviceAction) await refreshDeviceProfiles()
+  const error = validatePlayback(cmd, props.runDeviceAction ? deviceProfiles.value.map(({ id }) => id) : undefined)
+  if (error) {
+    ElMessage.warning(usesAction && props.runDeviceAction && deviceConfigError.value ? deviceConfigError.value : error)
+    return
+  }
+  if (!canContinue()) {
+    ElMessage.warning('连接已变化，请重新运行快捷命令')
+    return
+  }
+  try { await playCmd(cmd, props.writer, canContinue, props.runDeviceAction) } catch (failure) {
+    ElMessage.warning(failure instanceof Error ? failure.message : '快捷命令执行失败')
+  }
 }
 
 // ---------- 多选 / 拖拽（排序 + 分组移动） ----------
@@ -353,7 +406,7 @@ async function onImport(): Promise<void> {
           <el-button size="small" text :icon="FolderAdd" @click="newGroupDlg = true" />
         </el-tooltip>
         <el-tooltip content="新建命令（可设分组）" placement="top">
-          <el-button size="small" text :icon="Plus" @click="openCmdDlg(-1)" />
+          <el-button size="small" text :icon="Plus" aria-label="新建快捷命令" @click="openCmdDlg(-1)" />
         </el-tooltip>
         <el-tooltip content="导入配置：支持 DevKit JSON 与 MobaXterm 宏文件（.mxtmacros / ini）" placement="top">
           <el-button size="small" text :icon="Download" @click="onImport" />
@@ -559,6 +612,9 @@ async function onImport(): Promise<void> {
           <el-button size="small" text :icon="Plus" @click="addStep('cmd')">命令</el-button>
           <el-button size="small" text :icon="Timer" @click="addStep('sleep')">延时</el-button>
           <el-button size="small" text :icon="EditPen" @click="addStep('key')">按键</el-button>
+          <el-tooltip content="运行设备动作：解锁 / 授权等由部署配置定义的流程" placement="top">
+            <el-button v-if="runDeviceAction" size="small" text :icon="Plus" @click="addStep('device-action')">设备动作</el-button>
+          </el-tooltip>
         </span>
       </div>
       <div class="steps-list">
@@ -589,16 +645,27 @@ async function onImport(): Promise<void> {
             />
             <span class="hint">ms</span>
           </template>
-          <template v-else>
+          <template v-else-if="st.type === 'device-action'">
+            <el-tag size="small" effect="plain">{{ deviceActionLabel(st.profile) }}</el-tag>
+            <el-select v-model="st.profile" size="small" class="step-input" placeholder="选择设备动作">
+              <el-option v-if="st.profile && !deviceProfiles.some(({ id }) => id === st.profile)" :label="st.profile" :value="st.profile" disabled />
+              <el-option v-for="profile in deviceProfiles" :key="profile.id" :label="profile.label" :value="profile.id" />
+            </el-select>
+          </template>
+          <template v-else-if="st.type === 'key'">
             <el-tag size="small" type="warning" effect="plain">按键</el-tag>
             <el-select v-model="st.key" size="small" filterable class="step-input">
               <el-option v-for="k in TERM_KEYS" :key="k.name" :value="k.seq" :label="k.name" />
             </el-select>
             <span class="hint">{{ keyName(st.key ?? '') }}</span>
           </template>
+          <span v-else class="hint">不支持的步骤</span>
           <el-button link type="danger" size="small" @click="delStep(i)">
             <el-icon><Delete /></el-icon>
           </el-button>
+        </div>
+        <div v-if="deviceConfigError && cmdDraft.steps.some((step) => step.type === 'device-action')" class="hint">
+          {{ deviceConfigError }}
         </div>
         <div v-if="cmdDraft.steps.length === 0" class="hint" style="padding: 8px">
           尚无步骤：用上方「命令 / 延时 / 按键」按钮添加，或用录制按钮录下操作序列

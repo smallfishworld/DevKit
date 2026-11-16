@@ -9,7 +9,7 @@ import { dialog, app, shell, powerSaveBlocker } from 'electron'
 import { promises as fs } from 'node:fs'
 import { basename, join } from 'node:path'
 import type { ToolService } from '../../ipc'
-import { emitToolEvent } from '../../ipc'
+import { emitToolEvent, setWindowBackgroundThrottling } from '../../ipc'
 import type { SerialConfig, SerialEncoding, SerialParams, SerialTransferEvt, TransferProtocol } from '../../../shared/serial'
 import { DEFAULT_SERIAL_CONFIG } from '../../../shared/serial'
 import { getSection, setSection } from '../macro/configStore'
@@ -17,6 +17,10 @@ import { ByteQueue, TransferCancelled, ymodemRecv, ymodemSend } from './ymodem'
 import { zmodemRecv, zmodemSend } from './zmodem'
 import { TerminalRuntime } from '../terminal/runtime'
 import { fmtDuration, txAuditLine } from '../../../shared/logtext'
+import { DeviceActionLines, runDeviceAction, SerialSecretRedactor } from './device-actions'
+import type { DeviceActionResult, DeviceActionStage } from './device-actions'
+import { loadDeviceActionProvider } from './device-actions-provider'
+import type { DeviceActionProvider } from './device-actions-provider'
 
 interface RxPiece {
   buf: Buffer
@@ -53,6 +57,12 @@ interface SerialSession {
   suspendedDataNoted: boolean
   wakeBurstNotePending: boolean
   wakeBurstNoted: boolean
+  action?: {
+    controller: AbortController
+    locked: boolean
+    receive?: (text: string, receivedAt: number) => void
+  }
+  secrets?: SerialSecretRedactor
 }
 
 /** 进行中的传输（每面板最多一个） */
@@ -71,7 +81,9 @@ function serialLogDir(): string {
   return join(app.getPath('userData'), 'serial-logs')
 }
 
-class SerialService implements ToolService {
+export class SerialService implements ToolService {
+  constructor(private readonly actionProvider: () => Promise<DeviceActionProvider> = loadDeviceActionProvider) {}
+
   private runtime = new TerminalRuntime('serial')
   private powerBlockerId: number | null = null
   private viewVisible = new Map<string, boolean>()
@@ -108,6 +120,7 @@ class SerialService implements ToolService {
 
   /** Prevent automatic idle sleep while any serial session is capturing. */
   private syncCapturePower(): void {
+    setWindowBackgroundThrottling(sessions.size === 0)
     if (sessions.size && this.powerBlockerId === null) {
       this.powerBlockerId = powerSaveBlocker?.start?.('prevent-app-suspension') ?? null
     } else if (!sessions.size && this.powerBlockerId !== null) {
@@ -151,7 +164,10 @@ class SerialService implements ToolService {
     const decoded: Array<{ text: string; receivedAt: number }> = []
     for (const piece of pieces) {
       const text = s.decoder.write(piece.buf)
-      if (text) decoded.push({ text, receivedAt: piece.time })
+      if (!text) continue
+      s.action?.receive?.(text, piece.time)
+      if (s.secrets) s.secrets.push(text, piece.time, (part, receivedAt) => decoded.push({ text: part, receivedAt }))
+      else decoded.push({ text, receivedAt: piece.time })
     }
     // Disk records keep per-callback times; the renderer still receives one
     // coalesced output per 32 ms batch, preserving the existing UI throughput.
@@ -171,6 +187,15 @@ class SerialService implements ToolService {
     }
     if (this.runtime.handles(action)) return this.runtime.invoke(panelId, action, payload)
     switch (action) {
+      case 'action:profiles':
+        return this.actionProvider().then(({ config }) => ({
+          profiles: config.profiles.map(({ id, label }) => ({ id, label }))
+        })).catch((error: Error) => ({ profiles: [], error: error.message }))
+      case 'action:run':
+        return this.startDeviceAction(panelId, (payload as { profile?: unknown } | undefined)?.profile)
+      case 'action:cancel':
+        sessions.get(panelId)?.action?.controller.abort(new Error('已取消设备动作'))
+        return true
       case 'view:visible':
         this.viewVisible.set(panelId, Boolean((payload as { visible: boolean }).visible))
         this.applyViewVisibility(panelId)
@@ -266,6 +291,7 @@ class SerialService implements ToolService {
   onSystemSuspend(): void {
     const now = Date.now()
     for (const [panelId, s] of sessions) {
+      s.action?.controller.abort(new Error('系统进入休眠，设备动作已终止'))
       // Flush already received bytes before the sleep marker, otherwise a pending
       // 32 ms batch can appear *after* the suspend timestamp in the disk log.
       if (s.flushTimer) { clearTimeout(s.flushTimer); s.flushTimer = null }
@@ -285,8 +311,8 @@ class SerialService implements ToolService {
    * - 日志标注休眠时长，便于事后定位"为什么这里缺了一段"；
    * - 不自动清除驱动缓存：尽量保存唤醒后仍可读取的所有数据。
    *   实测唤醒瞬间会一次性吐出几百 KB 的重复/残片（曾见单批 6611 行、单行 2.7KB 无终止符），
-   *   把这些当新数据渲染进终端，用户看到的就是"终端在放录像、输入不生效"；
-   * - 只通知渲染端，不擅自复位设备（改 DTR 会复位部分嵌入式板，交给用户点按钮决定）。
+   *   用现有分帧与 ACK 水位消化积压，保持数据顺序和 VT 解析状态；
+   * - 保持原终端解析与回滚；不自动重开或复位设备。
    */
   onSystemResume(): void {
     const now = Date.now()
@@ -307,7 +333,7 @@ class SerialService implements ToolService {
           ? `===== 系统唤醒（休眠 ${fmtDuration(gap)}；主机接收时间不代表设备产生时间） =====`
           : '===== 系统唤醒 ====='
       )
-      // Never purge RX; prevent the driver's burst from being animated in xterm.
+      // Preserve the terminal parser and scrollback while processing driver output.
       this.emit(panelId, 'resume', { gapMs: gap })
       this.cancelResumeHold(panelId)
       if (gap >= 30_000) {
@@ -353,6 +379,7 @@ class SerialService implements ToolService {
     try {
       await this.runtime.start(panelId, {
         dir: cfg.logDir || serialLogDir(), name: params.path, temporary: !cfg.autoLog,
+        keepParsingWhenHidden: true,
         pause: (paused) => {
           // Without RTS/CTS, keep capturing to disk; pausing the host cannot stop the device.
           if (sessions.get(panelId) !== session || !params.rtscts) return
@@ -426,11 +453,15 @@ class SerialService implements ToolService {
   private async close(panelId: string): Promise<{ ok: boolean }> {
     const s = sessions.get(panelId)
     if (!s) return { ok: true }
+    s.action?.controller.abort(new Error('串口已断开，设备动作已终止'))
     if (s.flushTimer) clearTimeout(s.flushTimer)
     s.flushTimer = null
     this.flush(panelId)
     const tail = s.decoder.end()
-    if (tail) this.runtime.data(panelId, tail)
+    if (s.secrets) {
+      if (tail) s.secrets.push(tail, Date.now(), (text, at) => this.runtime.data(panelId, text, at))
+      this.runtime.data(panelId, s.secrets.finish())
+    } else if (tail) this.runtime.data(panelId, tail)
     sessions.delete(panelId)
     this.syncCapturePower()
     this.cancelResumeHold(panelId)
@@ -452,6 +483,7 @@ class SerialService implements ToolService {
   ): { ok: boolean; error?: string; bytes?: number } {
     const s = sessions.get(panelId)
     if (!s) return { ok: false, error: '串口未打开' }
+    if (s.action?.locked) return { ok: false, error: '设备动作正在使用此串口' }
     // 与渲染端相同的组包规则（主进程兜底解析）
     const nl = p.newline === 'crlf' ? '\r\n' : p.newline === 'lf' ? '\n' : p.newline === 'cr' ? '\r' : ''
     let buf: Buffer
@@ -466,26 +498,116 @@ class SerialService implements ToolService {
     }
     if (buf.length === 0) return { ok: false, error: '发送内容为空' }
     s.port.write(buf)
-    s.txBytes += buf.length
     // HEX 发送按字节审计记录（二进制过 toString('utf8') 会把 0x1b 当 ANSI 剥掉、非法字节变 U+FFFD）
     // ASCII 发送记录解码前文本（buf 可能是 GBK 编码，toString('utf8') 会乱码；hex 模式不存在多字节问题）；
     // txAuditLine 把控制字符转成可见字面量：一次发送 = 一行日志（否则正文里的 \r 会被换行归一拆成幻影空行）
     const auditText = p.mode === 'hex' ? buf.toString('hex').replace(/../g, '$& ').trim() : txAuditLine(p.text + nl)
+    this.recordWrite(panelId, s, buf.length, auditText)
+    return { ok: true, bytes: buf.length }
+  }
+
+  private recordWrite(panelId: string, s: SerialSession, bytes: number, auditText: string): void {
+    s.txBytes += bytes
     this.runtime.note(panelId, auditText)
     this.emit(panelId, 'tx', {
       text: auditText,
-      bytes: buf.length,
+      bytes,
       time: Date.now(),
       rxBytes: s.rxBytes,
       txBytes: s.txBytes
     })
-    return { ok: true, bytes: buf.length }
+  }
+
+  private async startDeviceAction(panelId: string, profileId: unknown): Promise<DeviceActionResult> {
+    const s = sessions.get(panelId)
+    if (!s?.port.isOpen) return { ok: false, error: '串口未打开' }
+    if (s.action || transfers.has(panelId)) return { ok: false, error: '该串口有设备动作或文件传输正在运行' }
+    const task: NonNullable<SerialSession['action']> = { controller: new AbortController(), locked: false }
+    s.action = task
+    const signal = task.controller.signal
+    let responseSent = false
+    const setStage = (stage: DeviceActionStage): void => this.emit(panelId, 'action:stage', { stage })
+    function checkConnection(): void {
+      signal.throwIfAborted()
+      if (sessions.get(panelId) !== s || !s?.port.isOpen) throw new Error('串口连接已变化')
+    }
+
+    try {
+      setStage('checking')
+      const provider = await this.actionProvider()
+      const profile = provider.config.profiles.find(({ id }) => id === profileId)
+      if (!profile) throw new Error('找不到此设备动作的配置')
+      checkConnection()
+      await runDeviceAction(provider, profile, signal, () => {
+        checkConnection()
+        if (transfers.has(panelId)) throw new Error('已有文件传输进行中')
+        task.locked = true
+      }, async (text, secret, timeoutMs, match) => {
+        checkConnection()
+        // Consume queued output before installing the matcher. Only new RX can satisfy it.
+        this.flush(panelId)
+        const lines = new DeviceActionLines()
+        const bytes = Buffer.from(text, 'ascii')
+        if (secret) {
+          s.secrets ??= new SerialSecretRedactor()
+          s.secrets.add(text.trimEnd())
+        }
+        return await new Promise((resolve, reject) => {
+          let settled = false
+          const onAbort = (): void => finish(signal.reason)
+          const timer = setTimeout(() => finish(new Error(secret
+            ? '口令已发送，未收到设备的明确结果'
+            : '等待设备挑战码超时')), timeoutMs)
+          function finish(error?: Error, result?: { value: string; receivedAt: number }): void {
+            if (settled) return
+            settled = true
+            clearTimeout(timer)
+            signal.removeEventListener('abort', onAbort)
+            task.receive = undefined
+            if (result) resolve(result)
+            else reject(error)
+          }
+          signal.addEventListener('abort', onAbort, { once: true })
+          task.receive = (data, receivedAt) => {
+            lines.push(data, (line) => {
+              try {
+                const value = match(line)
+                if (!value) return false
+                finish(undefined, { value, receivedAt })
+              } catch (error) { finish(error as Error) }
+              return true
+            })
+          }
+          try {
+            s.port.write(bytes, (error) => {
+              if (error) finish(new Error(secret ? '口令写入异常，设备结果未确认' : '发送设备动作命令失败'))
+            })
+            responseSent ||= secret
+            this.recordWrite(panelId, s, bytes.length, secret ? '[设备动作口令已隐藏]' : txAuditLine(text))
+          } catch {
+            finish(new Error(secret ? '口令写入异常，设备结果未确认' : '发送设备动作命令失败'))
+          }
+        })
+      }, setStage)
+      checkConnection()
+      this.runtime.note(panelId, '[DevKit] 设备动作成功')
+      return { ok: true }
+    } catch (error) {
+      if (task.locked && sessions.get(panelId) === s && !signal.aborted) {
+        this.runtime.note(panelId, '[DevKit] 设备动作未完成')
+      }
+      if (responseSent && signal.aborted) return { ok: false, error: '口令已发送，设备结果未确认' }
+      return { ok: false, error: error instanceof Error ? error.message : '设备动作失败' }
+    } finally {
+      if (s.action === task) s.action = undefined
+    }
   }
 
   /** 热切换收发编码：只影响之后的线上字节；切换前已按旧编码解码的显示/日志不回溯。
    *  替换整个流式解码器——旧解码器里滞留的多字节尾巴按新编码解释必然错位 */
-  private setEncoding(panelId: string, encoding: SerialEncoding): { ok: boolean } {
+  private setEncoding(panelId: string, encoding: SerialEncoding): { ok: boolean; error?: string } {
     const s = sessions.get(panelId)
+    if (s?.action?.locked) return { ok: false, error: '设备动作正在使用此串口' }
     if (s) {
       s.encoding = encoding
       s.decoder = makeDecoder(encoding)
@@ -496,6 +618,7 @@ class SerialService implements ToolService {
   private setFlow(panelId: string, bits: { dtr?: boolean; rts?: boolean }): Promise<{ ok: boolean; error?: string }> {
     const s = sessions.get(panelId)
     if (!s) return Promise.resolve({ ok: false, error: '串口未打开' })
+    if (s.action?.locked) return Promise.resolve({ ok: false, error: '设备动作正在使用此串口' })
     return new Promise((resolve) => {
       s.port.set(bits, (err) => resolve(err ? { ok: false, error: err.message } : { ok: true }))
     })
@@ -553,6 +676,7 @@ class SerialService implements ToolService {
   private async fileSend(panelId: string, p: { protocol: TransferProtocol; path: string }): Promise<{ ok: boolean; error?: string }> {
     const s = sessions.get(panelId)
     if (!s) return { ok: false, error: '串口未打开' }
+    if (s.action?.locked) return { ok: false, error: '设备动作正在使用此串口' }
     if (transfers.has(panelId)) return { ok: false, error: '已有传输进行中' }
     let data: Buffer
     try {
@@ -560,6 +684,9 @@ class SerialService implements ToolService {
     } catch (err) {
       return { ok: false, error: `读取文件失败：${err instanceof Error ? err.message : String(err)}` }
     }
+    if (sessions.get(panelId) !== s) return { ok: false, error: '串口连接已变化' }
+    if (s.action?.locked) return { ok: false, error: '设备动作正在使用此串口' }
+    if (transfers.has(panelId)) return { ok: false, error: '已有传输进行中' }
     const name = basename(p.path)
     const write = (buf: Buffer): void => {
       s.port.write(buf)
@@ -627,6 +754,7 @@ class SerialService implements ToolService {
   private async fileRecv(panelId: string, p: { protocol: TransferProtocol; dir: string }): Promise<{ ok: boolean; error?: string; saved?: string[] }> {
     const s = sessions.get(panelId)
     if (!s) return { ok: false, error: '串口未打开' }
+    if (s.action?.locked) return { ok: false, error: '设备动作正在使用此串口' }
     if (transfers.has(panelId)) return { ok: false, error: '已有传输进行中' }
     const write = (buf: Buffer): void => {
       s.port.write(buf)

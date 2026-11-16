@@ -25,8 +25,9 @@ async function main() {
   globalThis.terminalTestDir = dir
   const events = []
   const failures = []
+  let throttling = true
   let acknowledge = true
-  setMainWindow({ isDestroyed: () => false, webContents: { send: (_channel, event) => {
+  setMainWindow({ isDestroyed: () => false, webContents: { setBackgroundThrottling: (allowed) => { throttling = allowed }, send: (_channel, event) => {
     events.push(event)
     if (event.type === 'error') failures.push(event.payload)
     if (acknowledge && event.type === 'data') queueMicrotask(() => {
@@ -108,7 +109,9 @@ async function main() {
     assert.equal(powerSaveBlocker.activeCount, 1)
     await serialService.invoke('sleep-a', 'close')
     assert.equal(powerSaveBlocker.activeCount, 1, 'other session still holds the blocker')
+    assert.equal(throttling, false)
     await serialService.invoke('sleep-b', 'close')
+    assert.equal(throttling, true)
     assert.equal(powerSaveBlocker.activeCount, 0)
     const wakePage = await serialService.invoke('sleep-a', 'history:query', {})
     const wakeText = wakePage.rows.map(row => row.text).join('\n')
@@ -137,13 +140,11 @@ async function main() {
     } finally { Date.now = timeNow }
     const wakeFramesBefore = events.filter(e => e.panelId === 'wake-ui' && e.type === 'data').length
     wakingPort.emit('data', Buffer.concat([Buffer.alloc(150 * 1024, 120), Buffer.from('\r\nLATEST-WAKE\r\n')]))
-    assert.equal(events.filter(e => e.panelId === 'wake-ui' && e.type === 'data').length, wakeFramesBefore,
-      'post-wake driver burst must not be animated')
     await waitFor(() => !serialService.resumeHold.has('wake-ui'))
     const recovered = events.filter(e => e.panelId === 'wake-ui' && e.type === 'data').slice(wakeFramesBefore)
     const recoveredText = recovered.map(e => e.payload.text).join('')
-    assert.ok(recoveredText.length <= 9 * 1024, 'show only latest context after wake')
-    assert.ok(recoveredText.includes('LATEST-WAKE'))
+    assert.equal(recoveredText, 'x'.repeat(150 * 1024) + '\r\nLATEST-WAKE\r\n', 'all driver bytes must reach the same terminal in order')
+    assert.equal(events.filter(e => e.panelId === 'wake-ui' && e.type === 'output:resync').length, 0)
     const wakeUncertain = await serialService.invoke('wake-ui', 'history:query', {
       query: '唤醒后驱动积压数据'
     })
@@ -153,7 +154,7 @@ async function main() {
     assert.ok(wakeTail.rows.some(r => r.text.includes('LATEST-WAKE')))
     await serialService.invoke('wake-ui', 'close')
     await serialService.dispose('wake-ui')
-    console.log('  PASS post-suspend driver burst remains in history without UI fast-forward')
+    console.log('  PASS post-suspend driver burst preserves complete terminal output and archive')
 
     const opening = serialService.invoke('serial-pending', 'open', { ...DEFAULT_SERIAL_PARAMS, path: 'COM2' })
     const disposing = serialService.dispose('serial-pending')

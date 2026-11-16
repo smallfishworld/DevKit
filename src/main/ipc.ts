@@ -15,6 +15,15 @@ export function setMainWindow(win: BrowserWindow | null): void {
   mainWindow = win
 }
 
+export function getMainWindow(): BrowserWindow | null {
+  return mainWindow
+}
+
+/** Keep parser callbacks running while the main window is receiving serial data. */
+export function setWindowBackgroundThrottling(allowed: boolean): void {
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.setBackgroundThrottling(allowed)
+}
+
 export function registerService(tool: string, service: ToolService): void {
   services.set(tool, service)
 }
@@ -27,8 +36,12 @@ export function emitToolEvent(tool: string, panelId: string, type: string, paylo
 }
 
 export function registerToolIpc(): void {
-  ipcMain.handle('tool:invoke', async (_event, req: ToolInvoke) => {
+  ipcMain.handle('tool:invoke', async (event, req: ToolInvoke) => {
     const { tool, panelId, action, payload } = req
+    if (tool === 'serial' && typeof action === 'string' && action.startsWith('action:')) {
+      if (!mainWindow || event.sender !== mainWindow.webContents ||
+        event.senderFrame !== mainWindow.webContents.mainFrame) throw new Error('无权调用设备动作')
+    }
     const service = services.get(tool)
     if (!service) {
       // dispose 宽松处理：纯前端工具（如计算器）没有后端服务

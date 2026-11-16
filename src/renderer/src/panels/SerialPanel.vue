@@ -21,7 +21,6 @@ import { ByteCounterThrottle } from '../../../shared/terminal-stream'
 import QuickCmdManager from '@renderer/components/QuickCmdManager.vue'
 import type { SerialConfig, SerialEncoding, SerialParams, SerialTransferEvt, TransferProtocol } from '../../../shared/serial'
 import { BAUD_RATES } from '../../../shared/serial'
-import { fmtDuration } from '../../../shared/logtext'
 import type { VtGuardStats } from '../../../shared/vtguard'
 import type { QuickCmdStep } from '../../../shared/term-macro'
 import { useTermMacros } from '../composables/useTermMacros'
@@ -56,6 +55,7 @@ const params = reactive<SerialParams>({
   rtscts: false
 })
 const open = ref(false)
+let connectionGeneration = 0
 const opening = ref(false)
 const rxBytes = ref(0)
 const txBytes = ref(0)
@@ -68,6 +68,11 @@ function updateBytesThrottled(rx: number, tx: number): void { byteCounter.update
 const dtrOn = ref(false)
 const rtsOn = ref(false)
 const signals = ref<{ cts: boolean; dsr: boolean; dcd: boolean } | null>(null)
+const actionStage = ref('')
+const stageLabels: Record<string, string> = {
+  checking: '检查内网登录', login: '等待 OA 登录', challenge: '等待设备挑战码',
+  issue: '获取授权口令', verify: '等待设备确认结果'
+}
 
 // ---------- 终端（TerminalView 共享组件：xterm.js 封装） ----------
 const termView = ref<InstanceType<typeof TerminalView> | null>(null)
@@ -100,22 +105,12 @@ function syncViewVisibility(): void {
 }
 watch(() => tabStore.activeId, syncViewVisibility)
 
-/** 系统长休眠唤醒提示：串口链路可能已失步，给一键重开（不自动复位——DTR 抖动会复位部分设备） */
-const resumeHint = ref<string | null>(null)
-function dismissResumeHint(): void {
-  resumeHint.value = null
-}
-async function reopenFromResumeHint(): Promise<void> {
-  resumeHint.value = null
-  await closePort()
-  await openPort()
-}
 const TERM_SIZES = [10, 11, 12, 13, 14, 15, 16, 17, 18, 20, 22, 24, 26, 28]
 
 
 /** 键盘直入：原样发串口（Enter 发 \r，与真实终端一致）；录制时同步记录 */
 function onTermData(data: string): void {
-  if (!open.value) return
+  if (!open.value || actionStage.value) return
   if (recording.value) recordTermKey(data)
   window.api
     .invoke('serial', 'write', props.panelId, { mode: 'ascii', text: data, newline: 'none' })
@@ -172,6 +167,27 @@ function macroWriter(st: QuickCmdStep): void {
   if (st.type === 'key') writeCmd(st.key ?? '', 'ascii', 'none')
   else if (st.mode === 'hex') writeCmd(st.text ?? '', 'hex', 'none')
   else writeCmd(st.text ?? '', 'ascii', st.crlf ? 'crlf' : 'none')
+}
+
+async function getDeviceProfiles(): Promise<{ profiles: { id: string; label: string; actionLabel?: string }[]; error?: string }> {
+  return await window.api.invoke('serial', 'action:profiles', props.panelId) as Awaited<ReturnType<typeof getDeviceProfiles>>
+}
+
+async function runDeviceAction(profile: string): Promise<void> {
+  if (actionStage.value) throw new Error('本串口正在执行设备动作')
+  stopLoop()
+  actionStage.value = stageLabels.checking
+  try {
+    const result = await window.api.invoke('serial', 'action:run', props.panelId, { profile }) as { ok: boolean; error?: string }
+    if (!result.ok) throw new Error(result.error ?? '设备动作失败')
+    ElMessage.success('设备动作成功')
+  } finally {
+    actionStage.value = ''
+  }
+}
+
+function cancelDeviceAction(): void {
+  void window.api.invoke('serial', 'action:cancel', props.panelId).catch(() => ElMessage.warning('无法取消设备动作'))
 }
 
 // ---------- 文件传输（YMODEM / ZMODEM） ----------
@@ -296,6 +312,7 @@ onMounted(async () => {
     }),
     window.api.on('serial', props.panelId, 'status', (p) => {
       const s = p as { open: boolean; error?: string }
+      if (open.value !== s.open) connectionGeneration++
       open.value = s.open
       if (!s.open) {
         dtrOn.value = false
@@ -308,14 +325,11 @@ onMounted(async () => {
     window.api.on('serial', props.panelId, 'error', (p) => {
       ElMessage.warning(`串口错误：${(p as { message: string }).message}`)
     }),
-    window.api.on('serial', props.panelId, 'transfer', onTransferEvt),
-    window.api.on('serial', props.panelId, 'resume', (p) => {
-      // Genuine system suspend may cause a non-recoverable hardware gap.
-      const gap = (p as { gapMs: number }).gapMs
-      if (!open.value || gap < 30_000) return
-      resumeHint.value = `系统休眠 ${fmtDuration(gap)}，串口可能已失步（设备不回显、屏幕不刷新）。`
+    window.api.on('serial', props.panelId, 'action:stage', (p) => {
+      const label = stageLabels[(p as { stage: string }).stage]
+      if (actionStage.value && label) actionStage.value = label
     }),
-
+    window.api.on('serial', props.panelId, 'transfer', onTransferEvt)
   )
   const res = (await window.api.invoke('serial', 'attach', props.panelId)) as {
     config: SerialConfig
@@ -337,6 +351,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  connectionGeneration++
   document.removeEventListener('visibilitychange', syncViewVisibility)
   unsubs.forEach((u) => u())
   unsubs = []
@@ -373,8 +388,7 @@ async function openPort(): Promise<void> {
     open.value = true
     dtrOn.value = true
     rtsOn.value = true
-    // 重开串口 = 新会话：防护提示/洪泛提示/唤醒横幅全部按新会话重置
-    resumeHint.value = null
+    // 重开串口 = 新会话：防护提示/洪泛提示按新会话重置
     guardNotified = false
     altScreenNoted = false
     // 真正拉高 DTR/RTS（仅改 UI 状态不下发时，部分需要复位才能工作的设备会卡住）
@@ -391,6 +405,7 @@ async function openPort(): Promise<void> {
 }
 
 async function closePort(): Promise<void> {
+  connectionGeneration++
   stopSignalPoll()
   await window.api.invoke('serial', 'close', props.panelId)
   open.value = false
@@ -432,6 +447,10 @@ async function toggleRts(): Promise<void> {
 
 // ---------- 发送 ----------
 function doSend(text: string, mode: 'ascii' | 'hex', newline: 'none' | 'crlf' | 'lf' | 'cr'): void {
+  if (actionStage.value) {
+    ElMessage.warning('设备解锁正在使用此串口')
+    return
+  }
   if (!open.value) {
     ElMessage.warning('串口未打开')
     return
@@ -461,7 +480,7 @@ function send(): void {
 }
 
 function startLoop(): void {
-  if (loopOn.value) return
+  if (loopOn.value || actionStage.value) return
   if (!sendText.value.trim()) {
     ElMessage.warning('请先填写发送内容')
     return
@@ -673,7 +692,17 @@ async function deleteSession(idx: number): Promise<void> {
             暂无会话。配置好参数后输入名称保存。
           </div>
 
-          <QuickCmdManager :enabled="open" :writer="macroWriter" />
+          <div v-if="actionStage" role="status">
+            {{ actionStage }}
+            <el-button size="small" text @click="cancelDeviceAction">取消动作</el-button>
+          </div>
+          <QuickCmdManager
+            :enabled="open"
+            :writer="macroWriter"
+            :run-device-action="runDeviceAction"
+            :get-device-profiles="getDeviceProfiles"
+            :get-connection-generation="() => connectionGeneration"
+          />
         </div>
 
         <!-- 拖动调整会话栏宽度（VS Code 式分隔条）；中央折叠把手 -->
@@ -779,16 +808,11 @@ async function deleteSession(idx: number): Promise<void> {
             RX <b>{{ rxBytes }}</b> TX <b>{{ txBytes }}</b>
           </span>
         </div>
-        <div v-if="resumeHint" class="resume-hint">
-          <span class="resume-text">{{ resumeHint }}</span>
-          <el-button size="small" type="primary" text @click="reopenFromResumeHint">重开串口</el-button>
-          <el-button size="small" text @click="dismissResumeHint">忽略</el-button>
-        </div>
         <TerminalView
           ref="termView"
           v-model:font-size="termFontSize"
           :font="termFont"
-          :local-echo="localEcho"
+          :local-echo="localEcho && !actionStage"
           :show-time="showTime"
           :guard-scrollback="true"
           :history-panel-id="props.panelId"
@@ -1101,25 +1125,6 @@ async function deleteSession(idx: number): Promise<void> {
   margin-left: auto;
   font-size: 12px;
   color: var(--el-text-color-secondary);
-}
-
-/* 长休眠唤醒提示条：非阻塞，不挡终端输入 */
-.resume-hint {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 8px;
-  margin-bottom: 6px;
-  font-size: 12px;
-  color: var(--el-color-warning);
-  background: var(--el-color-warning-light-9);
-  border: 1px solid var(--el-color-warning-light-5);
-  border-radius: 8px;
-}
-
-.resume-text {
-  flex: 1;
-  min-width: 0;
 }
 
 .counters b {

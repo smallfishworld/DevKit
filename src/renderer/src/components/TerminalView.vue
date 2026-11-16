@@ -12,6 +12,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
 import { WebglAddon } from '@xterm/addon-webgl'
 import TerminalHistoryInline from './TerminalHistoryInline.vue'
+import { LiveSearchRefresh, refreshSearchHighlights } from './termSearch'
 import '@xterm/xterm/css/xterm.css'
 import { resolveGlobalKey, resolveMouseDown, resolveTermKey, localEchoFor } from './termInput'
 import { fmtStamp, stampLines } from '../../../shared/logtext'
@@ -108,6 +109,12 @@ function recreateWebgl(): void {
   }
 }
 
+/** Preserve the parser geometry while a v-show tab has no layout box. */
+function fitVisibleTerminal(): void {
+  const box = termBox.value
+  if (box && box.clientWidth > 0 && box.clientHeight > 0) fitAddon?.fit()
+}
+
 /** 窗口最小化/隐藏时 Windows 会丢失 GPU 上下文，回到可见时重建 WebGL 渲染器避免花屏 */
 function onVisibilityChange(): void {
   if (document.hidden) {
@@ -115,7 +122,7 @@ function onVisibilityChange(): void {
     webglAddon = null
   } else if (term) {
     recreateWebgl()
-    fitAddon?.fit()
+    fitVisibleTerminal()
   }
 }
 
@@ -137,6 +144,9 @@ onMounted(() => {
   searchAddon = new SearchAddon()
   term.loadAddon(searchAddon)
   searchAddon.onDidChangeResults(onSearchResults)
+  term.onWriteParsed(() => {
+    if (searchOpen.value && searchTerm.value) liveSearchRefresh.request()
+  })
   // 查找打开期间用户点击终端后锁定选区操作：SearchAddon 在每次终端写入后会延时
   // findPrevious(incremental) 重新 select 命中项，把用户刚拖出的手动选区顶掉。
   // 锁定期间 addon 的 select/clearSelection 变为空操作（高亮装饰不受影响），
@@ -151,7 +161,7 @@ onMounted(() => {
     if (!selectionLocked) boundClearSelection()
   }
   term.open(termBox.value)
-  fitAddon.fit()
+  fitVisibleTerminal()
 
   // WebGL 渲染器：刷屏日志高吞吐下性能远优于默认 DOM 渲染器
   // （GPU 不可用时 addon 会告警并自动回退 DOM，不影响功能）
@@ -174,7 +184,7 @@ onMounted(() => {
   let lastFitAt = 0
   const runFit = (): void => {
     try {
-      fitAddon?.fit()
+      fitVisibleTerminal()
     } catch {
       /* 容器 0 尺寸时 fit 可能抛错，忽略 */
     }
@@ -254,6 +264,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  liveSearchRefresh.cancel()
   window.removeEventListener('keydown', onGlobalKeydown, true)
   document.removeEventListener('visibilitychange', onVisibilityChange)
   termBox.value?.removeEventListener('wheel', onWheel)
@@ -385,7 +396,7 @@ function setFontSize(size: number): void {
   if (!term || !fitAddon) return
   term.options.fontSize = size
   try {
-    fitAddon.fit()
+    fitVisibleTerminal()
   } catch {
     /* 忽略 0 尺寸 */
   }
@@ -421,6 +432,11 @@ const searchInfo = ref('')
 const searchInput = ref<HTMLInputElement | null>(null)
 /** 查找打开期间点击终端后置位：抑制 addon 偷换选区，doSearch 时复位 */
 let selectionLocked = false
+const liveSearchRefresh = new LiveSearchRefresh(() => {
+  if (searchOpen.value && searchTerm.value && term && searchAddon) {
+    refreshSearchHighlights(term, searchAddon, searchTerm.value, { decorations: SEARCH_DECORATIONS })
+  }
+})
 
 function onSearchResults(r: { resultCount: number; resultIndex: number }): void {
   // 无结果或结果未变化时不显示计数
@@ -451,6 +467,7 @@ function resetSearchAddon(): void {
 }
 
 function closeSearch(refocus = true): void {
+  liveSearchRefresh.cancel()
   searchOpen.value = false
   // 先解锁再清选区：锁定期间 clearSelection 被包装为空操作，不复位会清不掉
   selectionLocked = false
@@ -471,6 +488,7 @@ const SEARCH_DECORATIONS = {
 }
 
 function doSearch(next: boolean): void {
+  liveSearchRefresh.cancel()
   // 用户主动触发查找（输入/Enter/↑/↓）时解除选区锁定，命中导航恢复正常
   selectionLocked = false
   // 关键词被清空时也要清除查找高亮与选区，否则「删除后仍在查找」
