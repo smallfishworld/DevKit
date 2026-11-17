@@ -89,6 +89,7 @@ async function main(): Promise<void> {
   await until(() => click('.el-tabs__item', '已安装插件'), '插件安装页')
   await until(() => fill('input[placeholder="插件目录或 JSON 插件包路径"]', join(userData, 'responder.json')), '插件包路径')
   await until(() => click('.install-row button', '安装'), '安装独立JSON插件包')
+  await until(() => click('.el-message-box__btns button', '信任来源并安装'), '确认可信插件代码执行')
   await until(() => text('.package-card', 'devkit.text-hex-responder'), '插件注册成功')
   await until(() => js<boolean>('(() => {const card=[...document.querySelectorAll(".package-card")].find(x=>x.textContent.includes("devkit.text-hex-responder"));const b=card&&[...card.querySelectorAll("button")].find(x=>x.textContent.includes("新建配置"));if(!b)return false;b.click();return true;})()'), '新建插件配置')
   await until(() => fill('input[placeholder="如：COM3 调试设备"]', '插件集成测试'), '实例名称')

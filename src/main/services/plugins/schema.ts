@@ -2,6 +2,19 @@ import type { PluginConfigSchema } from '../../../shared/plugins'
 
 const supported = new Set(['type','title','description','default','enum','properties','required','additionalProperties','items','minimum','maximum','minLength','maxLength','minItems','maxItems','pattern','$schema'])
 const forbiddenKeys = new Set(['__proto__', 'prototype', 'constructor'])
+/** Reject patterns with nested repetition, backreferences or assertions before main-process RegExp.test.
+ * This deliberately supports only a conservative subset; JavaScript RegExp is not a safe regex engine.
+ */
+export function safeConfigPattern(pattern: string): boolean {
+  if (pattern.length > 128 || /\\[1-9]|\(\?/.test(pattern)) return false
+  // Reject quantified groups containing another quantifier, e.g. (a+)+, (a|aa)*.
+  if (/\([^()]*[+*{][^()]*\)[+*?{]/.test(pattern)) return false
+  // Repetition on groups with alternatives can cause exponential backtracking.
+  if (/\([^()]*\|[^()]*\)[+*?{]/.test(pattern)) return false
+  // Consecutive repetitions are ambiguous and often catastrophic.
+  if (/[+*?}][+*?{]/.test(pattern)) return false
+  return true
+}
 const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value)
 function fail(path: string, message: string): never { throw new Error(path + ': ' + message) }
 
@@ -12,7 +25,7 @@ export function validateSchema(value: unknown, path = 'configSchema', depth = 0)
   if (value.type !== undefined && !['object','array','string','number','integer','boolean','null'].includes(String(value.type))) fail(path, '不支持type')
   for (const name of ['title','description','pattern']) if (value[name] !== undefined && typeof value[name] !== 'string') fail(path, name + '须为字符串')
   if (typeof value.pattern === 'string') {
-    if (value.pattern.length > 256) fail(path, 'pattern过长')
+    if (!safeConfigPattern(value.pattern)) fail(path, 'pattern含不安全或不支持的复杂正则')
     try { new RegExp(value.pattern) } catch { fail(path, 'pattern不是有效正则') }
   }
   if (value.enum !== undefined && (!Array.isArray(value.enum) || !value.enum.length || value.enum.length > 100)) fail(path, 'enum须为1至100项数组')
@@ -48,7 +61,10 @@ export function validateConfig(value: unknown, schema: PluginConfigSchema, path 
   if (typeof value === 'string') {
     if (schema.minLength !== undefined && value.length < schema.minLength) fail(path, '长度不足')
     if (schema.maxLength !== undefined && value.length > schema.maxLength) fail(path, '长度超限')
-    if (schema.pattern && !new RegExp(schema.pattern).test(value)) fail(path, '格式不匹配')
+    if (schema.pattern) {
+      if (!safeConfigPattern(schema.pattern) || value.length > 4096) fail(path, '正则匹配输入过长或pattern不安全')
+      if (!new RegExp(schema.pattern).test(value)) fail(path, '格式不匹配')
+    }
   }
   if (typeof value === 'number') {
     if (schema.minimum !== undefined && value < schema.minimum) fail(path, '小于最小值')
