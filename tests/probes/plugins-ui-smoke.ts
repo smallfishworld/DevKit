@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
-import { app, BrowserWindow, ipcMain } from 'electron'
+import { app, BrowserWindow, ipcMain, utilityProcess } from 'electron'
 import { SerialPort } from 'serialport'
 import { registerService, registerToolIpc, setMainWindow, disposeAllPanels } from '../../src/main/ipc'
 import { SerialService } from '../../src/main/services/serial'
@@ -14,6 +14,8 @@ import { DEFAULT_SERIAL_CONFIG, DEFAULT_SERIAL_PARAMS } from '../../src/shared/s
 
 const portName = 'COM-PLUGIN-SMOKE'
 const sent: string[] = []
+const sentBytes: Buffer[] = []
+const children: Array<{ kill(): unknown }> = []
 let panelId = ''
 let win: BrowserWindow | undefined
 
@@ -37,6 +39,7 @@ async function main(): Promise<void> {
   }
   simulated.list = async () => [{ path: portName, manufacturer: 'DevKit fixture' }]
   simulated.prototype.write = function(data, done) {
+    sentBytes.push(Buffer.from(data))
     sent.push(Buffer.from(data).toString('utf8'))
     done?.()
   }
@@ -47,7 +50,12 @@ async function main(): Promise<void> {
     return invoke(id, action, payload)
   }
   const plugins = new PluginService(serial.pluginBridge, [serial.oaPlugin], {
-    userData, hostPath: join(process.cwd(), 'out/main/plugin-host.js')
+    userData, hostPath: join(process.cwd(), 'out/main/plugin-host.js'),
+    hostFactory: (path) => {
+      const child = utilityProcess.fork(path, [], { stdio: 'ignore', serviceName: 'DevKit Device Extension' })
+      children.push(child)
+      return child
+    }
   })
   await setSection('serial', { ...DEFAULT_SERIAL_CONFIG, last: { ...DEFAULT_SERIAL_PARAMS, path: portName } })
   registerService('serial', serial)
@@ -123,6 +131,63 @@ async function main(): Promise<void> {
   assert.equal(sent.length, before, '停止后不得继续自动写入')
   const manual = await serial.invoke(panelId, 'write', { text: 'USER', mode: 'ascii', newline: 'none' }) as { ok?: boolean }
   assert.equal(manual.ok, true, '停止后串口控制权回收')
+  const instances = await plugins.invoke(panelId, 'instance:list', {}) as { ok: boolean; instances: Array<{ id: string; pluginId: string }> }
+  assert.equal(instances.ok, true)
+  const instanceId = instances.instances.find(x => x.pluginId === 'devkit.text-hex-responder')?.id
+  assert.ok(instanceId)
+  const hexConfig = { mode: 'hex', match: 'AA 55', response: '00 FF', newline: 'none',
+    ignoreCase: false, replyDelayMs: 0, maxBufferBytes: 8192 }
+  const saved = await plugins.invoke(panelId, 'instance:save', { instance: {
+    id: instanceId, pluginId: 'devkit.text-hex-responder', label: 'HEX regression',
+    enabled: true, autoEnabled: true, config: hexConfig
+  } }) as { ok: boolean; error?: string }
+  assert.equal(saved.ok, true, saved.error)
+  const bound = await plugins.invoke(panelId, 'bind', { instanceId }) as { ok: boolean; error?: string }
+  assert.equal(bound.ok, true, bound.error)
+  const hexStart = sentBytes.length
+  port.emit('data', Buffer.from([0xaa]))
+  await delay(100)
+  assert.equal(sentBytes.length, hexStart, 'partial HEX match must not respond')
+  port.emit('data', Buffer.from([0x55]))
+  await until(() => sentBytes.length === hexStart + 1, 'split HEX match')
+  assert.deepEqual([...sentBytes.at(-1)!], [0, 255], 'binary response exact bytes')
+  const hexManual = await plugins.invoke(panelId, 'run', { instanceId, actionId: 'send' }) as { ok: boolean; error?: string }
+  assert.equal(hexManual.ok, true, hexManual.error)
+  await until(() => sentBytes.length === hexStart + 2, 'manual HEX action')
+  assert.deepEqual([...sentBytes.at(-1)!], [0, 255])
+
+  const delayed = await plugins.invoke(panelId, 'instance:save', { instance: {
+    id: instanceId, pluginId: 'devkit.text-hex-responder', label: 'Cancellation regression',
+    enabled: true, autoEnabled: true, config: { ...hexConfig, replyDelayMs: 1000 }
+  } }) as { ok: boolean; error?: string }
+  assert.equal(delayed.ok, true, delayed.error)
+  const beforeCancel = sentBytes.length
+  port.emit('data', Buffer.from([0xaa, 0x55]))
+  await delay(100)
+  const stopped = await plugins.invoke(panelId, 'stop', { instanceId }) as { ok: boolean }
+  assert.equal(stopped.ok, true)
+  await delay(1200)
+  assert.equal(sentBytes.length, beforeCancel, 'stop cancels delayed response')
+
+  const rebound = await plugins.invoke(panelId, 'bind', { instanceId }) as { ok: boolean; error?: string }
+  assert.equal(rebound.ok, true, rebound.error)
+  const child = children.at(-1)
+  assert.ok(child, 'real utilityProcess was forked')
+  child.kill()
+  await until(async () => {
+    const result = await plugins.invoke(panelId, 'status', {}) as { statuses: Array<{ instanceId: string; state: string }> }
+    return result.statuses.some(x => x.instanceId === instanceId && x.state === 'error')
+  }, 'utilityProcess exit cleanup')
+  const afterCrash = sentBytes.length
+  port.emit('data', Buffer.from([0xaa, 0x55]))
+  await delay(1200)
+  assert.equal(sentBytes.length, afterCrash, 'dead process must not write')
+  const userWrite = await serial.invoke(panelId, 'write', { text: 'RECOVER', mode: 'ascii', newline: 'none' }) as { ok?: boolean }
+  assert.equal(userWrite.ok, true, 'serial lease released after process exit')
+  const restart = await plugins.invoke(panelId, 'bind', { instanceId }) as { ok: boolean; error?: string }
+  assert.equal(restart.ok, true, restart.error)
+  const finalStop = await plugins.invoke(panelId, 'stop', { instanceId }) as { ok: boolean }
+  assert.equal(finalStop.ok, true)
   await writeFile(join(process.cwd(), 'out/plugins-smoke.png'), (await win.capturePage()).toPNG())
   console.log('PASS Electron plugin UI: JSON install, schema config, binding, utilityProcess, split RX, manual action, macro ordering, stop and lock release')
   if (process.env.DEVKIT_PLUGIN_SMOKE_HOLD === '1') {
