@@ -6,10 +6,15 @@ import { emitToolEvent } from '../../ipc'
 import type { ToolService } from '../../ipc'
 import type {
   BuiltinPluginDefinition, PluginContext, PluginDescriptor, PluginExchangeOptions, PluginExchangeResult,
-  PluginInstance, PluginLogEntry, PluginModuleInstance, PluginRuntimeStatus, PluginSerialBridge,
-  PluginSerialEvent, PluginSerialLease, PluginSessionInfo, PluginWriteData, PluginWriteOptions
+  PluginHoldOptions, PluginInstance, PluginLogEntry, PluginModuleInstance, PluginRuntimeStatus,
+  PluginSerialBridge, PluginCatalog, PluginSerialEvent, PluginSerialLease,
+  PluginSessionInfo, PluginSourceInfo, PluginWriteData, PluginWriteOptions
 } from '../../../shared/plugins'
+import { PluginAuthHost } from './auth'
 import { applyDefaults } from './schema'
+import {
+  downloadSourceBundle, fetchSourceCatalog, normalizeSourceUrl, packageSources, sourceItems
+} from './source'
 import { PluginStore, parseJson, safePackagePath } from './store'
 export type { BuiltinPluginDefinition } from '../../../shared/plugins'
 
@@ -46,10 +51,18 @@ interface Runtime {
   hasOnData: boolean
   lease?: PluginSerialLease
   leasePromise?: Promise<PluginSerialLease>
+  /** serial.exclusive：跨回调持有的串口事务。 */
+  exclusive?: PluginSerialLease
+  /** serial.subscribe：宿主数据流到插件进程的转发。 */
+  streams: Map<string, () => void>
   secrets: string[]
   stopping?: Promise<void>
 }
 const AUTO_CALLBACK_TIMEOUT_MS = 30_000
+/** auth.session 插件允许等待 OA 登录窗口（120 秒）与重登重试。 */
+const AUTH_CALLBACK_TIMEOUT_MS = 600_000
+const MAX_HOLD_BYTES = 1_048_576
+const MAX_HOLD_MS = 300_000
 const MAX_EVENTS = 128
 const MAX_QUEUE_BYTES = 256 * 1024
 const MAX_LOGS = 300
@@ -69,6 +82,7 @@ export class PluginService implements ToolService {
   private readonly hostPath: string
   private readonly hostFactory: (path: string) => PluginHostProcess
   private readonly emitEvent: NonNullable<PluginServiceOptions['emit']>
+  private readonly auth = new PluginAuthHost()
   private readonly builtins = new Map<string, BuiltinPluginDefinition>()
   private descriptors = new Map<string, PluginDescriptor>()
   private instances: PluginInstance[] = []
@@ -79,6 +93,13 @@ export class PluginService implements ToolService {
   private mutations: Promise<unknown> = Promise.resolve()
   private legacyImported = false
   private legacyMigrationError = ''
+  private sourceUrl: string | undefined
+  private sourceCatalog: PluginCatalog | undefined
+  private sourceCheckedAt = 0
+  private sourceCache: PluginSourceInfo['items'] = []
+  private sourceFetch?: Promise<PluginSourceInfo>
+  private sourceFetchUrl: string | undefined
+  private sourceInstalling?: Promise<unknown>
 
   constructor(private readonly bridge: PluginSerialBridge, builtins: BuiltinPluginDefinition[] = [], options: PluginServiceOptions = {}) {
     this.store = new PluginStore(options.userData ?? app.getPath('userData'))
@@ -108,6 +129,11 @@ export class PluginService implements ToolService {
         case 'instance:delete': return await this.mutate(() => this.deleteInstance(panelId, string(p.instanceId, 'instanceId')))
         case 'install': return await this.mutate(() => this.install(panelId, p.path))
         case 'remove': return await this.mutate(() => this.remove(panelId, string(p.pluginId, 'pluginId')))
+        case 'source:get': return { ok: true, source: this.sourceInfo() }
+        case 'source:save': return { ok: true, source: await this.saveSource(p.url), plugins: clone([...this.descriptors.values()]) }
+        case 'source:clear': return { ok: true, source: await this.clearSource() }
+        case 'source:refresh': return { ok: true, source: await this.refreshSource() }
+        case 'source:install': return await this.installFromSource(panelId, p)
         case 'bind': return { ok: true, status: await this.mutate(() => this.bind(panelId, string(p.instanceId, 'instanceId'))) }
         case 'unbind': case 'stop': {
           const id = string(p.instanceId, 'instanceId')
@@ -135,13 +161,15 @@ export class PluginService implements ToolService {
       const state = await this.store.readState()
       this.instances = state.instances
       this.legacyImported = state.legacyImported
+      try { this.sourceUrl = await this.store.readSourceUrl() } catch { this.sourceUrl = undefined }
       for (const descriptor of await this.store.listInstalled()) this.descriptors.set(descriptor.id, descriptor)
       for (const builtin of this.builtins.values()) this.descriptors.set(builtin.manifest.id, { ...builtin.manifest, builtin: true })
       await this.importLegacy()
     })()
   }
   private async importLegacy(): Promise<boolean> {
-    if (this.legacyImported || !this.builtins.has('devkit.oa-debug')) return true
+    // OA 解锁现在由 DevKit-Plugins 中的外部插件提供；只有安装后才迁移旧配置。
+    if (this.legacyImported || !this.descriptors.has('devkit.oa-debug')) return true
     try {
       let legacy: Record<string, unknown> | undefined
       try {
@@ -200,6 +228,10 @@ export class PluginService implements ToolService {
   private check(runtime: Runtime): void {
     runtime.controller.signal.throwIfAborted()
     if (this.runtimes.get(runtime.instance.id) !== runtime || this.bridge.describe(runtime.session.panelId)?.connectionId !== runtime.session.connectionId) throw new Error('串口连接已变化，插件需要重新绑定')
+  }
+  /** OA 登录窗口可能等待数分钟；普通插件继续使用较短的超时以尽早发现阻塞。 */
+  private callbackTimeout(runtime: Runtime): number {
+    return runtime.descriptor.capabilities.includes('auth.session') ? AUTH_CALLBACK_TIMEOUT_MS : AUTO_CALLBACK_TIMEOUT_MS
   }
   private async saveInstance(panelId: string, raw: Record<string, unknown>): Promise<unknown> {
     const pluginId = string(raw.pluginId, 'pluginId')
@@ -260,6 +292,93 @@ export class PluginService implements ToolService {
     this.changed(panelId)
     return { ok: true, plugin: clone(descriptor) }
   }
+  private sourceInfo(): PluginSourceInfo {
+    return {
+      ...(this.sourceUrl === undefined ? {} : { url: this.sourceUrl }),
+      ...(this.sourceCheckedAt ? { checkedAt: this.sourceCheckedAt } : {}),
+      items: clone(this.sourceCache)
+    }
+  }
+  private installedVersions(): Map<string, string> {
+    return new Map([...this.descriptors.values()].map((descriptor) => [descriptor.id, descriptor.version]))
+  }
+  private async saveSource(value: unknown): Promise<PluginSourceInfo> {
+    if (this.sourceInstalling) throw new Error('插件源安装进行中，请稍后修改插件源')
+    const url = normalizeSourceUrl(typeof value === 'string' ? value : '')
+    await this.mutate(async () => {
+      await this.store.writeSourceUrl(url)
+      this.sourceUrl = url
+      this.sourceCatalog = undefined
+      this.sourceCheckedAt = 0
+      this.sourceCache = []
+    })
+    return await this.refreshSource()
+  }
+  private async clearSource(): Promise<PluginSourceInfo> {
+    if (this.sourceInstalling) throw new Error('插件源安装进行中，请稍后解绑')
+    await this.mutate(() => this.store.writeSourceUrl(undefined))
+    this.sourceUrl = undefined
+    this.sourceCatalog = undefined
+    this.sourceCheckedAt = 0
+    this.sourceCache = []
+    return this.sourceInfo()
+  }
+  /** 网络读取不占用 mutate 队列，绑定/停止等操作仍可立即执行。 */
+  private async refreshSource(): Promise<PluginSourceInfo> {
+    const url = this.sourceUrl
+    if (!url) throw new Error('尚未绑定插件源')
+    if (this.sourceFetch) {
+      if (this.sourceFetchUrl === url) return this.sourceFetch
+      // 旧地址的检查可能仍在进行；忽略其结果，再按新地址刷新。
+      await this.sourceFetch.catch(() => {})
+    }
+    const task = (async (): Promise<PluginSourceInfo> => {
+      const catalog = await fetchSourceCatalog(url)
+      if (this.sourceUrl !== url) throw new Error('插件源已变更，请重新检查更新')
+      this.sourceCatalog = catalog
+      this.sourceCache = sourceItems(catalog, this.installedVersions())
+      this.sourceCheckedAt = Date.now()
+      return this.sourceInfo()
+    })()
+    this.sourceFetch = task
+    this.sourceFetchUrl = url
+    try { return await task } finally {
+      if (this.sourceFetch === task) { this.sourceFetch = undefined; this.sourceFetchUrl = undefined }
+    }
+  }
+  private async installFromSource(panelId: string, payload: Record<string, unknown>): Promise<unknown> {
+    const pluginId = string(payload.pluginId, 'pluginId')
+    const version = string(payload.version, 'version')
+    if (this.sourceInstalling) throw new Error('已有插件源安装任务正在进行')
+    const task = this.executeSourceInstall(panelId, pluginId, version)
+    this.sourceInstalling = task
+    try { return await task } finally { this.sourceInstalling = undefined }
+  }
+  private async executeSourceInstall(panelId: string, pluginId: string, version: string): Promise<unknown> {
+    const url = this.sourceUrl
+    if (!url) throw new Error('尚未绑定插件源')
+    let entry = this.sourceCatalog?.plugins.find((item) => item.id === pluginId && item.version === version)
+    if (!entry) {
+      await this.refreshSource()
+      entry = this.sourceCatalog?.plugins.find((item) => item.id === pluginId && item.version === version)
+      if (!entry) throw new Error('插件目录中找不到该插件版本，请刷新后重试')
+    }
+    if (this.sourceUrl !== url) throw new Error('插件源已变更，请重新检查更新')
+    const bytes = await downloadSourceBundle(packageSources(url, entry))
+    const directory = join(this.store.root, 'plugins', 'downloads')
+    const temp = join(directory, randomUUID() + '.json')
+    try {
+      await fs.mkdir(directory, { recursive: true })
+      await fs.writeFile(temp, bytes, { mode: 0o600 })
+      const result = await this.mutate(() => this.install(panelId, temp)) as { plugin?: PluginDescriptor }
+      if (result.plugin) {
+        this.sourceCache = this.sourceCache.map((item) => item.id === result.plugin!.id
+          ? { ...item, version: result.plugin!.version, installedVersion: result.plugin!.version, updateAvailable: false }
+          : item)
+      }
+      return { ok: true, plugin: result.plugin, source: this.sourceInfo() }
+    } finally { await fs.rm(temp, { force: true }).catch(() => {}) }
+  }
   private async remove(panelId: string, id: string): Promise<unknown> {
     if (this.builtins.has(id)) throw new Error('内置插件不能卸载')
     const active = [...this.runtimes.values()].filter((runtime) => runtime.instance.pluginId === id)
@@ -289,7 +408,8 @@ export class PluginService implements ToolService {
       instance: snapshot, descriptor, session: clone(session), controller: new AbortController(),
       status: { instanceId: id, panelId, connectionId: session.connectionId, state: 'starting', bound: true },
       unsubscribe: () => {}, builtin: this.builtins.get(descriptor.id), pending: new Map(), nextCall: 0,
-      queue: [], queueBytes: 0, operation: true, ioBusy: false, draining: false, hasOnData: false, secrets: []
+      queue: [], queueBytes: 0, operation: true, ioBusy: false, draining: false, hasOnData: false,
+      streams: new Map(), secrets: []
     }
     this.runtimes.set(id, runtime)
     this.setStatus(runtime, 'starting')
@@ -326,7 +446,29 @@ export class PluginService implements ToolService {
       config: runtime.instance.config, session: runtime.session, autoEnabled: runtime.instance.autoEnabled, signal: runtime.controller.signal,
       serial: {
         write: (data, options) => this.serialWrite(runtime, data, options),
-        exchange: (data, options) => this.serialExchange(runtime, data, options)
+        exchange: (data, options) => this.serialExchange(runtime, data, options),
+        subscribe: (listener) => {
+          if (typeof listener !== 'function') throw new Error('serial.subscribe 需要函数')
+          this.requireCapability(runtime, 'serial.read')
+          const key = 'in-process-' + randomUUID()
+          const owner = 'plugin:' + runtime.instance.id
+          const unsubscribe = this.bridge.subscribe(runtime.session.panelId, (event) => {
+            if (event.type !== 'data' || event.connectionId !== runtime.session.connectionId || runtime.stopping) return
+            listener(event)
+          }, owner)
+          runtime.streams.set(key, unsubscribe)
+          return () => { runtime.streams.delete(key); unsubscribe() }
+        },
+        acquire: () => this.serialAcquire(runtime).then((lease) => ({
+          connectionId: lease.connectionId,
+          write: (data, options) => this.leaseWrite(runtime, lease, data, options),
+          release: async () => {
+            if (runtime.exclusive === lease) this.releaseExclusive(runtime)
+            else lease.release()
+          }
+        })),
+        hold: async (options) => { this.serialHold(runtime, options) },
+        releaseHold: (replay) => this.serialReleaseHold(runtime, replay === true)
       },
       log: (level, message) => this.log(runtime, level, message),
       state: (value) => this.publishState(runtime, value)
@@ -375,19 +517,131 @@ export class PluginService implements ToolService {
     if (typeof message.id !== 'string' || !Array.isArray(message.args)) return
     try {
       this.check(runtime)
-      let result: unknown
-      if (message.method === 'serial.write') result = await this.serialWrite(runtime, message.args[0] as PluginWriteData, (message.args[1] ?? {}) as PluginWriteOptions)
-      else if (message.method === 'serial.exchange') result = await this.serialExchange(runtime, message.args[0] as PluginWriteData, message.args[1] as PluginExchangeOptions)
-      else throw new Error('不支持的宿主API')
+      let result: unknown = null
+      switch (message.method) {
+        case 'serial.write':
+          result = await this.serialWrite(runtime, message.args[0] as PluginWriteData, (message.args[1] ?? {}) as PluginWriteOptions)
+          break
+        case 'serial.exchange':
+          result = await this.serialExchange(runtime, message.args[0] as PluginWriteData, message.args[1] as PluginExchangeOptions)
+          break
+        case 'serial.lease.write': {
+          const lease = this.exclusive(runtime)
+          result = await this.leaseWrite(runtime, lease, message.args[0] as PluginWriteData, (message.args[1] ?? {}) as PluginWriteOptions)
+          break
+        }
+        case 'serial.lease.release':
+          this.releaseExclusive(runtime)
+          break
+        case 'serial.subscribe':
+          result = this.serialSubscribe(runtime, message.args[0])
+          break
+        case 'serial.unsubscribe':
+          this.serialUnsubscribe(runtime, message.args[0])
+          break
+        case 'serial.acquire': {
+          const lease = await this.serialAcquire(runtime)
+          result = { connectionId: lease.connectionId }
+          break
+        }
+        case 'serial.hold':
+          this.serialHold(runtime, message.args[0])
+          break
+        case 'serial.releaseHold':
+          await this.serialReleaseHold(runtime, message.args[0] === true)
+          break
+        case 'auth.login':
+          this.requireCapability(runtime, 'auth.session')
+          await this.auth.login(message.args[0], runtime.controller.signal)
+          break
+        case 'auth.request':
+          this.requireCapability(runtime, 'auth.session')
+          result = await this.auth.request(message.args[0], runtime.controller.signal)
+          break
+        default:
+          throw new Error('不支持的宿主API')
+      }
       runtime.host?.postMessage({ type: 'response', id: message.id, ok: true, result })
     } catch (error) {
       try { runtime.host?.postMessage({ type: 'response', id: message.id, ok: false, error: this.redact(runtime, errorMessage(error)) }) } catch {}
+    }
+  }
+  private requireCapability(runtime: Runtime, capability: string): void {
+    if (!runtime.descriptor.capabilities.includes(capability)) throw new Error('插件未声明 ' + capability)
+  }
+  private exclusive(runtime: Runtime): PluginSerialLease {
+    if (!runtime.exclusive) throw new Error('插件尚未取得串口事务')
+    return runtime.exclusive
+  }
+  /** 取得跨回调的串口事务；同一实例重复调用返回同一租约。 */
+  private async serialAcquire(runtime: Runtime): Promise<PluginSerialLease> {
+    this.requireCapability(runtime, 'serial.exclusive')
+    this.check(runtime)
+    if (runtime.exclusive) return runtime.exclusive
+    const lease = await this.bridge.acquire(runtime.session.panelId, 'plugin:' + runtime.instance.id, runtime.controller.signal)
+    try {
+      this.check(runtime)
+      if (lease.connectionId !== runtime.session.connectionId) throw new Error('串口租约连接已变化')
+    } catch (error) { lease.release(); throw error }
+    runtime.exclusive = lease
+    return lease
+  }
+  private releaseExclusive(runtime: Runtime): void {
+    const lease = runtime.exclusive
+    runtime.exclusive = undefined
+    // Discard any input held for this owner; a stopped plugin must not replay it later.
+    try { this.bridge.endHold(runtime.session.panelId, 'plugin:' + runtime.instance.id) } catch { /* the session may be closing */ }
+    lease?.release()
+  }
+  private serialSubscribe(runtime: Runtime, value: unknown): string {
+    this.requireCapability(runtime, 'serial.read')
+    if (typeof value !== 'string' || !/^stream-[0-9]{1,9}$/.test(value)) throw new Error('订阅标识无效')
+    if (runtime.streams.has(value)) return value
+    const owner = 'plugin:' + runtime.instance.id
+    const unsubscribe = this.bridge.subscribe(runtime.session.panelId, (event) => {
+      if (event.type !== 'data' || event.connectionId !== runtime.session.connectionId) return
+      if (runtime.stopping) return
+      try { runtime.host?.postMessage({ type: 'data', stream: value, event }) } catch { /* the process may be exiting */ }
+    }, owner)
+    runtime.streams.set(value, unsubscribe)
+    return value
+  }
+  private serialUnsubscribe(runtime: Runtime, value: unknown): void {
+    if (typeof value !== 'string') return
+    runtime.streams.get(value)?.()
+    runtime.streams.delete(value)
+  }
+  private serialHold(runtime: Runtime, value: unknown): void {
+    this.requireCapability(runtime, 'serial.exclusive')
+    const options = value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
+    const integer = (key: string, fallback: number, min: number, max: number): number => {
+      const item = options[key]
+      if (item === undefined) return fallback
+      if (!Number.isInteger(item) || (item as number) < min || (item as number) > max) {
+        throw new Error(`${key} 须为 ${min} 至 ${max} 的整数`)
+      }
+      return item as number
+    }
+    this.bridge.beginHold(runtime.session.panelId, 'plugin:' + runtime.instance.id, {
+      maxBytes: integer('maxBytes', 4096, 256, MAX_HOLD_BYTES),
+      maxMs: integer('maxMs', 15_000, 1000, MAX_HOLD_MS)
+    })
+  }
+  private async serialReleaseHold(runtime: Runtime, replay: boolean): Promise<void> {
+    const chunks = this.bridge.endHold(runtime.session.panelId, 'plugin:' + runtime.instance.id)
+    if (!replay || !chunks.length) return
+    const lease = runtime.exclusive
+    if (!lease) return
+    for (const chunk of chunks) {
+      if (runtime.stopping) return
+      await lease.write(chunk)
     }
   }
   private async ensureLease(runtime: Runtime): Promise<PluginSerialLease> {
     this.check(runtime)
     if (!runtime.operation) throw new Error('串口写入必须在run或onData回调内等待完成')
     if (!runtime.descriptor.capabilities.includes('serial.write')) throw new Error('插件未声明serial.write')
+    if (runtime.exclusive) return runtime.exclusive
     if (runtime.lease) return runtime.lease
     runtime.leasePromise ??= this.bridge.acquire(runtime.session.panelId, 'plugin:' + runtime.instance.id, runtime.controller.signal)
     const lease = await runtime.leasePromise
@@ -427,11 +681,17 @@ export class PluginService implements ToolService {
     return bytes
   }
   private async serialWrite(runtime: Runtime, data: PluginWriteData, options: PluginWriteOptions = {}): Promise<{ bytes: number }> {
+    const lease = await this.ensureLease(runtime)
+    return this.leaseWrite(runtime, lease, data, options)
+  }
+  /** 显式租约写入：不要求当前位于 run/onData 回调内，供订阅式协议流程使用。 */
+  private async leaseWrite(
+    runtime: Runtime, lease: PluginSerialLease, data: PluginWriteData, options: PluginWriteOptions = {}
+  ): Promise<{ bytes: number }> {
     if (runtime.ioBusy) throw new Error('同一实例的串口事务须顺序await')
     runtime.ioBusy = true
     try {
       const bytes = this.bytes(runtime, data, options)
-      const lease = await this.ensureLease(runtime)
       await lease.write(bytes, { secret: options.secret })
       this.check(runtime)
       return { bytes: bytes.length }
@@ -481,6 +741,13 @@ export class PluginService implements ToolService {
   private receive(runtime: Runtime, event: PluginSerialEvent): void {
     if (event.connectionId !== runtime.session.connectionId || runtime.stopping) return
     if (event.type === 'closed') { void this.stopRuntime(runtime, 'stopped', event.reason ?? '串口已断开'); return }
+    if (runtime.host && runtime.streams.size) {
+      for (const stream of runtime.streams.keys()) {
+        try { runtime.host.postMessage({ type: 'data', stream, event }) } catch { /* the process may be exiting */ }
+      }
+    }
+    // 订阅式插件自己处理实时数据，不进入自动应答队列；否则只订阅不实现 onData 会无限积压。
+    if (!runtime.hasOnData) return
     if (!runtime.instance.autoEnabled || !runtime.descriptor.autoRespond) return
     runtime.queue.push(event)
     runtime.queueBytes += event.bytes.length
@@ -501,14 +768,15 @@ export class PluginService implements ToolService {
         runtime.operation = true
         try {
           if (runtime.plugin) await runtime.plugin.onData?.(event)
-          else await this.callHost(runtime, 'onData', event, AUTO_CALLBACK_TIMEOUT_MS)
+          else await this.callHost(runtime, 'onData', event, this.callbackTimeout(runtime))
         } finally { runtime.operation = false; this.releaseLease(runtime) }
       }
     } catch (error) {
       // Do not auto-restart: replaying device commands after a timeout may be unsafe.
       const detail = errorMessage(error)
+      const seconds = Math.round(this.callbackTimeout(runtime) / 1000)
       await this.stopRuntime(runtime, 'error', detail.includes('调用超时')
-        ? '自动应答回调超时（30秒），实例已安全停止；请检查插件阻塞、设备响应和协议超时后手动重新绑定'
+        ? `自动应答回调超时（${seconds}秒），实例已安全停止；请检查插件阻塞、设备响应和协议超时后手动重新绑定`
         : detail)
     }
     finally { runtime.draining = false }
@@ -523,10 +791,12 @@ export class PluginService implements ToolService {
     runtime.operation = true
     this.setStatus(runtime, 'running')
     try {
-      if (!runtime.builtin?.managesSerialLease && runtime.descriptor.capabilities.includes('serial.write')) await this.ensureLease(runtime)
+      // serial.exclusive 插件自行取得/释放跨回调事务；宿主不再预占串口。
+      if (!runtime.builtin?.managesSerialLease && !runtime.descriptor.capabilities.includes('serial.exclusive') &&
+        runtime.descriptor.capabilities.includes('serial.write')) await this.ensureLease(runtime)
       const result = runtime.plugin
         ? await runtime.plugin.run?.(actionId, args)
-        : await this.callHost(runtime, 'run', { actionId, args }, 60_000)
+        : await this.callHost(runtime, 'run', { actionId, args }, this.callbackTimeout(runtime))
       this.check(runtime)
       this.setStatus(runtime, 'ready')
       return result
@@ -547,8 +817,11 @@ export class PluginService implements ToolService {
     if (this.runtimes.get(runtime.instance.id) === runtime) this.runtimes.delete(runtime.instance.id)
     runtime.controller.abort(new Error(error || '插件已停止'))
     runtime.unsubscribe()
+    for (const unsubscribe of runtime.streams.values()) unsubscribe()
+    runtime.streams.clear()
     runtime.queue = []; runtime.queueBytes = 0
     this.releaseLease(runtime)
+    this.releaseExclusive(runtime)
     for (const pending of runtime.pending.values()) { clearTimeout(pending.timer); pending.reject(new Error(error || '插件已停止')) }
     runtime.pending.clear()
     this.setStatus(runtime, state, error)

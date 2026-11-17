@@ -18,18 +18,11 @@ import { ByteQueue, TransferCancelled, ymodemRecv, ymodemSend } from './ymodem'
 import { zmodemRecv, zmodemSend } from './zmodem'
 import { TerminalRuntime } from '../terminal/runtime'
 import { fmtDuration, txAuditLine } from '../../../shared/logtext'
-import { SerialSecretRedactor } from './device-actions'
-import { OaDevicePlugin } from './oa-plugin'
-import type { OaSession } from './oa-plugin'
+import { SerialSecretRedactor } from './secret-redactor'
 import { SerialTxBroker } from './tx-broker'
 import { PluginRxRedactor } from './plugin-rx-redactor'
 import type { SerialTxLease } from './tx-broker'
-import type { BuiltinPluginDefinition, PluginSerialBridge, PluginSerialEvent, PluginSerialLease } from '../../../shared/plugins'
-import { parseDeviceActionsConfig } from './device-actions-config'
-import type { DeviceActionHold } from './device-actions-config'
-import { deviceActionsFilePath, readDeviceActionsFile, writeDeviceActionsFile } from './device-actions-store'
-import { loadDeviceActionProvider } from './device-actions-provider'
-import type { DeviceActionProvider } from './device-actions-provider'
+import type { PluginSerialBridge, PluginSerialEvent, PluginSerialLease } from '../../../shared/plugins'
 
 interface RxPiece {
   buf: Buffer
@@ -61,7 +54,8 @@ interface PluginSecret {
   owners: Set<string>
 }
 
-interface SerialSession extends OaSession {
+interface SerialSession {
+  connectionId: string
   port: SerialPort
   broker: SerialTxBroker
   pluginDecoder: TextDecoderLike
@@ -115,8 +109,6 @@ function serialLogDir(): string {
 }
 
 export class SerialService implements ToolService {
-  private readonly oa: OaDevicePlugin
-  readonly oaPlugin: BuiltinPluginDefinition
   private readonly pluginListeners = new Map<string, Set<PluginSubscription>>()
   readonly pluginBridge: PluginSerialBridge = {
     describe: (panelId) => {
@@ -137,23 +129,15 @@ export class SerialService implements ToolService {
         if (!listeners!.size && this.pluginListeners.get(panelId) === listeners) this.pluginListeners.delete(panelId)
       }
     },
-    acquire: (panelId, owner, signal) => this.acquirePluginLease(panelId, owner, signal)
-  }
-
-  constructor(actionProvider: () => Promise<DeviceActionProvider> = loadDeviceActionProvider) {
-    this.oa = new OaDevicePlugin({
-      session: (id) => sessions.get(id),
-      connected: (id, session) => sessions.get(id) === session && !!sessions.get(id)?.port.isOpen && session.suspendedAt === null,
-      transferActive: (id) => transfers.has(id),
-      acquire: (id, owner, signal) => this.acquirePluginLease(id, owner, signal),
-      flush: (id) => this.flush(id),
-      emit: (id, type, payload) => this.emit(id, type, payload),
-      note: (id, text) => this.runtime.note(id, text),
-      beginHold: (session, config, owner) => this.beginHold(session as SerialSession, config, owner),
-      releaseHold: (id, session, replay, owner) => this.releaseHold(id, session as SerialSession, replay, owner),
-      replayHold: (id, session, lease, owner) => this.replayHeldInput(id, session as SerialSession, lease, owner)
-    }, actionProvider)
-    this.oaPlugin = this.oa.definition
+    acquire: (panelId, owner, signal) => this.acquirePluginLease(panelId, owner, signal),
+    beginHold: (panelId, owner, options) => {
+      const session = sessions.get(panelId)
+      if (session) this.beginHold(session, options, owner)
+    },
+    endHold: (panelId, owner) => {
+      const session = sessions.get(panelId)
+      return session ? this.endHold(session, owner) : []
+    }
   }
 
   private notifyPlugins(panelId: string, event: PluginSerialEvent): void {
@@ -362,7 +346,6 @@ export class SerialService implements ToolService {
     for (const piece of pieces) {
       const text = s.decoder.write(piece.buf)
       if (!text) continue
-      this.oa.receive(panelId, s, text, piece.time)
       if (s.secrets) s.secrets.push(text, piece.time, (part, receivedAt) => decoded.push({ text: part, receivedAt }))
       else decoded.push({ text, receivedAt: piece.time })
     }
@@ -384,23 +367,6 @@ export class SerialService implements ToolService {
     }
     if (this.runtime.handles(action)) return this.runtime.invoke(panelId, action, payload)
     switch (action) {
-      case 'action:profiles':
-        return this.oa.profiles(panelId)
-      case 'action:watch':
-        return this.oa.setLegacyWatch(panelId, (payload as { enabled?: unknown } | undefined)?.enabled === true)
-      case 'action:run':
-        return this.oa.runLegacy(panelId, (payload as { profile?: unknown } | undefined)?.profile)
-      case 'action:cancel':
-        this.oa.cancel(panelId)
-        return true
-      case 'device-config:info':
-        return readDeviceActionsFile(app.getPath('userData'))
-      case 'device-config:validate':
-        return this.validateDeviceConfig((payload as { config?: unknown } | undefined)?.config)
-      case 'device-config:save':
-        return this.saveDeviceConfig((payload as { config?: unknown } | undefined)?.config)
-      case 'device-config:open-dir':
-        return this.openDeviceConfigDir()
       case 'view:visible':
         this.viewVisible.set(panelId, Boolean((payload as { visible: boolean }).visible))
         this.applyViewVisibility(panelId)
@@ -496,12 +462,11 @@ export class SerialService implements ToolService {
   onSystemSuspend(): void {
     const now = Date.now()
     for (const [panelId, s] of sessions) {
-      this.oa.close(panelId, s, new Error('系统进入休眠，设备动作已终止'))
+      this.discardHold(s)
       this.fileCancel(panelId)
       s.broker.close(new Error('系统进入休眠，串口事务已终止'))
       this.finishPluginData(panelId, s)
       this.notifyPlugins(panelId, { type: 'closed', connectionId: s.connectionId, reason: 'system-suspend' })
-      this.emit(panelId, 'action:state', { source: 'auto', armed: false, running: false })
       s.suspendedAt = now
       // Flush already received bytes before the sleep marker, otherwise a pending
       // 32 ms batch can appear *after* the suspend timestamp in the disk log.
@@ -679,7 +644,7 @@ export class SerialService implements ToolService {
   private async close(panelId: string): Promise<{ ok: boolean }> {
     const s = sessions.get(panelId)
     if (!s) return { ok: true }
-    this.oa.close(panelId, s, new Error('串口已断开，设备动作已终止'))
+    this.discardHold(s)
     this.fileCancel(panelId)
     s.broker.close(new Error('串口已断开'))
     this.finishPluginData(panelId, s)
@@ -713,8 +678,7 @@ export class SerialService implements ToolService {
   ): { ok: boolean; error?: string; bytes?: number; held?: boolean } {
     const s = sessions.get(panelId)
     if (!s) return { ok: false, error: '串口未打开' }
-    // 自动应答的输入保持优先于动作锁：先扣住用户按键，等判定结果再回放/丢弃
-    if (!s.hold && s.action?.locked) return { ok: false, error: '设备动作正在使用此串口' }
+    // 自动应答的输入保持优先：先扣住用户按键，等判定结果再回放/丢弃
     // 与渲染端相同的组包规则（主进程兜底解析）
     const nl = p.newline === 'crlf' ? '\r\n' : p.newline === 'lf' ? '\n' : p.newline === 'cr' ? '\r' : ''
     let buf: Buffer
@@ -752,41 +716,14 @@ export class SerialService implements ToolService {
     })
   }
 
-  private validateDeviceConfig(value: unknown): { ok: boolean; config?: unknown; error?: string } {
-    if (value === undefined) return { ok: false, error: '缺少配置内容' }
-    try {
-      return { ok: true, config: parseDeviceActionsConfig(value) }
-    } catch (error) {
-      return { ok: false, error: error instanceof Error ? error.message : '设备动作配置无效' }
-    }
-  }
-
-  /** 可视化编辑器保存：校验通过后原子写入，并刷新已布防的自动应答。 */
-  private async saveDeviceConfig(value: unknown): Promise<{ ok: boolean; path?: string; error?: string }> {
-    if (value === undefined) return { ok: false, error: '缺少配置内容' }
-    const result = await writeDeviceActionsFile(value, app.getPath('userData'))
-    if (!result.ok) return result
-    await this.oa.refreshLegacyWatches()
-    return { ok: true, path: result.path }
-  }
-
-  private async openDeviceConfigDir(): Promise<{ ok: boolean; path?: string; error?: string }> {
-    const dir = app.getPath('userData')
-    const error = await shell.openPath(dir)
-    return error ? { ok: false, error } : { ok: true, path: deviceActionsFilePath(dir) }
-  }
-
-  /** 自动应答开始前扣住用户输入；15s 兜底丢弃，绝不把未知内容送进口令提示。 */
-  private beginHold(s: SerialSession, config: false | DeviceActionHold, owner: string): void {
-    if (!config || s.hold) return
+  /** 自动应答开始前扣住用户输入；超时兜底丢弃，绝不把未知内容送进口令提示。 */
+  private beginHold(s: SerialSession, options: { maxBytes: number; maxMs: number }, owner: string): void {
+    if (s.hold) return
     const hold: NonNullable<SerialSession['hold']> = {
-      owner, chunks: [], bytes: 0, maxBytes: config.maxBytes,
-      timer: setTimeout(() => {
-        if (s.hold === hold) { s.hold = undefined; s.holdOwner = undefined }
-      }, config.maxMs)
+      owner, chunks: [], bytes: 0, maxBytes: options.maxBytes,
+      timer: setTimeout(() => { if (s.hold === hold) s.hold = undefined }, options.maxMs)
     }
     s.hold = hold
-    s.holdOwner = owner
   }
 
   private holdWrite(s: SerialSession, buf: Buffer, audit: string): { ok: true; bytes: number; held: true } {
@@ -799,37 +736,27 @@ export class SerialService implements ToolService {
     return { ok: true, bytes: buf.length, held: true }
   }
 
-  /** Input replay is the final part of the owning OA transaction, before another plugin gets the lease. */
-  private async replayHeldInput(panelId: string, s: SerialSession, lease: PluginSerialLease, owner: string): Promise<void> {
-    const hold = s.hold
-    if (!hold || hold.owner !== owner) return
+  private discardHold(s: SerialSession): void {
+    if (!s.hold) return
+    clearTimeout(s.hold.timer)
     s.hold = undefined
-    s.holdOwner = undefined
-    clearTimeout(hold.timer)
-    if (sessions.get(panelId) !== s || !s.port.isOpen) return
-    for (const { buf } of hold.chunks) await lease.write(buf)
   }
 
-  /** 判定接受才回放；拒绝/超时/断开一律丢弃。 */
-  private releaseHold(panelId: string, s: SerialSession, replay: boolean, owner?: string): void {
+  /** 结束保持并交出扣住的发送，由插件在自己的串口事务内决定回放或丢弃。 */
+  private endHold(s: SerialSession, owner: string): Uint8Array[] {
     const hold = s.hold
-    if (!hold || (owner && hold.owner !== owner)) return
-    s.hold = undefined
-    s.holdOwner = undefined
+    if (!hold || hold.owner !== owner) return []
     clearTimeout(hold.timer)
-    if (!replay) return
-    if (sessions.get(panelId) !== s || !s.port.isOpen) return
-    for (const { buf, audit } of hold.chunks) {
-      try { s.broker.writeNow(buf, (error) => { if (error) this.emit(panelId, 'error', { message: '暂存输入写入失败' }) }) } catch { break }
-      this.recordWrite(panelId, s, buf.length, audit)
-    }
+    s.hold = undefined
+    if (!s.port.isOpen) return []
+    return hold.chunks.map(({ buf }) => buf)
   }
 
   /** 热切换收发编码：只影响之后的线上字节；切换前已按旧编码解码的显示/日志不回溯。
    *  替换整个流式解码器——旧解码器里滞留的多字节尾巴按新编码解释必然错位 */
   private setEncoding(panelId: string, encoding: SerialEncoding): { ok: boolean; error?: string } {
     const s = sessions.get(panelId)
-    if (s?.action?.locked) return { ok: false, error: '设备动作正在使用此串口' }
+    if (s?.broker.busy) return { ok: false, error: '设备动作或插件正在使用此串口' }
     if (s) {
       s.encoding = encoding
       s.decoder = makeDecoder(encoding)
@@ -842,7 +769,7 @@ export class SerialService implements ToolService {
   private setFlow(panelId: string, bits: { dtr?: boolean; rts?: boolean }): Promise<{ ok: boolean; error?: string }> {
     const s = sessions.get(panelId)
     if (!s) return Promise.resolve({ ok: false, error: '串口未打开' })
-    if (s.action?.locked) return Promise.resolve({ ok: false, error: '设备动作正在使用此串口' })
+    if (s.broker.busy) return Promise.resolve({ ok: false, error: '设备动作或插件正在使用此串口' })
     return new Promise((resolve) => {
       s.port.set(bits, (err) => resolve(err ? { ok: false, error: err.message } : { ok: true }))
     })
@@ -900,7 +827,7 @@ export class SerialService implements ToolService {
   private async fileSend(panelId: string, p: { protocol: TransferProtocol; path: string }): Promise<{ ok: boolean; error?: string }> {
     const s = sessions.get(panelId)
     if (!s) return { ok: false, error: '串口未打开' }
-    if (s.action?.locked) return { ok: false, error: '设备动作正在使用此串口' }
+    if (s.broker.busy) return { ok: false, error: '设备动作或插件正在使用此串口' }
     if (transfers.has(panelId)) return { ok: false, error: '已有传输进行中' }
     let data: Buffer
     try {
@@ -909,7 +836,7 @@ export class SerialService implements ToolService {
       return { ok: false, error: `读取文件失败：${err instanceof Error ? err.message : String(err)}` }
     }
     if (sessions.get(panelId) !== s) return { ok: false, error: '串口连接已变化' }
-    if (s.action?.locked) return { ok: false, error: '设备动作正在使用此串口' }
+    if (s.broker.busy) return { ok: false, error: '设备动作或插件正在使用此串口' }
     if (transfers.has(panelId)) return { ok: false, error: '已有传输进行中' }
     let lease: SerialTxLease
     try { lease = s.broker.tryAcquire(`file-send:${panelId}`) }
@@ -984,7 +911,7 @@ export class SerialService implements ToolService {
   private async fileRecv(panelId: string, p: { protocol: TransferProtocol; dir: string }): Promise<{ ok: boolean; error?: string; saved?: string[] }> {
     const s = sessions.get(panelId)
     if (!s) return { ok: false, error: '串口未打开' }
-    if (s.action?.locked) return { ok: false, error: '设备动作正在使用此串口' }
+    if (s.broker.busy) return { ok: false, error: '设备动作或插件正在使用此串口' }
     if (transfers.has(panelId)) return { ok: false, error: '已有传输进行中' }
     let lease: SerialTxLease
     try { lease = s.broker.tryAcquire(`file-recv:${panelId}`) }

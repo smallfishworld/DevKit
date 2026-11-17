@@ -51,9 +51,15 @@ export function parseManifest(value: unknown): PluginManifest {
     return { id: actionId, label: short(action.label, 'action.label', 128), ...(action.description === undefined ? {} : { description: short(action.description, 'action.description', 1024) }) }
   })
   if (typeof m.autoRespond !== 'boolean') throw new Error('autoRespond须为boolean')
-  const allowed = ['serial.read','serial.write']
-  if (!Array.isArray(m.capabilities) || m.capabilities.some((item) => typeof item !== 'string' || !allowed.includes(item))) throw new Error('不支持的capabilities；目前支持serial.read和serial.write')
+  const allowed = ['serial.read', 'serial.write', 'serial.exclusive', 'auth.session']
+  if (!Array.isArray(m.capabilities) || m.capabilities.some((item) => typeof item !== 'string' || !allowed.includes(item))) {
+    throw new Error('不支持的capabilities；支持serial.read、serial.write、serial.exclusive和auth.session')
+  }
   if (m.autoRespond && !m.capabilities.includes('serial.read')) throw new Error('自动应答须声明serial.read')
+  if (m.capabilities.includes('serial.exclusive') &&
+    (!m.capabilities.includes('serial.read') || !m.capabilities.includes('serial.write'))) {
+    throw new Error('serial.exclusive须同时声明serial.read和serial.write')
+  }
   return {
     id, name: short(m.name, 'name', 128), version, apiVersion: 1, entry,
     ...(m.description === undefined ? {} : { description: short(m.description, 'description', 2048) }),
@@ -65,9 +71,29 @@ interface StoreState { version: 1; instances: PluginInstance[]; legacyImported: 
 export class PluginStore {
   readonly directory: string
   private statePath: string
+  private sourcePath: string
   constructor(readonly root: string) {
     this.directory = join(root, 'plugins', 'installed')
     this.statePath = join(root, 'plugins', 'instances.json')
+    this.sourcePath = join(root, 'plugins', 'source.json')
+  }
+  async readSourceUrl(): Promise<string | undefined> {
+    let text: string
+    try { text = await fs.readFile(this.sourcePath, 'utf8') }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined; throw error }
+    if (Buffer.byteLength(text) > 4096) throw new Error('插件源配置过大')
+    const state = record(parseJson(text))
+    if (state.version !== 1) throw new Error('插件源配置版本不支持')
+    if (state.url === undefined) return undefined
+    return short(state.url, '插件源地址', 2048)
+  }
+  async writeSourceUrl(url: string | undefined): Promise<void> {
+    await fs.mkdir(dirname(this.sourcePath), { recursive: true })
+    if (url === undefined) { await fs.rm(this.sourcePath, { force: true }); return }
+    const temp = this.sourcePath + '.' + randomUUID() + '.tmp'
+    const text = JSON.stringify({ version: 1, url }, null, 2) + '\n'
+    try { await fs.writeFile(temp, text, { mode: 0o600 }); await fs.rename(temp, this.sourcePath) }
+    finally { await fs.rm(temp, { force: true }).catch(() => {}) }
   }
   async readState(): Promise<StoreState> {
     let text: string

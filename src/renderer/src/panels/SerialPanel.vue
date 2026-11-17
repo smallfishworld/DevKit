@@ -12,12 +12,10 @@ import {
   Plus,
   Refresh,
   Search,
-  Setting,
   UploadFilled
 } from '@element-plus/icons-vue'
 import TerminalView from '@renderer/components/TerminalView.vue'
 import TerminalHistory from '@renderer/components/TerminalHistory.vue'
-import DeviceActionsManager from '@renderer/components/DeviceActionsManager.vue'
 import PluginManager from '@renderer/components/PluginManager.vue'
 import { availablePluginActions } from '@renderer/components/plugin-config-form'
 import type { PluginDescriptor, PluginInstance, PluginRuntimeStatus } from '../../../shared/plugins'
@@ -73,22 +71,6 @@ function updateBytesThrottled(rx: number, tx: number): void { byteCounter.update
 const dtrOn = ref(false)
 const rtsOn = ref(false)
 const signals = ref<{ cts: boolean; dsr: boolean; dcd: boolean } | null>(null)
-const actionStage = ref('')
-const stageLabels: Record<string, string> = {
-  checking: '检查内网登录', login: '等待 OA 登录', challenge: '等待设备挑战码',
-  issue: '获取授权口令', verify: '等待设备确认结果'
-}
-/** 自动应答（device-actions.json 中 trigger=auto）：用户意图与实际挂载状态分开 */
-const autoStage = ref('')
-const autoArmed = ref(false)
-const autoIntent = ref(false)
-const autoProfiles = ref<{ id: string; label: string; actionLabel?: string }[]>([])
-/** 设备动作可视化配置弹窗 */
-const deviceConfigOpen = ref(false)
-/** 打开时落在哪个页签：从快捷命令的「去添加」进入时直接看动作列表 */
-const deviceConfigInitialTab = ref<'global' | 'profiles'>('global')
-/** 配置保存后自增，通知快捷命令编辑器重新读取可选设备动作 */
-const deviceConfigVersion = ref(0)
 const pluginManagerOpen = ref(false)
 const pluginConfigVersion = ref(0)
 const pluginStatuses = ref<PluginRuntimeStatus[]>([])
@@ -131,7 +113,7 @@ function onPluginsChanged(): void {
 }
 async function runPluginAction(action: PluginActionReference): Promise<void> {
   if (!open.value) throw new Error('串口未打开')
-  if (pluginBusy.value || actionStage.value) throw new Error('本串口正在执行动作')
+  if (pluginBusy.value) throw new Error('本串口正在执行动作')
   const generation = connectionGeneration
   pluginExecuting.value = action.instanceId
   stopLoop()
@@ -157,11 +139,6 @@ async function cancelPluginAction(): Promise<void> {
   const failure = results.find(result => result.status === 'rejected')
   if (failure?.status === 'rejected') ElMessage.warning(failure.reason instanceof Error ? failure.reason.message : '无法停止插件')
   await refreshPluginStatus()
-}
-
-function openDeviceConfig(tab: 'global' | 'profiles' = 'global'): void {
-  deviceConfigInitialTab.value = tab
-  deviceConfigOpen.value = true
 }
 
 // ---------- 终端（TerminalView 共享组件：xterm.js 封装） ----------
@@ -200,7 +177,7 @@ const TERM_SIZES = [10, 11, 12, 13, 14, 15, 16, 17, 18, 20, 22, 24, 26, 28]
 
 /** 键盘直入：原样发串口（Enter 发 \r，与真实终端一致）；录制时同步记录 */
 function onTermData(data: string): void {
-  if (!open.value || actionStage.value || pluginBusy.value) return
+  if (!open.value || pluginBusy.value) return
   if (recording.value) recordTermKey(data)
   window.api
     .invoke('serial', 'write', props.panelId, { mode: 'ascii', text: data, newline: 'none' })
@@ -257,71 +234,6 @@ function macroWriter(st: QuickCmdStep): void {
   if (st.type === 'key') writeCmd(st.key ?? '', 'ascii', 'none')
   else if (st.mode === 'hex') writeCmd(st.text ?? '', 'hex', 'none')
   else writeCmd(st.text ?? '', 'ascii', st.crlf ? 'crlf' : 'none')
-}
-
-async function getDeviceProfiles(): Promise<{
-  profiles: { id: string; label: string; actionLabel?: string; trigger?: 'manual' | 'auto' }[]
-  armed?: boolean
-  error?: string
-}> {
-  return await window.api.invoke('serial', 'action:profiles', props.panelId) as Awaited<ReturnType<typeof getDeviceProfiles>>
-}
-
-async function runDeviceAction(profile: string): Promise<void> {
-  if (actionStage.value) throw new Error('本串口正在执行设备动作')
-  stopLoop()
-  actionStage.value = stageLabels.checking
-  try {
-    const result = await window.api.invoke('serial', 'action:run', props.panelId, { profile }) as { ok: boolean; error?: string }
-    if (!result.ok) throw new Error(result.error ?? '设备动作失败')
-    ElMessage.success('设备动作成功')
-  } finally {
-    actionStage.value = ''
-  }
-}
-
-function cancelDeviceAction(): void {
-  void window.api.invoke('serial', 'action:cancel', props.panelId).catch(() => ElMessage.warning('无法取消设备动作'))
-}
-
-/** 读取自动应答配置与实际挂载状态（挂载状态用于面板重新渲染后恢复开关） */
-async function refreshAutoProfiles(): Promise<void> {
-  try {
-    const result = await getDeviceProfiles()
-    autoProfiles.value = (result.profiles ?? [])
-      .filter((profile) => profile.trigger === 'auto')
-      .map(({ id, label, actionLabel }) => ({ id, label, actionLabel }))
-    autoArmed.value = result.armed === true
-    if (autoArmed.value) autoIntent.value = true
-  } catch {
-    autoProfiles.value = []
-    autoArmed.value = false
-  }
-}
-
-/** 配置保存后：刷新动作列表；原本开着自动应答且主进程已解除布防时重新挂载。 */
-function onDeviceConfigSaved(): void {
-  deviceConfigVersion.value++
-  void refreshAutoProfiles().then(() => {
-    if (autoIntent.value && !autoArmed.value) void setAutoWatch(true)
-  })
-}
-
-async function setAutoWatch(enabled: boolean): Promise<void> {
-  autoIntent.value = enabled
-  try {
-    const result = await window.api.invoke('serial', 'action:watch', props.panelId, { enabled }) as {
-      ok: boolean
-      error?: string
-    }
-    if (!result.ok) throw new Error(result.error ?? '无法开启自动应答')
-    autoArmed.value = enabled
-    if (enabled) ElMessage.success('自动应答已开启')
-  } catch (error) {
-    autoIntent.value = !enabled
-    autoArmed.value = false
-    ElMessage.warning(error instanceof Error ? error.message : '无法切换自动应答')
-  }
 }
 
 // ---------- 文件传输（YMODEM / ZMODEM） ----------
@@ -452,41 +364,12 @@ onMounted(async () => {
         dtrOn.value = false
         rtsOn.value = false
         signals.value = null
-        autoStage.value = ''
-        autoArmed.value = false
         stopSignalPoll()
         if (s.error) ElMessage.error(`串口已断开：${s.error}`)
-      } else {
-        // 重连后恢复用户此前开启的自动应答（主进程会话是新建的）
-        void refreshAutoProfiles().then(() => {
-          if (autoIntent.value && !autoArmed.value) void setAutoWatch(true)
-        })
       }
     }),
     window.api.on('serial', props.panelId, 'error', (p) => {
       ElMessage.warning(`串口错误：${(p as { message: string }).message}`)
-    }),
-    window.api.on('serial', props.panelId, 'action:stage', (p) => {
-      const label = stageLabels[(p as { stage: string }).stage]
-      if (actionStage.value && label) actionStage.value = label
-    }),
-    window.api.on('serial', props.panelId, 'action:state', (p) => {
-      const state = p as {
-        armed?: boolean; running?: boolean; stage?: string; ok?: boolean; error?: string
-      }
-      if (typeof state.armed === 'boolean') {
-        autoArmed.value = state.armed
-        if (!state.running) autoStage.value = ''
-        return
-      }
-      if (state.running) {
-        const label = state.stage ? stageLabels[state.stage] : ''
-        if (label) autoStage.value = label
-        return
-      }
-      autoStage.value = ''
-      if (state.ok) ElMessage.success('设备动作成功')
-      else if (state.error) ElMessage.warning(state.error)
     }),
     window.api.on('plugins', props.panelId, 'changed', onPluginsChanged),
     window.api.on('plugins', props.panelId, 'status', (payload) => {
@@ -512,7 +395,6 @@ onMounted(async () => {
   sidebarHidden.value = config.value.sidebarHidden === true
   termView.value?.info('就绪。选择串口后点击「打开」，终端内可直接输入命令。')
   await refreshPorts()
-  await refreshAutoProfiles()
   await refreshPluginStatus()
 })
 
@@ -613,8 +495,8 @@ async function toggleRts(): Promise<void> {
 
 // ---------- 发送 ----------
 function doSend(text: string, mode: 'ascii' | 'hex', newline: 'none' | 'crlf' | 'lf' | 'cr'): void {
-  if (actionStage.value || pluginBusy.value) {
-    ElMessage.warning('设备动作正在使用此串口')
+  if (pluginBusy.value) {
+    ElMessage.warning('插件动作正在使用此串口')
     return
   }
   if (!open.value) {
@@ -646,7 +528,7 @@ function send(): void {
 }
 
 function startLoop(): void {
-  if (loopOn.value || actionStage.value || pluginBusy.value) return
+  if (loopOn.value || pluginBusy.value) return
   if (!sendText.value.trim()) {
     ElMessage.warning('请先填写发送内容')
     return
@@ -838,6 +720,7 @@ async function deleteSession(idx: number): Promise<void> {
           <div class="sessions-head">
             <span>会话</span>
             <span class="hint">点击载入参数</span>
+            <el-button size="small" text :icon="Connection" title="安装插件、配置实例并绑定到当前串口" @click="pluginManagerOpen = true">插件</el-button>
           </div>
           <div
             v-for="(s, i) in sessions"
@@ -858,10 +741,6 @@ async function deleteSession(idx: number): Promise<void> {
             暂无会话。配置好参数后输入名称保存。
           </div>
 
-          <div v-if="actionStage || autoStage" role="status">
-            {{ actionStage || autoStage }}
-            <el-button size="small" text @click="cancelDeviceAction">取消动作</el-button>
-          </div>
           <div v-if="pluginSummary" role="status" class="plugin-status">
             <span>{{ pluginSummary }}</span>
             <el-button v-if="pluginBusy" size="small" text @click="cancelPluginAction">停止插件</el-button>
@@ -870,15 +749,11 @@ async function deleteSession(idx: number): Promise<void> {
           <QuickCmdManager
             :enabled="open"
             :writer="macroWriter"
-            :run-device-action="runDeviceAction"
-            :get-device-profiles="getDeviceProfiles"
             :get-connection-generation="() => connectionGeneration"
-            :device-config-version="deviceConfigVersion"
             :run-plugin-action="runPluginAction"
             :get-plugin-actions="getPluginActions"
             :plugin-config-version="pluginConfigVersion"
             @request-plugin-config="pluginManagerOpen = true"
-            @request-device-config="openDeviceConfig('profiles')"
           />
         </div>
 
@@ -930,25 +805,6 @@ async function deleteSession(idx: number): Promise<void> {
               <el-option value="utf8" label="UTF-8" />
               <el-option value="gbk" label="GBK" />
             </el-select>
-          </el-tooltip>
-          <el-button size="small" text :icon="Connection" title="安装插件、配置实例并绑定到当前串口" @click="pluginManagerOpen = true">插件</el-button>
-          <el-button
-            size="small"
-            text
-            :icon="Setting"
-            title="可视化编辑设备动作配置（OA 登录、取码接口、挑战码与结果判定）"
-            @click="openDeviceConfig('global')"
-          >
-            设备动作
-          </el-button>
-          <el-tooltip
-            v-if="autoProfiles.length"
-            :content="`设备输出出现特征码时自动取口令并注入：${autoProfiles.map((profile) => profile.label).join('、')}`"
-            placement="top"
-          >
-            <el-checkbox v-model="autoIntent" size="small" :disabled="!open" @change="(value: boolean) => setAutoWatch(value)">
-              自动应答
-            </el-checkbox>
           </el-tooltip>
           <el-button size="small" text :icon="Search" title="查找（Ctrl+F）" @click="openTermSearch">查找</el-button>
         <TerminalHistory tool="serial" :panel-id="props.panelId" />
@@ -1008,7 +864,7 @@ async function deleteSession(idx: number): Promise<void> {
           ref="termView"
           v-model:font-size="termFontSize"
           :font="termFont"
-          :local-echo="localEcho && !actionStage && !autoStage && !pluginBusy"
+          :local-echo="localEcho && !pluginBusy"
           :show-time="showTime"
           :guard-scrollback="true"
           :history-panel-id="props.panelId"
@@ -1144,13 +1000,6 @@ async function deleteSession(idx: number): Promise<void> {
       :panel-id="props.panelId"
       :connected="open"
       @changed="onPluginsChanged"
-      @legacy-config="pluginManagerOpen = false; openDeviceConfig('global')"
-    />
-    <DeviceActionsManager
-      v-model:visible="deviceConfigOpen"
-      :panel-id="props.panelId"
-      :initial-tab="deviceConfigInitialTab"
-      @saved="onDeviceConfigSaved"
     />
   </div>
 </template>
@@ -1255,7 +1104,6 @@ async function deleteSession(idx: number): Promise<void> {
 .sessions-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   font-weight: 600;
   font-size: 13px;
   margin: 4px 0 8px;
@@ -1264,6 +1112,7 @@ async function deleteSession(idx: number): Promise<void> {
 
 .sessions-head .hint {
   font-weight: 400;
+  margin-right: auto;
 }
 
 /* 折叠后的细条（VS Code 式）：占 16px，点击展开 */

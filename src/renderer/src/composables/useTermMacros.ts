@@ -287,7 +287,6 @@ export function useTermMacros() {
     cmd: QuickCmd,
     writer: (st: QuickCmdStep) => Promise<void> | void,
     enabled: () => boolean,
-    runDeviceAction?: (profile: string) => Promise<void>,
     runPluginAction?: (action: PluginActionReference) => Promise<void>
   ): Promise<void> {
     if (!enabled() || playing.value) return
@@ -295,10 +294,7 @@ export function useTermMacros() {
     try {
       for (const st of cmd.steps) {
         if (!enabled()) break
-        if (st.type === 'device-action') {
-          if (!runDeviceAction || !st.profile) throw new Error('此处无法执行设备动作')
-          await runDeviceAction(st.profile)
-        } else if (st.type === 'plugin-action') {
+        if (st.type === 'plugin-action') {
           if (!runPluginAction || !st.instanceId || !st.actionId) throw new Error('此处无法执行插件动作')
           await runPluginAction({ instanceId: st.instanceId, actionId: st.actionId })
         } else if (st.type === 'sleep') {

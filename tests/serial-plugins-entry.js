@@ -6,7 +6,6 @@ const { setTimeout: delay } = require('node:timers/promises')
 const { SerialPort } = require('serialport')
 const { SerialTxBroker } = require('../src/main/services/serial/tx-broker')
 const { SerialService } = require('../src/main/services/serial')
-const { OaDevicePlugin } = require('../src/main/services/serial/oa-plugin')
 const { DEFAULT_SERIAL_PARAMS } = require('../src/shared/serial')
 const { setMainWindow } = require('../src/main/ipc')
 
@@ -194,64 +193,8 @@ async function serialBridge() {
   }
 }
 
-async function independentOaInstances() {
-  const sessions = new Map(['one', 'two', 'auto'].map((panelId) => [panelId, { connectionId: panelId, suspendedAt: null }]))
-  const sent = []
-  const issued = []
-  let adapter
-  const host = {
-    session: (id) => sessions.get(id),
-    connected: (id, session) => sessions.get(id) === session && session.suspendedAt === null,
-    transferActive: () => false,
-    flush() {}, emit() {}, note() {}, beginHold() {}, releaseHold() {}, async replayHold() {},
-    async acquire(panelId) {
-      return {
-        connectionId: panelId, release() {},
-        async write(bytes, options) {
-          sent.push([panelId, Buffer.from(bytes).toString('ascii')])
-          const line = options?.secret ? 'OK\r\n' : 'Challenge: FRESH_CHALLENGE\r\n'
-          adapter.receive(panelId, sessions.get(panelId), line, Date.now())
-        }
-      }
-    }
-  }
-  const configuration = (command) => ({
-    loginUrl: 'https://oa.example.invalid/login', authOrigins: [],
-    authCheck: { type: 'json', url: 'https://oa.example.invalid/status', field: 'data.authenticated' },
-    issue: { url: 'https://oa.example.invalid/issue', body: { challenge: '$challenge' } },
-    profiles: [{ id: 'fixture', command, detect: { type: 'prefix', prefix: 'Challenge:' }, result: { type: 'line', successLine: 'OK', failureLine: 'FAIL' } }]
-  })
-  adapter = new OaDevicePlugin(host, async () => { throw new Error('global legacy config must not be loaded') }, (config) => ({
-    config, async authenticate() {}, async issue(challenge) { issued.push([config.profiles[0].command, challenge]); return `TOKEN_${config.profiles[0].command}` }
-  }))
-  const context = (panelId, config, controller = new AbortController(), autoEnabled = false) => ({
-    config, session: { panelId, connectionId: panelId, path: panelId, encoding: 'utf8' }, autoEnabled,
-    signal: controller.signal, serial: {}, log() {}, state() {}
-  })
-  const input = configuration('command-one')
-  const one = await adapter.definition.activate(context('one', { deviceActions: input, profileId: 'fixture' }))
-  const two = await adapter.definition.activate(context('two', { deviceActions: configuration('command-two'), profileId: 'fixture' }))
-  input.profiles[0].command = 'mutated-after-activation'
-  await one.run('run')
-  await two.run('run')
-  assert.deepEqual(issued, [['command-one', 'FRESH_CHALLENGE'], ['command-two', 'FRESH_CHALLENGE']])
-  assert.deepEqual(sent, [['one', 'command-one\r'], ['one', 'TOKEN_command-one\r'], ['two', 'command-two\r'], ['two', 'TOKEN_command-two\r']])
-  const automatic = configuration('ignored')
-  automatic.profiles = ['a', 'b'].map((id) => ({ ...automatic.profiles[0], id, trigger: 'auto', command: undefined }))
-  const stop = new AbortController()
-  const auto = await adapter.definition.activate(context('auto', { deviceActions: automatic, profileId: 'b' }, stop, true))
-  assert.deepEqual(sessions.get('auto').watch.profiles.map((profile) => profile.id), ['b'])
-  stop.abort(new Error('instance disabled'))
-  assert.equal(sessions.get('auto').watch, undefined)
-  await auto.dispose()
-  await one.dispose()
-  await two.dispose()
-  console.log('  PASS OA adapter: independent instance configs, immutable run snapshots, selected profile and lifecycle cleanup')
-}
-
 async function main() {
   await brokerTransactions()
   await serialBridge()
-  await independentOaInstances()
 }
 main().catch((error) => { console.error(error); process.exitCode = 1 })

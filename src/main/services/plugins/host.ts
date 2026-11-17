@@ -13,6 +13,8 @@ let counter = 0
 const pending = new Map<string, { resolve(value: unknown): void; reject(error: Error): void }>()
 let instance: PluginModuleInstance | undefined
 const controller = new AbortController()
+const streams = new Map<string, (event: unknown) => void>()
+function errorMessage(error: unknown): string { return error instanceof Error ? error.message : String(error) }
 
 function rpc(method: string, args: unknown[]): Promise<unknown> {
   if (controller.signal.aborted) return Promise.reject(new Error('插件已停止'))
@@ -33,8 +35,14 @@ async function handle(message: Message): Promise<void> {
   }
   if (message.type === 'cancel') {
     controller.abort(new Error('插件已停止'))
+    streams.clear()
     for (const request of pending.values()) request.reject(controller.signal.reason as Error)
     pending.clear()
+    return
+  }
+  if (message.type === 'data' && typeof message.stream === 'string') {
+    const handler = streams.get(message.stream)
+    if (handler) handler(message.event)
     return
   }
   if (message.type !== 'call' || typeof message.id !== 'string') return
@@ -53,7 +61,44 @@ async function handle(message: Message): Promise<void> {
         signal: controller.signal,
         serial: {
           write: (data, options) => rpc('serial.write', [data, options ?? {}]) as ReturnType<PluginContext['serial']['write']>,
-          exchange: (data, options) => rpc('serial.exchange', [data, options]) as ReturnType<PluginContext['serial']['exchange']>
+          exchange: (data, options) => rpc('serial.exchange', [data, options]) as ReturnType<PluginContext['serial']['exchange']>,
+          subscribe: (listener) => {
+            if (typeof listener !== 'function') throw new Error('serial.subscribe 需要函数')
+            const stream = 'stream-' + (++counter)
+            const handler = (value: unknown): void => {
+              if (controller.signal.aborted) return
+              try { listener(value as Parameters<typeof listener>[0]) }
+              catch (error) { send({ type: 'log', level: 'error', message: 'data 监听回调异常：' + errorMessage(error) }) }
+            }
+            streams.set(stream, handler)
+            void rpc('serial.subscribe', [stream]).catch((error: Error) => {
+              streams.delete(stream)
+              send({ type: 'log', level: 'error', message: error.message })
+            })
+            return () => {
+              if (!streams.delete(stream)) return
+              void rpc('serial.unsubscribe', [stream]).catch(() => {})
+            }
+          },
+          acquire: async () => {
+            const reply = await rpc('serial.acquire', []) as { connectionId: string }
+            let released = false
+            return {
+              connectionId: reply.connectionId,
+              write: (data, options) => rpc('serial.lease.write', [data, options ?? {}]) as ReturnType<PluginContext['serial']['write']>,
+              release: async () => {
+                if (released) return
+                released = true
+                await rpc('serial.lease.release', [])
+              }
+            }
+          },
+          hold: (options) => rpc('serial.hold', [options ?? {}]) as ReturnType<PluginContext['serial']['hold']>,
+          releaseHold: (replay) => rpc('serial.releaseHold', [replay === true]) as ReturnType<PluginContext['serial']['releaseHold']>
+        },
+        auth: {
+          login: (options) => rpc('auth.login', [options]) as ReturnType<NonNullable<PluginContext['auth']>['login']>,
+          request: (options) => rpc('auth.request', [options]) as ReturnType<NonNullable<PluginContext['auth']>['request']>
         },
         log: (level, text) => send({ type: 'log', level, message: String(text).slice(0, 4096) }),
         state: (value) => send({ type: 'state', value })

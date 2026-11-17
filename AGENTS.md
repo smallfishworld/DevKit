@@ -59,7 +59,9 @@
 | `tests/bridge-test.js` | 串口TCP桥接协议（bridge-protocol.ts：Telnet IAC 状态机 / JSON 行协议 / 身份派生） |
 | `tests/theme-test.js` / `tests/local-terminal-test.js` | 终端主题 / 本地终端 shell profile |
 | `tests/terminal-test.js` / `tests/terminal-services-test.js` | 终端流控（terminal-stream.ts：LogFormatter / OutputWindow ACK 背压）与磁盘历史（SessionHistory 积压背压 / 失败上报） |
-| `tests/device-action-match-test.js` / `tests/device-config-store-test.js` / `tests/device-actions-test.js` | 设备动作匹配（挑战码/结果/触发词）、配置存储与校验、OA 会话、手动流程与自动应答扣键补发（`npm run test:device-actions-smoke` 为 Electron UI 冒烟） |
+| `tests/plugin-backend-test.js` | 插件安装/JSON 包、进程 RPC、独立订阅、跨回调独占租约、扣键回放、`auth.session` 参数校验、迁移与准入（`npm run test:plugins-smoke` 为 Electron 插件 UI 冒烟） |
+| `tests/plugin-source-test.js` | 插件源 catalog.json 校验、GitHub raw/Release 地址解析、版本比较、SHA256SUMS 校验与 404 回退 |
+| DevKit-Plugins `plugins/oa-unlock/test` | OA 解锁协议回归：配置校验、手动/自动流程、挑战码分行匹配、登录过期重登与口令隐私（在插件仓库执行 `node scripts/test.cjs`） |
 
 ## 打包与发布流程（走 GitHub CI，不在本机构建上传）
 

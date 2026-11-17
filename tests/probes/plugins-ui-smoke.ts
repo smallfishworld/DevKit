@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict'
-import { writeFile } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
+import { readFile, writeFile } from 'node:fs/promises'
+import { createServer } from 'node:http'
+import type { Server } from 'node:http'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { app, BrowserWindow, ipcMain, utilityProcess } from 'electron'
@@ -49,7 +52,7 @@ async function main(): Promise<void> {
     if (action === 'open') panelId = id
     return invoke(id, action, payload)
   }
-  const plugins = new PluginService(serial.pluginBridge, [serial.oaPlugin], {
+  const plugins = new PluginService(serial.pluginBridge, [], {
     userData, hostPath: join(process.cwd(), 'out/main/plugin-host.js'),
     hostFactory: (path) => {
       const child = utilityProcess.fork(path, [], { stdio: 'ignore', serviceName: 'DevKit Device Extension' })
@@ -85,7 +88,7 @@ async function main(): Promise<void> {
   await until(() => text('.conn-bar', portName), '模拟设备参数')
   await until(() => click('.conn-bar button', '打开'), '连接模拟串口')
   await until(() => text('.com-badge', portName), '串口已连接')
-  await until(() => click('.term-opts button', '插件'), '打开插件管理')
+  await until(() => click('.sessions-head button', '插件'), '打开插件管理')
   await until(() => click('.el-tabs__item', '已安装插件'), '插件安装页')
   await until(() => fill('input[placeholder="插件目录或 JSON 插件包路径"]', join(userData, 'responder.json')), '插件包路径')
   await until(() => click('.install-row button', '安装'), '安装独立JSON插件包')
@@ -123,7 +126,7 @@ async function main(): Promise<void> {
   await until(() => sent.length >= 5, '插件动作后继续宏')
   assert.deepEqual(sent.slice(-2), ['PONG\r\n', 'AFTER\r\n'])
 
-  await until(() => click('.term-opts button', '插件'), '重新打开插件管理')
+  await until(() => click('.sessions-head button', '插件'), '重新打开插件管理')
   await until(() => click('.instance-controls button', '停止'), '停止插件并回收资源')
   await delay(300)
   const before = sent.length
@@ -189,8 +192,71 @@ async function main(): Promise<void> {
   assert.equal(restart.ok, true, restart.error)
   const finalStop = await plugins.invoke(panelId, 'stop', { instanceId }) as { ok: boolean }
   assert.equal(finalStop.ok, true)
+
+  // 插件源：本地 HTTP catalog.json（127.0.0.1 回环）→ 自动列出可更新版本 → 下载 SHA256SUMS 校验后安装
+  const original = JSON.parse(await readFile(join(userData, 'responder.json'), 'utf8')) as {
+    manifest: Record<string, unknown>; files: Record<string, string>
+  }
+  const upgradedText = JSON.stringify({ ...original, manifest: { ...original.manifest, version: '1.0.1' } })
+  const upgradedHash = createHash('sha256').update(upgradedText).digest('hex')
+  const packagePath = 'dist/devkit.text-hex-responder-1.0.1.devkit-plugin.json'
+  let catalogUrl = ''
+  const server: Server = createServer((request, response) => {
+    if (request.url === '/catalog.json') {
+      response.setHeader('Content-Type', 'application/json')
+      response.end(JSON.stringify({
+        schemaVersion: 1,
+        apiVersion: 1,
+        plugins: [{
+          slug: 'text-hex-responder', id: 'devkit.text-hex-responder', name: '插件源示例',
+          version: '1.0.1', apiVersion: 1, description: 'smoke fixture',
+          path: 'plugins/text-hex-responder', readme: 'plugins/text-hex-responder/README.md',
+          packagePath, installDirectory: 'dist/package'
+        }]
+      }))
+      return
+    }
+    if (request.url === '/dist/SHA256SUMS') {
+      response.setHeader('Content-Type', 'text/plain')
+      response.end(`${upgradedHash}  ${packagePath.split('/').pop()}\n`)
+      return
+    }
+    if (request.url === '/' + packagePath) {
+      response.setHeader('Content-Type', 'application/json')
+      response.end(upgradedText)
+      return
+    }
+    response.writeHead(404).end()
+  })
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', () => resolve())
+  })
+  const address = server.address()
+  assert.ok(address && typeof address !== 'string')
+  catalogUrl = `http://127.0.0.1:${address.port}/catalog.json`
+  try {
+    await until(() => click('.el-tabs__item', '插件源'), '打开插件源页')
+    await until(() => fill('input[placeholder="GitHub 仓库 owner/repo，或 catalog.json 的 HTTPS 地址"]', catalogUrl), '插件源地址')
+    await until(() => click('button', '保存并检查'), '保存并检查插件源')
+    await until(() => text('.package-card', '可更新（已安装 1.0.0）'), '识别可更新版本')
+    await until(() => click('.package-card button', '更新'), '点击更新')
+    await until(() => click('.el-message-box__btns button', '信任来源并更新'), '确认信任插件源')
+    await until(() => text('.package-card', '已是最新'), '更新完成')
+    const listed = await plugins.invoke(panelId, 'list', {}) as { plugins: Array<{ id: string; version: string }> }
+    assert.equal(listed.plugins.find(plugin => plugin.id === 'devkit.text-hex-responder')?.version, '1.0.1')
+    const source = await plugins.invoke(panelId, 'source:get', {}) as {
+      source: { url?: string; items: Array<{ installedVersion?: string; updateAvailable: boolean }> }
+    }
+    assert.equal(source.source.url, catalogUrl)
+    assert.equal(source.source.items[0].installedVersion, '1.0.1')
+    assert.equal(source.source.items[0].updateAvailable, false)
+  } finally {
+    server.close()
+  }
+
   await writeFile(join(process.cwd(), 'out/plugins-smoke.png'), (await win.capturePage()).toPNG())
-  console.log('PASS Electron plugin UI: JSON install, schema config, binding, utilityProcess, split RX, manual action, macro ordering, stop and lock release')
+  console.log('PASS Electron plugin UI: JSON install, schema config, binding, utilityProcess, split RX, manual action, macro ordering, stop/lock release and repository update')
   if (process.env.DEVKIT_PLUGIN_SMOKE_HOLD === '1') {
     console.log('HOLD: fixture window is available for interactive inspection')
     await new Promise<void>(() => {})
