@@ -49,6 +49,7 @@ interface Runtime {
   secrets: string[]
   stopping?: Promise<void>
 }
+const AUTO_CALLBACK_TIMEOUT_MS = 30_000
 const MAX_EVENTS = 128
 const MAX_QUEUE_BYTES = 256 * 1024
 const MAX_LOGS = 300
@@ -500,10 +501,16 @@ export class PluginService implements ToolService {
         runtime.operation = true
         try {
           if (runtime.plugin) await runtime.plugin.onData?.(event)
-          else await this.callHost(runtime, 'onData', event, 10_000)
+          else await this.callHost(runtime, 'onData', event, AUTO_CALLBACK_TIMEOUT_MS)
         } finally { runtime.operation = false; this.releaseLease(runtime) }
       }
-    } catch (error) { await this.stopRuntime(runtime, 'error', errorMessage(error)) }
+    } catch (error) {
+      // Do not auto-restart: replaying device commands after a timeout may be unsafe.
+      const detail = errorMessage(error)
+      await this.stopRuntime(runtime, 'error', detail.includes('调用超时')
+        ? '自动应答回调超时（30秒），实例已安全停止；请检查插件阻塞、设备响应和协议超时后手动重新绑定'
+        : detail)
+    }
     finally { runtime.draining = false }
   }
   private async run(panelId: string, id: string, actionId: string, args: unknown): Promise<unknown> {
