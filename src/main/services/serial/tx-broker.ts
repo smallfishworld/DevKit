@@ -15,6 +15,7 @@ interface LeaseState {
   signal?: AbortSignal
   abort?: () => void
   failures: Set<(error: Error) => void>
+  /** Driver callbacks, not logical cancellations, determine physical write completion. */
 }
 interface Waiter {
   owner: string
@@ -107,20 +108,26 @@ export class SerialTxBroker {
     if (bytes.byteLength > 16 * 1024 * 1024) throw new Error('单次串口发送超出大小限制')
     if (state) state.pending++
     let settled = false
+    let driverCompleted = false
     const done = (error?: Error | null): void => {
       if (settled) return
       settled = true
-      if (state) {
-        state.pending--
-        state.failures.delete(fail)
-        this.releaseIfReady(state)
-      }
+      state?.failures.delete(fail)
       completed?.(error ?? undefined)
     }
     const fail = (error: Error): void => done(error)
+    const driverDone = (error?: Error | null): void => {
+      if (driverCompleted) return
+      driverCompleted = true
+      done(error)
+      if (state) {
+        state.pending--
+        this.releaseIfReady(state)
+      }
+    }
     state?.failures.add(fail)
-    try { this.writer(Buffer.from(bytes), done) }
-    catch (error) { done(error instanceof Error ? error : new Error(String(error))); throw error }
+    try { this.writer(Buffer.from(bytes), driverDone) }
+    catch (error) { driverDone(error instanceof Error ? error : new Error(String(error))); throw error }
   }
 
   private cancel(state: LeaseState, reason: Error): void {
