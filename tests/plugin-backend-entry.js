@@ -6,7 +6,7 @@ const { fork } = require('node:child_process')
 const { EventEmitter } = require('node:events')
 const { PluginService } = require('../src/main/services/plugins')
 const { PluginStore, parseManifest, safePackagePath } = require('../src/main/services/plugins/store')
-const { validateSchema, applyDefaults } = require('../src/main/services/plugins/schema')
+const { validateSchema, applyDefaults, safeConfigPattern, validateConfig } = require('../src/main/services/plugins/schema')
 
 const fixtureManifest = {
   id: 'test.serial-fixture', name: 'Fixture', version: '1.0.0', apiVersion: 1, entry: 'index.cjs',
@@ -236,3 +236,15 @@ async function main() {
   } finally { await ownedService?.dispose('*'); for(const child of ownedProcesses) if(child.exitCode===null&&child.signalCode===null)child.kill(); await fs.rm(root,{recursive:true,force:true}) }
 }
 main().catch(error=>{console.error(error);process.exitCode=1})
+
+function hardeningSchemaRegression() {
+  assert.equal(safeConfigPattern('^[A-Z0-9_-]{1,20}$'), true)
+  assert.equal(safeConfigPattern('(a+)+$'), false)
+  assert.equal(safeConfigPattern('(a|aa)+$'), false)
+  assert.equal(safeConfigPattern('(?=a)a'), false)
+  assert.throws(() => validateSchema({ type: 'string', pattern: '(a+)+$' }), /不安全/)
+  assert.throws(() => validateConfig('a'.repeat(4097), { type: 'string', pattern: '^a+$' }), /输入过长/)
+  validateConfig('AB_12', { type: 'string', pattern: '^[A-Z0-9_]+$' })
+  console.log('  PASS plugin schema hardening: safe patterns, catastrophic patterns, bounded input')
+}
+hardeningSchemaRegression()
