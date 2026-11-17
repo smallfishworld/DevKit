@@ -197,6 +197,12 @@ async function removePlugin(plugin: PluginDescriptor): Promise<void> {
 async function install(browse: boolean): Promise<void> {
   const path = installPath.value.trim()
   if (!browse && !path) { error.value = '请输入插件目录或 JSON 插件包路径'; return }
+  try {
+    await ElMessageBox.confirm(
+      '外部插件是可信本地代码，不是安全沙箱：插件可能访问本机文件、网络和环境变量。manifest 的串口权限声明不限制 Node.js 权限。仅安装已核实来源的插件。是否继续？',
+      '确认执行外部插件代码', { type: 'warning', confirmButtonText: '信任来源并安装', cancelButtonText: '取消' }
+    )
+  } catch { return }
   await operate('install', async () => {
     await api('install', browse ? undefined : { path })
     installPath.value = ''
@@ -314,6 +320,7 @@ onUnmounted(() => {
           <el-button :icon="Upload" :loading="pending === 'install'" :disabled="!!pending" @click="install(false)">安装</el-button>
           <el-button :disabled="!!pending" @click="install(true)">选择目录</el-button>
         </div>
+        <el-alert title="仅安装可信插件：外部 JavaScript 可访问本机文件、网络和环境变量；utilityProcess 不是安全沙箱，串口能力声明不限制 Node.js 权限。" type="warning" :closable="false" />
         <p class="hint">插件包格式为 JSON bundle；安装后从“配置与当前串口”创建实例。</p>
         <div class="package-list">
           <article v-for="plugin in plugins" :key="plugin.id" class="package-card">
