@@ -38,6 +38,25 @@ async function brokerTransactions() {
   pending.shift().done(new Error('driver failure'))
   await failed
   third.release()
+  // Cancellation rejects the caller immediately, but the physical write must
+  // retain the port lease until the driver acknowledges completion.
+  const cancelSignal = new AbortController()
+  const abortLease = await broker.acquire('aborted-write', cancelSignal.signal)
+  const inflight = abortLease.write(new Uint8Array([0xaa]))
+  const abortedResult = assert.rejects(inflight, /aborted write/)
+  let nextGranted = false
+  const afterAbort = broker.acquire('after-abort', new AbortController().signal).then(lease => {
+    nextGranted = true
+    return lease
+  })
+  cancelSignal.abort(new Error('aborted write'))
+  await abortedResult
+  await Promise.resolve()
+  assert.equal(nextGranted, false, 'driver write must retain physical lease after logical abort')
+  pending.shift().done()
+  const afterAbortLease = await afterAbort
+  assert.equal(nextGranted, true)
+  afterAbortLease.release()
   const last = await broker.acquire('last', new AbortController().signal)
   const closedWaiting = assert.rejects(broker.acquire('after-last', new AbortController().signal), /disconnected/)
   broker.close(new Error('disconnected'))
@@ -154,7 +173,7 @@ async function serialBridge() {
     nextPort.emit('data', Buffer.from('new-device'))
     assert.equal(raw.length, oldCount, 'subscriptions must be removed with the old connection')
 
-    const resumedEvents = []
+   const resumedEvents = []
     service.pluginBridge.subscribe(panel, (event) => resumedEvents.push(event))
     const beforeSleep = service.pluginBridge.describe(panel).connectionId
     const sleeping = await service.pluginBridge.acquire(panel, 'sleeping', new AbortController().signal)
