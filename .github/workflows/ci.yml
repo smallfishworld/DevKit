@@ -36,6 +36,9 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Device plugin Electron integration smoke
+        run: npm run test:plugins-smoke
+
       - name: node-pty runtime smoke test
         run: npm run test:pty-smoke
 

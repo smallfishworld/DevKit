@@ -1,0 +1,90 @@
+{
+  "id": "devkit.text-hex-responder",
+  "name": "文本 / HEX 自动应答",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "entry": "index.cjs",
+  "description": "独立设备插件示例：按完整文本行或十六进制字节序列匹配应答，不依赖 OA。",
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "mode": {
+        "type": "string",
+        "title": "匹配模式",
+        "enum": [
+          "text",
+          "hex"
+        ],
+        "default": "text"
+      },
+      "match": {
+        "type": "string",
+        "title": "匹配内容",
+        "minLength": 1,
+        "maxLength": 4096,
+        "default": "PING"
+      },
+      "response": {
+        "type": "string",
+        "title": "回复内容",
+        "maxLength": 4096,
+        "default": "PONG"
+      },
+      "newline": {
+        "type": "string",
+        "title": "文本回复换行",
+        "enum": [
+          "none",
+          "cr",
+          "lf",
+          "crlf"
+        ],
+        "default": "crlf"
+      },
+      "ignoreCase": {
+        "type": "boolean",
+        "title": "文本忽略大小写",
+        "default": false
+      },
+      "replyDelayMs": {
+        "type": "integer",
+        "title": "回复延时（毫秒）",
+        "minimum": 0,
+        "maximum": 5000,
+        "default": 0
+      },
+      "maxBufferBytes": {
+        "type": "integer",
+        "title": "接收缓存上限（字节）",
+        "minimum": 256,
+        "maximum": 65536,
+        "default": 8192
+      }
+    },
+    "required": [
+      "mode",
+      "match",
+      "response",
+      "newline",
+      "ignoreCase",
+      "replyDelayMs",
+      "maxBufferBytes"
+    ],
+    "additionalProperties": false
+  },
+  "actions": [
+    {
+      "id": "send",
+      "label": "发送配置的回复"
+    },
+    {
+      "id": "reset",
+      "label": "清空协议缓存"
+    }
+  ],
+  "autoRespond": true,
+  "capabilities": [
+    "serial.read",
+    "serial.write"
+  ]
+}

@@ -4,7 +4,7 @@
  * 录制期间不弹窗；终端键入（回车确认）与命令间隔（自动延时）都记入
  */
 import { ref } from 'vue'
-import type { QuickCmd, QuickCmdStep, QuickCmdsConfig } from '../../../shared/term-macro'
+import type { QuickCmd, QuickCmdStep, QuickCmdsConfig, PluginActionReference } from '../../../shared/term-macro'
 import { DEFAULT_QUICKCMDS_CONFIG, migrateQuickCmd } from '../../../shared/term-macro'
 
 // ---------- 模块级共享状态（所有面板实例共用） ----------
@@ -285,9 +285,10 @@ export function useTermMacros() {
    */
   async function playCmd(
     cmd: QuickCmd,
-    writer: (st: QuickCmdStep) => void,
+    writer: (st: QuickCmdStep) => Promise<void> | void,
     enabled: () => boolean,
-    runDeviceAction?: (profile: string) => Promise<void>
+    runDeviceAction?: (profile: string) => Promise<void>,
+    runPluginAction?: (action: PluginActionReference) => Promise<void>
   ): Promise<void> {
     if (!enabled() || playing.value) return
     playing.value = true
@@ -297,10 +298,13 @@ export function useTermMacros() {
         if (st.type === 'device-action') {
           if (!runDeviceAction || !st.profile) throw new Error('此处无法执行设备动作')
           await runDeviceAction(st.profile)
+        } else if (st.type === 'plugin-action') {
+          if (!runPluginAction || !st.instanceId || !st.actionId) throw new Error('此处无法执行插件动作')
+          await runPluginAction({ instanceId: st.instanceId, actionId: st.actionId })
         } else if (st.type === 'sleep') {
           await new Promise((r) => setTimeout(r, Math.max(0, st.ms ?? 0)))
         } else {
-          writer(st)
+          await writer(st)
           await new Promise((r) => setTimeout(r, 30)) // 命令间至少 30ms
         }
       }

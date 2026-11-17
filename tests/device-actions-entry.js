@@ -29,6 +29,7 @@ let authenticated = false
 let loginOpened = 0
 /** 模拟 Electron session.fetch 遇到 redirect:'manual' 跳转时的固定报错 */
 let cancelRedirectOnce = false
+let nestedAuthResponse = false
 const browserSessions = new Map()
 electron.session = {
   fromPartition(partition) {
@@ -43,7 +44,7 @@ electron.session = {
           cancelRedirectOnce = false
           throw new Error('Redirect was cancelled')
         }
-        return Response.json({ authenticated }, { status: authenticated ? 200 : 401 })
+        return Response.json(nestedAuthResponse ? { data: { authenticated } } : { authenticated }, { status: authenticated ? 200 : 401 })
       }
     })
     return browserSessions.get(partition)
@@ -128,6 +129,12 @@ async function main() {
   })
   await nextProvider.authenticate(new AbortController().signal, () => assert.fail('有效会话应复用'))
   assert.equal(await nextProvider.issue('FRESH_CHALLENGE_1', new AbortController().signal), code)
+  const nestedAuthConfig = parseDeviceActionsConfig({ ...input, authCheck: { ...input.authCheck, field: 'data.authenticated' } })
+  nestedAuthResponse = true
+  await createDeviceActionProvider(nestedAuthConfig).authenticate(new AbortController().signal, () => assert.fail('点路径认证应复用会话'))
+  nestedAuthResponse = false
+  assert.throws(() => parseDeviceActionsConfig({ ...input, authCheck: { ...input.authCheck, field: 'data..authenticated' } }), /authCheck.field/)
+
   authenticated = false
   await assert.rejects(nextProvider.issue('FRESH_CHALLENGE_1', new AbortController().signal), /登录已失效/)
 
@@ -354,10 +361,15 @@ async function runAutoScenario(events, dir) {
     const held = service.invoke(autoPanel, 'write', { mode: 'ascii', text: 'ls', newline: 'cr' })
     assert.deepEqual(held, { ok: true, bytes: 3, held: true })
     assert.equal(sent.includes('ls\r'), false)
+    const afterOa = service.pluginBridge.acquire(autoPanel, 'waiting-plugin', new AbortController().signal)
     issueGate.resolve()
     issueGate = undefined
     await waitFor(() => sent.includes(`${autoPassword}\r`))
     await waitFor(() => sent.includes('ls\r'))
+    const waitingLease = await afterOa
+    await waitingLease.write(Buffer.from('after-oa\r'))
+    waitingLease.release()
+    assert.ok(sent.indexOf('ls\r') < sent.indexOf('after-oa\r'), 'held input must be replayed before a waiting plugin can send')
     await waitFor(() => events.some((e) => e.payload?.source === 'auto' && e.payload.running === false && e.payload.ok === true))
 
     // 设备重新索要口令 → 判定拒绝，扣住的按键丢弃
@@ -373,6 +385,37 @@ async function runAutoScenario(events, dir) {
     await delay(30)
     assert.equal(sent.slice(beforeReject).includes('rm -rf /\r'), false)
 
+    // 保存发生在取码过程中：旧动作继续使用快照，新的监听器不会继承永久 busy。
+    verdict = 'accept'
+    issueGate = deferred()
+    let issueCount = events.filter((e) => e.payload?.source === 'auto' && e.payload.stage === 'issue').length
+    const completionCount = () => events.filter((e) => e.payload?.source === 'auto' && e.payload.running === false && typeof e.payload.ok === 'boolean').length
+    let completed = completionCount()
+    port.emit('data', Buffer.from(`${autoChallenge}\r\n`))
+    await waitFor(() => events.filter((e) => e.payload?.source === 'auto' && e.payload.stage === 'issue').length > issueCount)
+    assert.equal((await service.invoke(autoPanel, 'device-config:save', { config: autoInput })).ok, true)
+    issueGate.resolve()
+    issueGate = undefined
+    await waitFor(() => completionCount() > completed)
+    issueCount = events.filter((e) => e.payload?.source === 'auto' && e.payload.stage === 'issue').length
+    completed = completionCount()
+    port.emit('data', Buffer.from(`${autoChallenge}\r\n`))
+    await waitFor(() => events.filter((e) => e.payload?.source === 'auto' && e.payload.stage === 'issue').length > issueCount)
+    await waitFor(() => completionCount() > completed)
+
+    // 执行中解除布防会取消本次取码，迟到的口令不得写入设备。
+    issueGate = deferred()
+    issueCount = events.filter((e) => e.payload?.source === 'auto' && e.payload.stage === 'issue').length
+    completed = completionCount()
+    port.emit('data', Buffer.from(`${autoChallenge}\r\n`))
+    await waitFor(() => events.filter((e) => e.payload?.source === 'auto' && e.payload.stage === 'issue').length > issueCount)
+    const passwordsBeforeStop = sent.filter((value) => value === `${autoPassword}\r`).length
+    assert.equal((await service.invoke(autoPanel, 'action:watch', { enabled: false })).ok, true)
+    issueGate.resolve()
+    issueGate = undefined
+    await waitFor(() => completionCount() > completed)
+    assert.equal(sent.filter((value) => value === `${autoPassword}\r`).length, passwordsBeforeStop)
+
     // 关闭自动应答后不再响应特征码
     assert.equal((await service.invoke(autoPanel, 'action:watch', { enabled: false })).ok, true)
     armed = false
@@ -383,9 +426,26 @@ async function runAutoScenario(events, dir) {
 
     assert.match((await service.invoke(autoPanel, 'action:run', { profile: 'auto-fixture' })).error, /自动应答/)
     assert.equal(armed, false)
+    // A stopped manual instance must not release another owner's early input hold (no action exists yet).
+    assert.equal((await service.invoke(autoPanel, 'action:watch', { enabled: true })).ok, true)
+    const manualInstance = await service.oaPlugin.activate({
+      config: { deviceActions: input, profileId: 'fixture' },
+      session: { ...service.pluginBridge.describe(autoPanel) },
+      signal: new AbortController().signal, autoEnabled: false, serial: {}, log() {}, state() {}
+    })
+    port.emit('data', Buffer.from('debug\r\n'))
+    await delay(50)
+    assert.equal(service.invoke(autoPanel, 'write', { mode: 'ascii', text: 'held-by-auto', newline: 'cr' }).held, true)
+    await manualInstance.dispose()
+    assert.equal(service.invoke(autoPanel, 'write', { mode: 'ascii', text: 'still-held', newline: 'cr' }).held, true,
+      'disposing an unrelated manual instance must preserve the auto watcher hold')
+    assert.equal(sent.includes('held-by-auto\r'), false)
+    assert.equal(sent.includes('still-held\r'), false)
+    assert.equal((await service.invoke(autoPanel, 'action:watch', { enabled: false })).ok, true)
+    assert.equal(service.invoke(autoPanel, 'write', { mode: 'ascii', text: 'after-own-disable', newline: 'cr' }).held, undefined)
     const log = await service.invoke(autoPanel, 'history:query', {})
     assert.doesNotMatch(log.rows.map(({ text }) => text).join('\n') + JSON.stringify(events), new RegExp(autoPassword))
-    console.log('  PASS Auto device action: echo hold, feature-code trigger, injection verdict, replay/discard and disarm')
+    console.log('  PASS Auto device action: hold, replay/discard, hot-save snapshot, mid-flight disable and input-hold ownership')
   } finally {
     await service.dispose('*')
   }

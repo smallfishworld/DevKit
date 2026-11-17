@@ -13,7 +13,11 @@ try {
     platform: 'node', outfile: output, external: ['electron'],
     alias: { serialport: join(root, 'tests/terminal-serial-mock.js') }, logLevel: 'error'
   })
-  const result = spawnSync(require('electron'), [output, dir], { cwd: root, stdio: 'inherit', timeout: 60_000 })
+  const flags = process.platform === 'linux' ? ['--no-sandbox'] : []
+  const result = spawnSync(require('electron'), [...flags, output, dir], {
+    cwd: root, stdio: 'inherit', timeout: 60_000,
+    env: { ...process.env, DEVKIT_SMOKE_USER_DATA: dir, DISPLAY: process.env.DISPLAY || ':0' }
+  })
   if (result.error) throw result.error
   if (result.signal) throw new Error(`模拟 Electron 进程退出信号：${result.signal}`)
   process.exitCode = result.status ?? 1

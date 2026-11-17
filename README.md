@@ -90,6 +90,17 @@ npm run dist
 - **分组管理**：宏可建分组、拖拽移动进/出分组、拖拽排序、悬停复制（自动加 `名字 (N)` 后缀）。
 - **导入导出**：导出为 DevKit JSON；导入自动识别 DevKit JSON 或 **MobaXterm 宏文件**（`.mxtmacros` / `.ini`，GBK 编码，`SLEEPEQUAL` 延时、`RETURN` 按键等占位符均自动转换），同名覆盖、其余追加。
 
+## 设备插件
+
+串口面板的「插件」入口支持本地安装可信 JavaScript 插件、创建配置实例、绑定串口和运行手动/自动动作。插件可提供独立的配置表单和动作，快捷命令可引用插件动作；现有 OA 设备动作和旧宏继续兼容。
+
+- 独立文本/HEX 应答示例：`examples/plugins/text-hex-responder/`，不依赖 OA。
+- 开发模板：`examples/plugins/template/`。
+- 打包为单文件 JSON 插件包：`npm run plugin:pack -- examples/plugins/text-hex-responder /tmp/text-responder.json`（Windows 请替换输出路径）。
+- 使用与 API v1 说明：[设备插件开发与使用](docs/device-plugins.md)。
+
+外部插件在独立进程中运行，串口由宿主统一管理；第一版面向可信插件，独立进程不等同于文件和网络权限沙箱。插件安装后需要显式配置和绑定才会运行。
+
 ## 串口助手要点
 
 - 终端基于 xterm.js（与 VS Code 终端同内核）：ANSI 颜色与 VT100 光标控制完整解析。**使用 WebGL 渲染器**，刷屏高吞吐日志时不卡顿（GPU 不可用时自动回退 DOM 渲染）。
