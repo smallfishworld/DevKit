@@ -1,6 +1,6 @@
 'use strict'
 const { spawnSync } = require('node:child_process')
-const { mkdtempSync, rmSync } = require('node:fs')
+const { mkdtempSync, rmSync, copyFileSync, existsSync, readFileSync } = require('node:fs')
 const { tmpdir } = require('node:os')
 const { join, resolve } = require('node:path')
 const { buildSync } = require('esbuild')
@@ -9,7 +9,16 @@ const root = resolve(__dirname, '..')
 const dir = mkdtempSync(join(tmpdir(), 'devkit-plugins-ui-'))
 try {
   const output = join(dir, 'fixture.cjs')
-  pack(join(root, 'examples/plugins/text-hex-responder'), join(dir, 'responder.json'))
+  const external = process.env.DEVKIT_PLUGIN_PACKAGE
+  if (external) {
+    const source = resolve(external)
+    if (!existsSync(source)) throw new Error('Plugin package not found: ' + source)
+    const payload = JSON.parse(readFileSync(source, 'utf8'))
+    if (payload.manifest?.id !== 'devkit.text-hex-responder') throw new Error('Unexpected plugin package identity')
+    copyFileSync(source, join(dir, 'responder.json'))
+  } else {
+    pack(join(root, 'examples/plugins/text-hex-responder'), join(dir, 'responder.json'))
+  }
   buildSync({
     entryPoints: [join(root, 'tests/probes/plugins-ui-smoke.ts')], bundle: true,
     platform: 'node', outfile: output, external: ['electron'],
