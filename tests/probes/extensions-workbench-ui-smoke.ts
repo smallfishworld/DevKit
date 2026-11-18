@@ -98,7 +98,7 @@ async function main(): Promise<void> {
 
   const win = new BrowserWindow({
     width: 1100, height: 820, show: false,
-    webPreferences: { preload: join(process.cwd(), 'out/preload/index.js'), contextIsolation: true }
+    webPreferences: { preload: join(process.cwd(), 'out/preload/index.js'), contextIsolation: true, backgroundThrottling: false }
   })
   setMainWindow(win)
   const failures: string[] = []
@@ -178,10 +178,21 @@ async function main(): Promise<void> {
     })()`), '选中从源安装的插件')
 
     await until(() => click('.extension-layout article button', '新建配置'), '新建插件配置')
-    await until(() => fill('.el-dialog input[type="text"]', configName), '填写实例名称')
-    await until(() => click('.el-dialog .el-checkbox', '绑定后自动监听'), '启用自动监听')
-    await until(() => click('.el-dialog__footer button', '保存配置'), '保存实例')
-    await until(() => has('.instance-row', configName), '显示配置实例')
+    const editor = '.el-dialog:has(.el-checkbox)'
+    await until(() => fill(editor + ' .el-form > .el-form-item input', configName), '填写实例名称')
+    await until(() => click(editor + ' .el-checkbox input:not(:checked)'), '启用自动监听')
+    await until(() => click(editor + ' .el-dialog__footer button', '保存配置'), '保存实例')
+    try {
+      await until(() => has('.instance-row', configName), '显示配置实例')
+    } catch (cause) {
+      const details = await js(`({
+        alerts: [...document.querySelectorAll('[role="alert"]')].map(el => el.textContent.trim()).filter(Boolean),
+        instances: [...document.querySelectorAll('.instance-row strong')].map(el => el.textContent.trim()),
+        name: document.querySelector(${JSON.stringify(editor + ' .el-form > .el-form-item input')})?.value,
+        rendererErrors: ${JSON.stringify(failures)}
+      })`)
+      throw new Error('未显示已保存的配置：' + JSON.stringify(details), { cause })
+    }
     await until(() => click('.tab-select', '首页'), '返回工具箱')
     await until(() => js<boolean>(`(() => {
       const tool = [...document.querySelectorAll('.toolbox .tool-row')].find(el => el.querySelector('strong')?.textContent === '串口助手');
