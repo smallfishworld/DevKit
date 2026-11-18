@@ -1,6 +1,7 @@
 import { app, dialog, utilityProcess } from 'electron'
 import { promises as fs } from 'node:fs'
 import { join } from 'node:path'
+import { tmpdir } from 'node:os'
 import { randomUUID } from 'node:crypto'
 import { emitToolEvent } from '../../ipc'
 import type { ToolService } from '../../ipc'
@@ -10,7 +11,8 @@ import type {
   PluginSerialEvent, PluginSerialLease, PluginSessionInfo, PluginWriteData, PluginWriteOptions
 } from '../../../shared/plugins'
 import { applyDefaults } from './schema'
-import { PluginStore, parseJson, safePackagePath } from './store'
+import { MAX_PACKAGE_BYTES, PluginStore, parseJson, safePackagePath } from './store'
+import { PluginSources } from './sources'
 export type { BuiltinPluginDefinition } from '../../../shared/plugins'
 
 export interface PluginHostProcess {
@@ -22,6 +24,7 @@ export interface PluginServiceOptions {
   userData?: string
   hostPath?: string
   hostFactory?: (path: string) => PluginHostProcess
+  download?: (url: string, maxBytes: number) => Promise<Buffer>
   emit?: (panelId: string, type: string, payload: unknown) => void
 }
 type DataEvent = Extract<PluginSerialEvent, { type: 'data' }>
@@ -66,6 +69,7 @@ function clone<T>(value: T): T { return JSON.parse(JSON.stringify(value)) as T }
 function errorMessage(error: unknown): string { return error instanceof Error ? error.message : String(error) }
 export class PluginService implements ToolService {
   private readonly store: PluginStore
+  private readonly sources: PluginSources
   private readonly hostPath: string
   private readonly hostFactory: (path: string) => PluginHostProcess
   private readonly emitEvent: NonNullable<PluginServiceOptions['emit']>
@@ -81,7 +85,9 @@ export class PluginService implements ToolService {
   private legacyMigrationError = ''
 
   constructor(private readonly bridge: PluginSerialBridge, builtins: BuiltinPluginDefinition[] = [], options: PluginServiceOptions = {}) {
-    this.store = new PluginStore(options.userData ?? app.getPath('userData'))
+    const userData = options.userData ?? app.getPath('userData')
+    this.store = new PluginStore(userData)
+    this.sources = new PluginSources(userData, options.download)
     this.hostPath = options.hostPath ?? join(__dirname, 'plugin-host.js')
     this.hostFactory = options.hostFactory ?? ((path) => utilityProcess.fork(path, [], { stdio: 'ignore', serviceName: 'DevKit Device Extension' }) as unknown as PluginHostProcess)
     this.emitEvent = options.emit ?? ((panelId, type, payload) => emitToolEvent('plugins', panelId, type, payload))
@@ -98,6 +104,10 @@ export class PluginService implements ToolService {
       await this.initialize()
       const p = payload === undefined || payload === null ? {} : object(payload)
       switch (action) {
+        case 'snapshot': return {
+          ok: true, plugins: clone([...this.descriptors.values()]), instances: clone(this.instances),
+          statuses: clone([...this.statuses.values()]), logs: clone(this.logs)
+        }
         case 'list': return { ok: true, plugins: clone([...this.descriptors.values()]) }
         case 'instance:list':
           if (!this.legacyImported) await this.mutate(() => this.importLegacy())
@@ -106,6 +116,17 @@ export class PluginService implements ToolService {
         case 'status': return { ok: true, statuses: clone([...this.statuses.values()]), logs: clone(this.logs) }
         case 'instance:save': return await this.mutate(() => this.saveInstance(panelId, object(p.instance)))
         case 'instance:delete': return await this.mutate(() => this.deleteInstance(panelId, string(p.instanceId, 'instanceId')))
+        case 'sources:list': return { ok: true, sources: await this.sources.list() }
+        case 'sources:add': return await this.mutate(async () => ({ ok: true, sources: await this.sources.add(p.name, p.url) }))
+        case 'sources:toggle': {
+          if (typeof p.enabled !== 'boolean') throw new Error('启用状态无效')
+          const enabled = p.enabled
+          return await this.mutate(async () => ({ ok: true, sources: await this.sources.update(string(p.id, '扩展源'), enabled) }))
+        }
+        case 'sources:remove': return await this.mutate(async () => ({ ok: true, sources: await this.sources.update(string(p.id, '扩展源')) }))
+        case 'sources:refresh': return await this.mutate(async () => ({ ok: true, sources: await this.sources.refresh(string(p.id, '扩展源')) }))
+        case 'sources:install': return await this.mutate(() => this.installFromSource(panelId, p))
+        case 'install:file': return await this.mutate(() => this.install(panelId, undefined, true))
         case 'install': return await this.mutate(() => this.install(panelId, p.path))
         case 'remove': return await this.mutate(() => this.remove(panelId, string(p.pluginId, 'pluginId')))
         case 'bind': return { ok: true, status: await this.mutate(() => this.bind(panelId, string(p.instanceId, 'instanceId'))) }
@@ -119,7 +140,11 @@ export class PluginService implements ToolService {
         case 'run': {
           // Serialize admission, not the long command: disable/stop must still cancel it.
           const launched = await this.mutate(async () => ({ task: this.run(panelId, string(p.instanceId, 'instanceId'), string(p.actionId, 'actionId'), p.args) }))
-          return { ok: true, result: await launched.task }
+          const result = await launched.task
+          if (result && typeof result === 'object' && 'ok' in result && result.ok === false) {
+            throw new Error('error' in result && typeof result.error === 'string' ? result.error : '插件动作执行失败')
+          }
+          return { ok: true, result }
         }
         default: throw new Error('未知插件操作：' + action)
       }
@@ -179,11 +204,15 @@ export class PluginService implements ToolService {
       return false
     }
   }
-  private changed(panelId: string): void { this.emitEvent(panelId, 'changed', {}) }
+  private changed(panelId: string): void {
+    this.emitEvent(panelId, 'changed', {})
+    if (panelId !== 'plugin-catalog') this.emitEvent('plugin-catalog', 'changed', {})
+  }
   private setStatus(runtime: Runtime, state: PluginRuntimeStatus['state'], error?: string): void {
     runtime.status = { ...runtime.status, state, bound: state !== 'stopped' && state !== 'error', error }
     this.statuses.set(runtime.instance.id, runtime.status)
     this.emitEvent(runtime.session.panelId, 'status', clone(runtime.status))
+    this.emitEvent('plugin-catalog', 'status', clone(runtime.status))
   }
   private redact(runtime: Runtime, text: string): string {
     let result = text
@@ -196,6 +225,7 @@ export class PluginService implements ToolService {
     this.logs.push(entry)
     if (this.logs.length > MAX_LOGS) this.logs.splice(0, this.logs.length - MAX_LOGS)
     this.emitEvent(runtime.session.panelId, 'log', entry)
+    this.emitEvent('plugin-catalog', 'log', entry)
   }
   private check(runtime: Runtime): void {
     runtime.controller.signal.throwIfAborted()
@@ -246,10 +276,25 @@ export class PluginService implements ToolService {
     this.changed(panelId)
     return { ok: true }
   }
-  private async install(panelId: string, value: unknown): Promise<unknown> {
+  private async installFromSource(panelId: string, request: Record<string, unknown>): Promise<unknown> {
+    const bytes = await this.sources.package(string(request.sourceId, '扩展源'),
+      string(request.pluginId, '插件 ID'), string(request.sha256, 'SHA-256'), MAX_PACKAGE_BYTES)
+    const directory = await fs.mkdtemp(join(tmpdir(), 'devkit-plugin-'))
+    try {
+      const path = join(directory, 'bundle.json')
+      await fs.writeFile(path, bytes, { flag: 'wx' })
+      return await this.install(panelId, path)
+    } finally {
+      await fs.rm(directory, { recursive: true, force: true }).catch(() => {})
+    }
+  }
+
+  private async install(panelId: string, value: unknown, file = false): Promise<unknown> {
     let path: string
     if (value === undefined || value === '') {
-      const result = await dialog.showOpenDialog({ title: '选择可信的本地插件目录', properties: ['openDirectory'] })
+      const result = await dialog.showOpenDialog(file
+        ? { title: '选择可信的 JSON 插件包', properties: ['openFile'], filters: [{ name: 'DevKit 插件包', extensions: ['json'] }] }
+        : { title: '选择可信的本地插件目录', properties: ['openDirectory'] })
       if (result.canceled || !result.filePaths[0]) return { ok: false, error: '已取消安装' }
       path = result.filePaths[0]
     } else path = string(value, 'path')
@@ -293,8 +338,8 @@ export class PluginService implements ToolService {
     }
     this.runtimes.set(id, runtime)
     this.setStatus(runtime, 'starting')
-    runtime.unsubscribe = this.bridge.subscribe(panelId, (event) => this.receive(runtime, event), 'plugin:' + runtime.instance.id)
     try {
+      runtime.unsubscribe = this.bridge.subscribe(panelId, (event) => this.receive(runtime, event), 'plugin:' + runtime.instance.id)
       if (runtime.builtin) {
         runtime.plugin = await runtime.builtin.activate(this.context(runtime))
         runtime.hasOnData = typeof runtime.plugin.onData === 'function'
@@ -481,7 +526,7 @@ export class PluginService implements ToolService {
   private receive(runtime: Runtime, event: PluginSerialEvent): void {
     if (event.connectionId !== runtime.session.connectionId || runtime.stopping) return
     if (event.type === 'closed') { void this.stopRuntime(runtime, 'stopped', event.reason ?? '串口已断开'); return }
-    if (!runtime.instance.autoEnabled || !runtime.descriptor.autoRespond) return
+    if (!runtime.instance.autoEnabled || !runtime.descriptor.autoRespond || !runtime.descriptor.capabilities.includes('serial.read')) return
     runtime.queue.push(event)
     runtime.queueBytes += event.bytes.length
     if (runtime.queue.length > MAX_EVENTS || runtime.queueBytes > MAX_QUEUE_BYTES) {

@@ -106,6 +106,7 @@ app.whenReady().then(() => {
   registerService('macro', macroService)
   registerService('serial', serialService)
   registerService('plugins', new PluginService(serialService.pluginBridge, [serialService.oaPlugin]))
+  serialService.startLogRetention()
   registerService('ssh', sshService)
   registerService('local-terminal', localTerminalService)
   registerService('quickcmds', quickCmdsService)

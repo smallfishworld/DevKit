@@ -76,6 +76,7 @@ let searchAddon: SearchAddon | null = null
 let webglAddon: WebglAddon | null = null
 let resizeObserver: ResizeObserver | null = null
 /** fit 节流的收尾定时器（拖动停止后补最后一次重排） */
+let fitFrame: number | null = null
 let fitTrailingTimer: ReturnType<typeof setTimeout> | null = null
 // 被 select/clearSelection 补丁包装前的原始方法（doSearch 需要绕过锁造临时锚点选区）
 let rawSelect: ((col: number, row: number, length: number) => void) | null = null
@@ -183,11 +184,16 @@ onMounted(() => {
   const FIT_THROTTLE_MS = 120
   let lastFitAt = 0
   const runFit = (): void => {
-    try {
-      fitVisibleTerminal()
-    } catch {
-      /* 容器 0 尺寸时 fit 可能抛错，忽略 */
-    }
+    if (fitFrame !== null) return
+    // Defer layout writes out of the ResizeObserver delivery cycle.
+    fitFrame = requestAnimationFrame(() => {
+      fitFrame = null
+      try {
+        fitVisibleTerminal()
+      } catch {
+        /* 容器 0 尺寸时 fit 可能抛错，忽略 */
+      }
+    })
   }
   resizeObserver = new ResizeObserver(() => {
     const now = Date.now()
@@ -274,6 +280,10 @@ onUnmounted(() => {
   if (fitTrailingTimer) {
     clearTimeout(fitTrailingTimer)
     fitTrailingTimer = null
+  }
+  if (fitFrame !== null) {
+    cancelAnimationFrame(fitFrame)
+    fitFrame = null
   }
   resizeObserver?.disconnect()
   resizeObserver = null

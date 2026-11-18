@@ -31,6 +31,9 @@ export class TerminalRuntime {
   private displayGaps = new Set<string>()
 
   constructor(private tool: string) {}
+  get protectedPaths(): ReadonlySet<string> {
+    return new Set([...this.selected.values(), ...[...this.histories.values()].map((history) => history.path)])
+  }
   get ids(): string[] { return [...new Set([...this.tasks.ids, ...this.histories.keys(), ...this.outputs.keys(), ...this.selected.keys()])] }
 
   private setPressure(id: string, reason: string, paused: boolean): void {

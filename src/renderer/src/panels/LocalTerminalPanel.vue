@@ -262,17 +262,6 @@ onUnmounted(() => {
       </div>
 
       <div class="toolbar-row secondary">
-        <el-select v-model="font" size="small" filterable allow-create style="width: 132px" @change="onFontChanged">
-          <el-option value="Consolas" label="Consolas" />
-          <el-option value="Cascadia Mono" label="Cascadia Mono" />
-          <el-option value="Courier New" label="Courier New" />
-        </el-select>
-        <el-select v-model="fontSize" size="small" style="width: 72px" @change="onFontChanged">
-          <el-option v-for="size in TERM_SIZES" :key="size" :value="size" :label="String(size)" />
-        </el-select>
-        <el-button size="small" text :icon="Search" @click="openSearch">查找</el-button>
-        <TerminalHistory tool="local-terminal" :panel-id="props.panelId" />
-        <el-button size="small" text @click="clearTerm">清屏</el-button>
         <span v-if="profileChanged" class="switch-hint">
           当前 {{ activeProfile?.name ?? activeProfileId }}，待切换到 {{ selectedProfile?.name ?? profileId }}
         </span>
@@ -303,6 +292,24 @@ onUnmounted(() => {
       </div>
 
       <div class="terminal-host">
+        <div class="local-term-opts">
+        <el-button size="small" text :icon="Search" @click="openSearch">查找</el-button>
+        <TerminalHistory tool="local-terminal" :panel-id="props.panelId" />
+        <el-button size="small" text @click="clearTerm">清屏</el-button>
+          <el-popover placement="bottom-end" :width="250" trigger="click">
+            <template #reference><el-button size="small" class="local-display-button" text>显示设置</el-button></template>
+            <div class="panel-row">
+        <el-select v-model="font" size="small" filterable allow-create style="width: 132px" @change="onFontChanged">
+          <el-option value="Consolas" label="Consolas" />
+          <el-option value="Cascadia Mono" label="Cascadia Mono" />
+          <el-option value="Courier New" label="Courier New" />
+        </el-select>
+        <el-select v-model="fontSize" size="small" style="width: 72px" @change="onFontChanged">
+          <el-option v-for="size in TERM_SIZES" :key="size" :value="size" :label="String(size)" />
+        </el-select>
+            </div>
+          </el-popover>
+        </div>
         <TerminalView
           ref="termView"
           :font-size="fontSize"
@@ -317,6 +324,15 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+.panel.local-terminal-panel { padding:0; gap:0; }
+.local-terminal-panel .terminal-toolbar { padding:6px 10px; border-width:0 0 1px; border-radius:0; background:var(--el-bg-color-overlay); }
+.local-terminal-panel .term-body { gap:0; }
+.local-terminal-panel .quick-cmd-col { padding:10px; background:var(--el-bg-color-overlay); }
+.local-terminal-panel .terminal-host :deep(.term) { border:0; border-radius:0; box-shadow:none; padding:10px 12px; }
+.local-term-opts { display:flex; align-items:center; flex-wrap:wrap; gap:5px; padding:4px 10px; background:var(--el-bg-color-overlay); border-bottom:1px solid var(--el-border-color-lighter); }
+.local-term-opts .el-button { margin:0; }
+.local-term-opts .local-display-button { margin-inline-start:auto; }
+
 .local-terminal-panel {
   height: 100%;
   overflow: hidden;

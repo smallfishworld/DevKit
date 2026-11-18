@@ -105,3 +105,27 @@ export interface BuiltinPluginDefinition {
   managesSerialLease?: boolean
   activate(context: PluginContext): Promise<PluginModuleInstance> | PluginModuleInstance
 }
+
+export interface PluginSourceEntry {
+  id: string
+  name: string
+  version: string
+  url: string
+  sha256: string
+}
+
+export const OFFICIAL_PLUGIN_SOURCE = {
+  id: 'devkit-official',
+  name: 'DevKit 官方扩展源',
+  url: 'https://github.com/smallfishworld/DevKit-Plugins/releases/download/install-index-v1/index.json'
+} as const
+
+export interface PluginSource {
+  id: string
+  name: string
+  url: string
+  enabled: boolean
+  official?: boolean
+  entries: PluginSourceEntry[]
+  refreshedAt?: number
+}

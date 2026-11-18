@@ -24,7 +24,13 @@ export function parseJson(text: string): unknown {
   })
 }
 export function safePackagePath(root: string, name: string): string {
-  if (!name || name.includes('\\') || isAbsolute(name) || name.split('/').some((part) => part === '..' || part === '.' || !part)) throw new Error('插件文件路径无效')
+  if (!name || isAbsolute(name)) throw new Error('插件文件路径无效')
+  for (const part of name.split('/')) {
+    if (!part || /[\\:*?"<>|\x00-\x1f]|[. ]$/.test(part) ||
+      /^(?:con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?:\.|$)/i.test(part)) {
+      throw new Error('插件文件路径无效')
+    }
+  }
   const target = resolve(root, name)
   if (relative(root, target).startsWith('..') || isAbsolute(relative(root, target))) throw new Error('插件文件不在包目录内')
   return target
@@ -146,8 +152,11 @@ export class PluginStore {
         const bundle = record(parseJson(await fs.readFile(source, 'utf8')))
         const files = record(bundle.files)
         if (Object.keys(files).length > 127) throw new Error('插件包文件过多')
+        const paths = new Set(['manifest.json'])
         for (const [name, contents] of Object.entries(files)) {
-          if (name === 'manifest.json') throw new Error('files不能重复声明manifest.json')
+          const key = name.toLowerCase()
+          if (paths.has(key)) throw new Error('插件包包含重复文件路径')
+          paths.add(key)
           if (typeof contents !== 'string') throw new Error('JSON包的files值须为文本')
           const target = safePackagePath(stage, name)
           total += Buffer.byteLength(contents)

@@ -2,10 +2,9 @@
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
-  ArrowRight,
-  CaretRight,
-  CircleClose,
-  Connection,
+  Clock,
+  Grid,
+  Operation,
   Delete,
   Download,
   FolderOpened,
@@ -15,6 +14,10 @@ import {
   Setting,
   UploadFilled
 } from '@element-plus/icons-vue'
+import SerialDevicePlugins from '@renderer/components/SerialDevicePlugins.vue'
+import { DEFAULT_LOG_RETENTION, validLogRetention } from '../../../shared/log-retention'
+import type { LogRetentionSettings } from '../../../shared/log-retention'
+import { stepSendHistory } from '@renderer/components/termInput'
 import TerminalView from '@renderer/components/TerminalView.vue'
 import TerminalHistory from '@renderer/components/TerminalHistory.vue'
 import DeviceActionsManager from '@renderer/components/DeviceActionsManager.vue'
@@ -95,12 +98,6 @@ const pluginStatuses = ref<PluginRuntimeStatus[]>([])
 const pluginExecuting = ref('')
 const sessionPluginStatuses = computed(() => pluginStatuses.value.filter(status => status.panelId === props.panelId))
 const pluginBusy = computed(() => !!pluginExecuting.value || sessionPluginStatuses.value.some(status => status.bound && status.state === 'running'))
-const pluginSummary = computed(() => {
-  if (sessionPluginStatuses.value.some(status => status.state === 'error')) return '插件运行异常'
-  if (pluginBusy.value) return '插件动作运行中'
-  const count = sessionPluginStatuses.value.filter(status => status.bound).length
-  return count ? `${count} 个插件配置已绑定` : ''
-})
 async function pluginApi<T>(action: string, payload?: unknown): Promise<T> {
   const result = await window.api.invoke('plugins', action, props.panelId, payload) as T & { ok: boolean; error?: string }
   if (!result.ok) throw new Error(result.error || '插件操作失败')
@@ -148,17 +145,6 @@ async function runPluginAction(action: PluginActionReference): Promise<void> {
     await refreshPluginStatus()
   }
 }
-async function cancelPluginAction(): Promise<void> {
-  const instanceIds = new Set([
-    ...sessionPluginStatuses.value.filter(status => status.bound && status.state === 'running').map(status => status.instanceId),
-    ...(pluginExecuting.value ? [pluginExecuting.value] : [])
-  ])
-  const results = await Promise.allSettled([...instanceIds].map(instanceId => pluginApi('stop', { instanceId })))
-  const failure = results.find(result => result.status === 'rejected')
-  if (failure?.status === 'rejected') ElMessage.warning(failure.reason instanceof Error ? failure.reason.message : '无法停止插件')
-  await refreshPluginStatus()
-}
-
 function openDeviceConfig(tab: 'global' | 'profiles' = 'global'): void {
   deviceConfigInitialTab.value = tab
   deviceConfigOpen.value = true
@@ -211,6 +197,19 @@ const sendMode = ref<'ascii' | 'hex'>('ascii')
 const sendText = ref('')
 const sendNewline = ref<'none' | 'crlf' | 'lf' | 'cr'>('crlf')
 const history = ref<string[]>([])
+let historyIndex = -1
+let historyDraft = ''
+
+function recallSendHistory(event: KeyboardEvent, direction: 1 | -1): void {
+  if (event.isComposing || !history.value.length) return
+  event.preventDefault()
+  const next = stepSendHistory(history.value, direction, {
+    index: historyIndex, draft: historyDraft, text: sendText.value
+  })
+  historyIndex = next.index
+  historyDraft = next.draft
+  sendText.value = next.text
+}
 /** 定时发送面板：非常用功能，默认收起，点「定时」展开 */
 const loopPanel = ref(false)
 const loopOn = ref(false)
@@ -218,6 +217,16 @@ const loopPeriod = ref(1000)
 let loopTimer: ReturnType<typeof setInterval> | null = null
 
 const sessionName = ref('')
+const connectionSettings = ref(false)
+const sessionSave = ref(false)
+const logSettings = ref(false)
+const logDirectory = ref('')
+const retention = reactive({ ...DEFAULT_LOG_RETENTION })
+const retentionSaved = ref<LogRetentionSettings>({ ...DEFAULT_LOG_RETENTION })
+const retentionLast = ref<{ at: number; removed: number; failed: number }>()
+const retentionError = ref('')
+const retentionBusy = ref(false)
+const parityCode = computed(() => ({ none: 'N', even: 'E', odd: 'O' })[params.parity])
 
 /** 左侧会话栏宽度（拖动分隔条调整，重启记忆） */
 const sidebarWidth = ref(210)
@@ -344,41 +353,21 @@ const transferPct = computed(() => {
   return Math.min(100, Math.round((t.bytes / t.total) * 100))
 })
 
-/** 发文件：下拉选协议 → 系统文件选择框 → 确认开始 */
-async function onSendFile(proto: TransferProtocol): Promise<void> {
-  if (!open.value) {
-    ElMessage.warning('串口未打开')
-    return
-  }
-  const pick = (await window.api.invoke('serial', 'file:pick', props.panelId)) as {
-    ok: boolean
-    path?: string
-  }
-  if (!pick.ok || !pick.path) return
-  xferProtocol.value = proto
-  xferPath.value = pick.path
-  xferKind.value = 'send'
+function openTransfer(): void {
+  if (!open.value || transferring.value) return
+  xferPath.value = ''
   xferDlg.value = true
 }
 
-/** 收文件：下拉选协议 → 系统目录选择框 → 确认开始 */
-async function onRecvFile(proto: TransferProtocol): Promise<void> {
-  if (!open.value) {
-    ElMessage.warning('串口未打开')
-    return
-  }
-  const pick = (await window.api.invoke('serial', 'file:pick-dir', props.panelId)) as {
-    ok: boolean
-    path?: string
-  }
-  if (!pick.ok || !pick.path) return
-  xferProtocol.value = proto
-  xferPath.value = pick.path
-  xferKind.value = 'recv'
-  xferDlg.value = true
+async function chooseTransferPath(): Promise<void> {
+  const kind = xferKind.value
+  const action = kind === 'send' ? 'file:pick' : 'file:pick-dir'
+  const pick = (await window.api.invoke('serial', action, props.panelId)) as { ok: boolean; path?: string }
+  if (pick.ok && pick.path && xferDlg.value && kind === xferKind.value) xferPath.value = pick.path
 }
 
 async function startXfer(): Promise<void> {
+  if (!open.value || transferring.value || !xferPath.value) return
   xferDlg.value = false
   // 记住本次协议选择（下次默认选中）
   if (config.value) {
@@ -510,7 +499,7 @@ onMounted(async () => {
   encoding.value = config.value.encoding ?? 'utf8'
   if (config.value.sidebarWidth) sidebarWidth.value = config.value.sidebarWidth
   sidebarHidden.value = config.value.sidebarHidden === true
-  termView.value?.info('就绪。选择串口后点击「打开」，终端内可直接输入命令。')
+  termView.value?.info('就绪。选择串口后点击「连接」，终端内可直接输入命令。')
   await refreshPorts()
   await refreshAutoProfiles()
   await refreshPluginStatus()
@@ -530,7 +519,7 @@ onUnmounted(() => {
 async function refreshPorts(): Promise<void> {
   ports.value = (await window.api.invoke('serial', 'list', props.panelId)) as PortInfo[]
   // 串口列表带回填 COM 口后，标签随所选端口即时更新（便于开多个窗口区分）
-  if (params.path) tabStore.rename(props.panelId, `${params.path}@${params.baudRate}`)
+  if (params.path) tabStore.rename(props.panelId, params.path)
 }
 
 // ---------- 开关串口 ----------
@@ -561,7 +550,7 @@ async function openPort(): Promise<void> {
     await window.api.invoke('serial', 'dtr', props.panelId, { on: true }).catch(() => {})
     await window.api.invoke('serial', 'rts', props.panelId, { on: true }).catch(() => {})
     termView.value?.info(`已打开 ${params.path} @ ${params.baudRate}，终端内可直接输入`)
-    tabStore.rename(props.panelId, `${params.path}@${params.baudRate}`)
+    tabStore.rename(props.panelId, params.path)
     persistConfig()
     startSignalPoll()
     termView.value?.focus()
@@ -575,7 +564,7 @@ async function closePort(): Promise<void> {
   stopSignalPoll()
   await window.api.invoke('serial', 'close', props.panelId)
   open.value = false
-  tabStore.rename(props.panelId, `${params.path}@${params.baudRate}`)
+  tabStore.rename(props.panelId, params.path)
   termView.value?.info('已断开')
 }
 
@@ -641,8 +630,15 @@ function writeCmd(text: string, mode: 'ascii' | 'hex', newline: 'none' | 'crlf' 
     .catch(() => {})
 }
 
+function sendFromKeyboard(event: KeyboardEvent): void {
+  if (event.isComposing) return
+  event.preventDefault()
+  send()
+}
+
 function send(): void {
   doSend(sendText.value, sendMode.value, sendNewline.value)
+  historyIndex = -1
 }
 
 function startLoop(): void {
@@ -689,6 +685,43 @@ function saveLog(): void {
     .catch(() => {})
 }
 
+async function openLogSettings(): Promise<void> {
+  logSettings.value = true
+  retentionBusy.value = true
+  retentionError.value = ''
+  try {
+    const [directory, cleanup] = await Promise.all([
+      window.api.invoke('serial', 'log:get-dir', props.panelId) as Promise<{ dir?: string }>,
+      window.api.invoke('serial', 'log:retention:get', props.panelId) as Promise<{
+        settings: LogRetentionSettings
+        last?: { at: number; removed: number; failed: number }
+      }>
+    ])
+    logDirectory.value = directory.dir ?? ''
+    if (validLogRetention(cleanup.settings)) {
+      Object.assign(retention, cleanup.settings)
+      retentionSaved.value = cleanup.settings
+    }
+    retentionLast.value = cleanup.last
+  } catch (e) { retentionError.value = (e as Error).message }
+  finally { retentionBusy.value = false }
+}
+
+async function saveLogRetention(): Promise<void> {
+  if (!validLogRetention(retention) || retentionBusy.value) return
+  retentionBusy.value = true
+  retentionError.value = ''
+  try {
+    const result = await window.api.invoke('serial', 'log:retention:set', props.panelId, { ...retention }) as {
+      ok: boolean; error?: string; settings: LogRetentionSettings
+    }
+    if (!result.ok) throw new Error(result.error || '保存失败')
+    retentionSaved.value = result.settings
+    ElMessage.success('清理规则已保存')
+  } catch (e) { retentionError.value = (e as Error).message }
+  finally { retentionBusy.value = false }
+}
+
 function openLogDir(): void {
   void window.api.invoke('serial', 'log:open-dir', props.panelId).catch(() => {})
 }
@@ -700,7 +733,11 @@ async function setLogDir(): Promise<void> {
     dir?: string
     error?: string
   }
-  if (res.ok && res.dir) ElMessage.success(`日志保存目录已设为：${res.dir}（新会话生效）`)
+  if (res.ok && res.dir) {
+    logDirectory.value = res.dir
+    if (config.value) config.value.logDir = res.dir
+    ElMessage.success(`日志保存目录已设为：${res.dir}（新会话生效）`)
+  }
 }
 
 // ---------- 会话与配置 ----------
@@ -730,7 +767,7 @@ async function saveSession(): Promise<void> {
 
 function loadSession(idx: number): void {
   const s = sessions.value[idx]
-  if (s) Object.assign(params, s.params)
+  if (s && !open.value && !opening.value) Object.assign(params, s.params)
 }
 
 async function deleteSession(idx: number): Promise<void> {
@@ -748,10 +785,42 @@ async function deleteSession(idx: number): Promise<void> {
 
 <template>
   <div class="panel serial-panel">
-    <!-- 连接工具栏：打开后参数区收起，只留 COM 口徽标 -->
-    <div class="panel-section">
-      <div class="conn-bar">
-        <template v-if="!open">
+    <header class="conn-bar">
+      <div class="conn-group">
+        <el-button text :icon="Grid" :aria-expanded="!sidebarHidden" aria-label="会话与快捷命令" @click="toggleSidebar" />
+        <h1>{{ params.path || '串口' }}</h1>
+        <el-button size="small" :aria-expanded="connectionSettings" @click="connectionSettings = true">
+          {{ params.baudRate }} · {{ params.dataBits }}{{ parityCode }}{{ params.stopBits }} ▾
+        </el-button>
+        <span class="port-status" :class="{ online: open }">{{ open ? '已连接' : opening ? '连接中' : '未连接' }}</span>
+        <el-button v-if="open" size="small" @click="closePort">断开</el-button>
+        <el-button v-else size="small" type="primary" :loading="opening" @click="params.path ? openPort() : (connectionSettings = true)">连接</el-button>
+      </div>
+      <div class="conn-group">
+      <el-popover placement="bottom-end" :width="280" trigger="click">
+        <template #reference><el-button text size="small" :icon="Operation">DTR · RTS</el-button></template>
+        <div class="conn-group">
+        <el-button size="small" :disabled="!open" :type="dtrOn ? 'warning' : 'default'" @click="toggleDtr">
+          DTR {{ dtrOn ? '高' : '低' }}
+        </el-button>
+        <el-button size="small" :disabled="!open" :type="rtsOn ? 'warning' : 'default'" @click="toggleRts">
+          RTS {{ rtsOn ? '高' : '低' }}
+        </el-button>
+        <span v-if="signals" class="sig">
+          <el-tag size="small" :type="signals.cts ? 'success' : 'info'">CTS</el-tag>
+          <el-tag size="small" :type="signals.dsr ? 'success' : 'info'">DSR</el-tag>
+          <el-tag size="small" :type="signals.dcd ? 'success' : 'info'">DCD</el-tag>
+        </span>
+        </div>
+      </el-popover>
+        <SerialDevicePlugins :panel-id="props.panelId" :connected="open" @manage="pluginManagerOpen = true" />
+      </div>
+    </header>
+
+    <el-dialog v-model="connectionSettings" title="连接参数" width="min(460px, 95vw)" append-to-body>
+      <p v-if="open" class="hint">断开当前连接后可修改参数。</p>
+      <fieldset v-else class="conn-group conn-fields">
+
           <el-select
             v-model="params.path"
             placeholder="选择串口"
@@ -790,54 +859,28 @@ async function deleteSession(idx: number): Promise<void> {
             <el-option :value="2" label="2 停止" />
           </el-select>
           <el-checkbox v-model="params.rtscts" size="small">RTS/CTS</el-checkbox>
-          <el-button
-            type="primary"
-            size="small"
-            :icon="CaretRight"
-            :loading="opening"
-            @click="openPort"
-          >
-            打开
-          </el-button>
-        </template>
-        <template v-else>
-          <el-tag type="success" size="default" class="com-badge" effect="dark">
-            {{ params.path }}
-          </el-tag>
-          <el-button type="danger" size="small" :icon="CircleClose" @click="closePort">
-            断开
-          </el-button>
-        </template>
-        <el-divider direction="vertical" />
-        <el-button size="small" :disabled="!open" :type="dtrOn ? 'warning' : 'default'" @click="toggleDtr">
-          DTR {{ dtrOn ? '高' : '低' }}
-        </el-button>
-        <el-button size="small" :disabled="!open" :type="rtsOn ? 'warning' : 'default'" @click="toggleRts">
-          RTS {{ rtsOn ? '高' : '低' }}
-        </el-button>
-        <span v-if="signals" class="sig">
-          <el-tag size="small" :type="signals.cts ? 'success' : 'info'">CTS</el-tag>
-          <el-tag size="small" :type="signals.dsr ? 'success' : 'info'">DSR</el-tag>
-          <el-tag size="small" :type="signals.dcd ? 'success' : 'info'">DCD</el-tag>
-        </span>
-        <el-divider direction="vertical" />
-        <el-input
-          v-model="sessionName"
-          size="small"
-          placeholder="会话名"
-          style="width: 110px"
-        />
-        <el-button size="small" :icon="Plus" @click="saveSession">存为会话</el-button>
-      </div>
-    </div>
+                </fieldset>
+      <template #footer>
+        <el-button @click="connectionSettings = false">关闭</el-button>
+        <el-button type="primary" :disabled="open" @click="persistConfig(); connectionSettings = false">保存参数</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="sessionSave" title="保存当前会话" width="min(400px, 95vw)" append-to-body>
+      <el-input v-model="sessionName" aria-label="会话名" placeholder="会话名（可选）" @keydown.enter="saveSession(); sessionSave = false" />
+      <template #footer>
+        <el-button @click="sessionSave = false">取消</el-button>
+        <el-button type="primary" @click="saveSession(); sessionSave = false">保存</el-button>
+      </template>
+    </el-dialog>
 
     <div class="body">
       <!-- 会话库 + 快捷命令宏（全局共享）；宽度可拖动调整，可整体折叠/展开 -->
       <template v-if="!sidebarHidden">
         <div class="sessions" :style="{ width: sidebarWidth + 'px' }">
           <div class="sessions-head">
-            <span>会话</span>
-            <span class="hint">点击载入参数</span>
+            <span>已存会话</span>
+            <el-button text size="small" :icon="Plus" aria-label="保存当前会话" @click="sessionSave = true" />
           </div>
           <div
             v-for="(s, i) in sessions"
@@ -855,17 +898,12 @@ async function deleteSession(idx: number): Promise<void> {
             </div>
           </div>
           <div v-if="sessions.length === 0" class="hint" style="padding: 8px">
-            暂无会话。配置好参数后输入名称保存。
+            暂无会话
           </div>
 
           <div v-if="actionStage || autoStage" role="status">
             {{ actionStage || autoStage }}
             <el-button size="small" text @click="cancelDeviceAction">取消动作</el-button>
-          </div>
-          <div v-if="pluginSummary" role="status" class="plugin-status">
-            <span>{{ pluginSummary }}</span>
-            <el-button v-if="pluginBusy" size="small" text @click="cancelPluginAction">停止插件</el-button>
-            <el-button size="small" text @click="pluginManagerOpen = true">查看</el-button>
           </div>
           <QuickCmdManager
             :enabled="open"
@@ -882,56 +920,22 @@ async function deleteSession(idx: number): Promise<void> {
           />
         </div>
 
-        <!-- 拖动调整会话栏宽度（VS Code 式分隔条）；中央折叠把手 -->
-        <div class="sidebar-split" title="拖动调整宽度" @mousedown="onSidebarResize">
-          <button class="split-toggle" title="折叠会话栏" @mousedown.stop @click="toggleSidebar">
-            <svg viewBox="0 0 8 12" width="7" height="10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M6.5 1L1.5 6l5 5" />
-            </svg>
-          </button>
-        </div>
+        <div class="sidebar-split" title="拖动调整宽度" @mousedown="onSidebarResize"></div>
       </template>
-
-      <!-- 折叠后的细条：点击展开会话栏 -->
-      <div v-else class="sidebar-collapsed" title="展开会话栏" @click="toggleSidebar">
-        <el-icon :size="16"><ArrowRight /></el-icon>
-      </div>
 
       <!-- 终端 + 发送 -->
       <div class="term-col">
-        <div class="term-opts">
-          <el-tooltip content="终端字体（可手输系统内已安装的字体名）" placement="top">
-            <el-select
-              v-model="termFont"
-              size="small"
-              filterable
-              allow-create
-              style="width: 132px"
-            >
-              <el-option value="Consolas" label="Consolas" />
-              <el-option value="Cascadia Mono" label="Cascadia Mono" />
-              <el-option value="Courier New" label="Courier New" />
-              <el-option value="SimSun" label="宋体" />
-            </el-select>
-          </el-tooltip>
-          <el-tooltip content="字号（Ctrl+滚轮 或 Ctrl+= / Ctrl+- / Ctrl+0 缩放）" placement="top">
-            <el-select v-model="termFontSize" size="small" filterable style="width: 74px">
-              <el-option v-for="s in TERM_SIZES" :key="s" :value="s" :label="String(s)" />
-            </el-select>
-          </el-tooltip>
-          <el-tooltip content="设备不回显的裸模块勾选后，终端可看到自己敲入的字符" placement="top">
-            <el-checkbox v-model="localEcho" size="small">本地回显</el-checkbox>
-          </el-tooltip>
-          <el-tooltip content="每行前显示本地时间 [HH:MM:SS.mmm]，与日志落盘格式一致" placement="top">
-            <el-checkbox v-model="showTime" size="small" @change="persistConfig">时间戳</el-checkbox>
-          </el-tooltip>
-          <el-tooltip content="串口线上字节的编码：多数嵌入式设备输出 GBK，选错时中文显示乱码 / ？；对打开中的会话即时生效" placement="top">
-            <el-select v-model="encoding" size="small" style="width: 88px" @change="onEncodingChange">
-              <el-option value="utf8" label="UTF-8" />
-              <el-option value="gbk" label="GBK" />
-            </el-select>
-          </el-tooltip>
-          <el-button size="small" text :icon="Connection" title="安装插件、配置实例并绑定到当前串口" @click="pluginManagerOpen = true">插件</el-button>
+        <div class="term-opts" aria-label="终端操作">
+          <div class="term-group" role="group" aria-label="终端输出">
+            <el-button size="small" text :icon="Search" title="查找（Ctrl+F）" @click="openTermSearch">查找</el-button>
+            <el-button size="small" text @click="clearTerm">清屏</el-button>
+          </div>
+          <div class="term-group" role="group" aria-label="日志">
+            <el-button size="small" text :icon="Download" @click="saveLog">保存日志</el-button>
+            <TerminalHistory tool="serial" :panel-id="props.panelId" />
+            <el-button size="small" text :icon="FolderOpened" @click="openLogSettings">日志设置</el-button>
+          </div>
+          <el-button size="small" text :icon="UploadFilled" :disabled="!open || transferring" @click="openTransfer">文件传输</el-button>
           <el-button
             size="small"
             text
@@ -950,60 +954,72 @@ async function deleteSession(idx: number): Promise<void> {
               自动应答
             </el-checkbox>
           </el-tooltip>
-          <el-button size="small" text :icon="Search" title="查找（Ctrl+F）" @click="openTermSearch">查找</el-button>
-        <TerminalHistory tool="serial" :panel-id="props.panelId" />
-          <el-button size="small" text @click="clearTerm">清空</el-button>
-          <el-button size="small" text :icon="Download" @click="saveLog">存日志</el-button>
-          <el-dropdown trigger="click" @command="(cmd: string) => (cmd === 'set' ? setLogDir() : openLogDir())">
-            <el-button size="small" text :icon="FolderOpened">日志目录</el-button>
-            <template #dropdown>
-              <el-dropdown-menu>
-                <el-dropdown-item command="set">设置保存路径</el-dropdown-item>
-                <el-dropdown-item command="open">打开保存路径</el-dropdown-item>
-              </el-dropdown-menu>
+          <el-popover placement="bottom-end" :width="310" trigger="click">
+            <template #reference>
+              <el-button class="display-action" size="small" text :icon="Setting">显示设置</el-button>
             </template>
-          </el-dropdown>
-          <el-tooltip content="会话期间所有收发自动落盘（关闭后仅手动「存日志」）" placement="top">
-            <el-checkbox v-model="autoLog" size="small" title="新会话生效；关闭后使用临时历史，关闭面板或开始新会话时删除" @change="persistConfig">保留日志</el-checkbox>
-          </el-tooltip>
-          <el-tooltip content="发送文件到设备：先选协议（YMODEM/ZMODEM），再选文件" placement="top">
-            <el-dropdown
-              :disabled="!open || transferring"
-              trigger="click"
-              @command="(proto: string) => onSendFile(proto as TransferProtocol)"
+            <div class="display-settings">
+          <span>字体</span>
+          <el-tooltip content="终端字体（可手输系统内已安装的字体名）" placement="top">
+            <el-select
+              v-model="termFont"
+              size="small"
+              filterable
+              allow-create
+              style="width: 132px"
             >
-              <el-button size="small" text :icon="UploadFilled" :disabled="!open || transferring">
-                发文件
-              </el-button>
-              <template #dropdown>
-                <el-dropdown-menu>
-                  <el-dropdown-item command="ymodem">YMODEM 发送</el-dropdown-item>
-                  <el-dropdown-item command="zmodem">ZMODEM 发送</el-dropdown-item>
-                </el-dropdown-menu>
-              </template>
-            </el-dropdown>
+              <el-option value="Consolas" label="Consolas" />
+              <el-option value="Cascadia Mono" label="Cascadia Mono" />
+              <el-option value="Courier New" label="Courier New" />
+              <el-option value="SimSun" label="宋体" />
+            </el-select>
           </el-tooltip>
-          <el-tooltip content="接收设备发来的文件：先选协议，再选保存目录" placement="top">
-            <el-dropdown
-              :disabled="!open || transferring"
-              trigger="click"
-              @command="(proto: string) => onRecvFile(proto as TransferProtocol)"
-            >
-              <el-button size="small" text :icon="Download" :disabled="!open || transferring">
-                收文件
-              </el-button>
-              <template #dropdown>
-                <el-dropdown-menu>
-                  <el-dropdown-item command="ymodem">YMODEM 接收</el-dropdown-item>
-                  <el-dropdown-item command="zmodem">ZMODEM 接收</el-dropdown-item>
-                </el-dropdown-menu>
-              </template>
-            </el-dropdown>
+          <span>字号</span>
+          <el-tooltip content="字号（Ctrl+滚轮 或 Ctrl+= / Ctrl+- / Ctrl+0 缩放）" placement="top">
+            <el-select v-model="termFontSize" size="small" filterable style="width: 74px">
+              <el-option v-for="s in TERM_SIZES" :key="s" :value="s" :label="String(s)" />
+            </el-select>
           </el-tooltip>
-          <span class="counters">
-            RX <b>{{ rxBytes }}</b> TX <b>{{ txBytes }}</b>
-          </span>
+          <el-tooltip content="设备不回显的裸模块勾选后，终端可看到自己敲入的字符" placement="top">
+            <el-checkbox v-model="localEcho" size="small">本地回显</el-checkbox>
+          </el-tooltip>
+          <el-tooltip content="每行前显示本地时间 [HH:MM:SS.mmm]，与日志落盘格式一致" placement="top">
+            <el-checkbox v-model="showTime" size="small" @change="persistConfig">时间戳</el-checkbox>
+          </el-tooltip>
+          <span>接收编码</span>
+          <el-tooltip content="串口线上字节的编码：多数嵌入式设备输出 GBK，选错时中文显示乱码 / ？；对打开中的会话即时生效" placement="top">
+            <el-select v-model="encoding" size="small" style="width: 88px" @change="onEncodingChange">
+              <el-option value="utf8" label="UTF-8" />
+              <el-option value="gbk" label="GBK" />
+            </el-select>
+          </el-tooltip>
+            </div>
+          </el-popover>
         </div>
+        <el-dialog v-model="logSettings" title="会话日志设置" width="min(420px, 95vw)" append-to-body>
+          <el-checkbox v-model="autoLog" @change="persistConfig">自动保存会话日志</el-checkbox>
+          <p class="hint">自动保存设置在新会话中生效。</p>
+          <el-input :model-value="logDirectory" readonly aria-label="自动日志目录" placeholder="读取日志目录…" />
+          <div class="panel-row log-dir-actions">
+            <el-button size="small" @click="setLogDir">设置保存路径</el-button>
+            <el-button size="small" @click="openLogDir">打开保存路径</el-button>
+          </div>
+          <section class="log-cleanup">
+            <h3>历史日志自动清理</h3>
+            <el-checkbox v-model="retention.enabled" :disabled="retentionBusy">自动清理过期归档日志</el-checkbox>
+            <el-form label-position="top" @submit.prevent="saveLogRetention">
+              <el-form-item label="保留最近月数（1–120）">
+                <el-input-number v-model="retention.months" :min="1" :max="120" :step="1" step-strictly :disabled="retentionBusy || !retention.enabled" />
+              </el-form-item>
+              <p class="hint">启动后及每 24 小时检查。按最后写入时间判断，正在使用的归档和手动导出文件会跳过。</p>
+              <p class="hint" role="status">{{ retentionSaved.enabled ? `已保存：保留最近 ${retentionSaved.months} 个月` : '已保存：关闭自动清理' }}</p>
+              <p v-if="retentionLast" class="hint">上次清理 {{ new Date(retentionLast.at).toLocaleString() }} · 移除 {{ retentionLast.removed }} 个 · 失败 {{ retentionLast.failed }} 个</p>
+              <el-alert v-if="retentionError" :title="retentionError" type="error" :closable="false" role="alert" />
+              <el-button native-type="submit" size="small" :loading="retentionBusy" :disabled="!validLogRetention(retention)">保存清理规则</el-button>
+            </el-form>
+          </section>
+          <template #footer><el-button type="primary" @click="logSettings = false">完成</el-button></template>
+        </el-dialog>
         <TerminalView
           ref="termView"
           v-model:font-size="termFontSize"
@@ -1034,41 +1050,41 @@ async function deleteSession(idx: number): Promise<void> {
             :disabled="loopOn"
           >
             <el-option value="none" label="无换行" />
-            <el-option value="crlf" label="\r\n" />
-            <el-option value="lf" label="\n" />
-            <el-option value="cr" label="\r" />
+            <el-option value="crlf" label="CRLF" />
+            <el-option value="lf" label="LF" />
+            <el-option value="cr" label="CR" />
           </el-select>
-          <el-dropdown
-            v-if="history.length"
-            trigger="click"
-            @command="(cmd: string) => (sendText = cmd)"
-          >
-            <el-button size="small">历史</el-button>
-            <template #dropdown>
-              <el-dropdown-menu>
-                <el-dropdown-item v-for="h in history" :key="h" :command="h">
-                  {{ h.slice(0, 60) }}
-                </el-dropdown-item>
-              </el-dropdown-menu>
-            </template>
-          </el-dropdown>
           <el-input
             v-model="sendText"
             size="small"
             class="send-input mono"
-            :placeholder="sendMode === 'hex' ? 'HEX：AA BB 01' : '输入要发送的内容'"
+            aria-label="发送内容"
+            :placeholder="sendMode === 'hex' ? 'HEX：AA BB 01' : '输入命令，Enter 发送 · ↑↓ 调取历史'"
             :disabled="loopOn"
-            @keydown.ctrl.enter="send"
-          />
-          <el-button type="primary" size="small" :icon="Connection" :disabled="!open || loopOn" @click="send">
-            发送
-          </el-button>
+            @input="historyIndex = -1"
+            @keydown.up.exact="recallSendHistory($event, 1)"
+            @keydown.down.exact="recallSendHistory($event, -1)"
+            @keydown.enter.exact="sendFromKeyboard"
+            @keydown.ctrl.enter="sendFromKeyboard"
+          >
+            <template #suffix>
+              <el-dropdown trigger="click" :disabled="!history.length || loopOn" @command="(cmd: string) => (sendText = cmd)">
+                <el-button text size="small" :icon="Clock" :disabled="!history.length || loopOn" aria-label="选择发送历史" />
+                <template #dropdown>
+                  <el-dropdown-menu>
+                    <el-dropdown-item v-for="h in history" :key="h" :command="h">{{ h.slice(0, 60) }}</el-dropdown-item>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown>
+            </template>
+          </el-input>
+          <el-button type="primary" size="small" :disabled="!open || loopOn" @click="send">发送</el-button>
           <!-- 定时发送：默认收起，点「定时」展开 -->
           <el-tooltip content="定时循环发送（非常用功能，展开后可用）" placement="top">
             <el-button
               size="small"
               :type="loopOn ? 'danger' : loopPanel ? 'warning' : 'default'"
-              @click="loopPanel = !loopPanel"
+              @click="loopOn ? stopLoop() : (loopPanel = !loopPanel)"
             >
               {{ loopOn ? '停止循环' : '定时' }}
             </el-button>
@@ -1087,14 +1103,31 @@ async function deleteSession(idx: number): Promise<void> {
       </div>
     </div>
 
-    <!-- 传输确认 -->
-    <el-dialog v-model="xferDlg" :title="xferKind === 'send' ? '发送文件到设备' : '接收设备发来的文件'" width="400px" append-to-body>
-      <el-form label-width="80px" size="small" @submit.prevent>
-        <el-form-item :label="xferKind === 'send' ? '发送文件' : '保存目录'">
-          <div class="xfer-path">{{ xferPath }}</div>
-        </el-form-item>
+    <footer class="serial-status">
+      <span class="serial-status-summary">{{ params.path || '串口' }} · {{ open ? '已连接' : '未连接' }}</span>
+      <span>RX <b>{{ rxBytes }}</b> B</span>
+      <span>TX <b>{{ txBytes }}</b> B</span>
+      <span>{{ autoLog ? '保留日志' : '临时日志' }}</span>
+    </footer>
+
+    <el-dialog v-model="xferDlg" title="串口文件传输" width="min(460px, 95vw)" append-to-body>
+      <el-form label-position="top" size="small" class="transfer-form" @submit.prevent="startXfer">
         <el-form-item label="传输协议">
-          <el-tag size="small" effect="plain">{{ xferProtocol.toUpperCase() }}</el-tag>
+          <el-select v-model="xferProtocol" aria-label="传输协议">
+            <el-option label="YMODEM" value="ymodem" />
+            <el-option label="ZMODEM" value="zmodem" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="方向">
+          <el-select v-model="xferKind" aria-label="方向" @change="xferPath = ''">
+            <el-option label="发送到设备" value="send" />
+            <el-option label="从设备接收" value="recv" />
+          </el-select>
+        </el-form-item>
+        <el-form-item class="transfer-path" :label="xferKind === 'send' ? '本地文件' : '接收保存目录'">
+          <el-input :model-value="xferPath" readonly>
+            <template #append><el-button @click="chooseTransferPath">{{ xferKind === 'send' ? '选择文件' : '选择目录' }}</el-button></template>
+          </el-input>
         </el-form-item>
       </el-form>
       <div class="hint">
@@ -1106,7 +1139,7 @@ async function deleteSession(idx: number): Promise<void> {
       </div>
       <template #footer>
         <el-button @click="xferDlg = false">取消</el-button>
-        <el-button type="primary" @click="startXfer">开始传输</el-button>
+        <el-button type="primary" :disabled="!xferPath || !open || transferring" @click="startXfer">开始传输</el-button>
       </template>
     </el-dialog>
 
@@ -1138,7 +1171,6 @@ async function deleteSession(idx: number): Promise<void> {
         <el-button :disabled="!transferring" @click="cancelTransfer">取消传输</el-button>
       </template>
     </el-dialog>
-
     <PluginManager
       v-model:visible="pluginManagerOpen"
       :panel-id="props.panelId"
@@ -1156,206 +1188,50 @@ async function deleteSession(idx: number): Promise<void> {
 </template>
 
 <style scoped>
-.plugin-status { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; font-size: 12px; padding: 4px 8px; color: var(--el-text-color-secondary); }
-.serial-panel {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  overflow: hidden;
+.serial-panel { height:100%; overflow:hidden; padding:0; gap:0; container-type:inline-size; }
+.mono { font-family:var(--font-mono); }
+.hint { font-size:12px; color:var(--el-text-color-secondary); }
+.conn-bar, .conn-group { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.conn-bar { justify-content:space-between; flex:none; padding:6px 10px; background:var(--el-bg-color-overlay); border-bottom:1px solid var(--el-border-color-lighter); }
+.conn-bar h1 { margin:0; font:600 14px var(--font-mono); }
+.conn-fields { border:0; padding:0; margin:0; min-width:0; }
+.port-status { padding:2px 8px; border-radius:20px; font-size:12px; background:var(--el-fill-color); }
+.port-status.online { color:var(--el-color-success); background:var(--el-color-success-light-9); }
+.sig { display:inline-flex; gap:4px; }
+.body { display:flex; flex:1; min-height:0; position:relative; }
+.sessions { flex:none; min-width:150px; max-width:27%; padding:10px; overflow:auto; background:var(--el-bg-color-overlay); border-right:1px solid var(--el-border-color-lighter); }
+.sidebar-split { flex:0 0 4px; margin:0 -2px; cursor:col-resize; z-index:1; }
+.sidebar-split:hover { background:var(--el-color-primary); }
+.sessions-head { display:flex; align-items:center; justify-content:space-between; font-size:13px; font-weight:600; }
+.session-item { padding:5px 8px; border-radius:7px; cursor:pointer; }
+.session-item:hover, .session-item.active { background:var(--el-fill-color-light); }
+.session-name { font-size:13px; overflow-wrap:anywhere; }
+.session-sub { font-size:12px; color:var(--el-text-color-secondary); display:flex; justify-content:space-between; align-items:center; }
+.term-col { flex:1; display:flex; flex-direction:column; min-width:0; }
+.term-col :deep(.term) { border:0; border-radius:0; box-shadow:none; padding:10px 12px; }
+.term-col :deep(.search-bar) { margin:0; border-radius:0; border-width:0 0 1px; }
+.term-opts, .term-group { display:flex; align-items:center; flex-wrap:wrap; gap:4px; }
+.term-opts { padding:4px 10px; background:var(--el-bg-color-overlay); border-bottom:1px solid var(--el-border-color-lighter); }
+.term-group + .term-group { border-inline-start:1px solid var(--el-border-color-lighter); padding-inline-start:5px; }
+.term-opts :deep(.el-button) { margin:0; }
+.display-action { margin-inline-start:auto !important; }
+.display-settings { display:grid; grid-template-columns:auto 1fr; align-items:center; gap:8px; }
+.display-settings :deep(.el-select) { width:100% !important; }
+.send-bar { display:flex; align-items:center; gap:6px; flex-wrap:wrap; padding:8px 10px; background:var(--el-bg-color-overlay); border-top:1px solid var(--el-border-color-lighter); }
+.send-bar :deep(.el-button) { margin:0; }
+.send-input { flex:1; min-width:135px; }
+.serial-status { display:flex; justify-content:flex-end; gap:12px; padding:5px 12px; font-size:12px; color:var(--el-text-color-secondary); border-top:1px solid var(--el-border-color-lighter); }
+.serial-status-summary { margin-inline-end:auto; }
+.serial-status b { font-family:var(--font-mono); }
+@container (max-width:690px) {
+  .sessions { position:absolute; z-index:2; inset:0 auto 0 0; max-width:75%; box-shadow:var(--el-box-shadow-light); }
+  .sidebar-split { display:none; }
 }
-
-.mono {
-  font-family: var(--font-mono);
-}
-
-.hint {
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
-}
-
-.conn-bar {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-
-.sig {
-  display: inline-flex;
-  gap: 4px;
-}
-
-.body {
-  display: flex;
-  gap: 6px;
-  flex: 1;
-  min-height: 0;
-}
-
-.sessions {
-  flex: 0 0 auto;
-  min-width: 150px;
-  border-right: 1px solid var(--el-border-color-lighter);
-  padding-right: 14px;
-  overflow-y: auto;
-}
-
-/* 拖动调宽分隔条（VS Code 式）：平时 4px，悬停/拖动高亮 */
-.sidebar-split {
-  flex: 0 0 4px;
-  margin: 0 -2px;
-  cursor: col-resize;
-  border-radius: 2px;
-  position: relative;
-  z-index: 5;
-}
-
-.sidebar-split:hover {
-  background: var(--el-color-primary);
-  opacity: 0.5;
-}
-
-/* 分隔条中央的折叠把手：默认近乎隐没（透明底，只余浅灰细箭头），悬停才浮出底色与描边；
-   mousedown.stop 避免点击把手被当成拖动调宽 */
-.split-toggle {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  width: 12px;
-  height: 32px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  color: var(--el-text-color-placeholder);
-  opacity: 0.45;
-  cursor: pointer;
-  transition:
-    opacity 0.15s ease,
-    background 0.15s ease,
-    border-color 0.15s ease,
-    color 0.15s ease;
-  z-index: 6;
-}
-
-.sidebar-split:hover .split-toggle {
-  opacity: 1;
-}
-
-.split-toggle:hover {
-  background: var(--el-color-primary-light-9);
-  border-color: var(--el-color-primary-light-7);
-  color: var(--el-color-primary);
-}
-
-.sessions-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  font-weight: 600;
-  font-size: 13px;
-  margin: 4px 0 8px;
-  gap: 8px;
-}
-
-.sessions-head .hint {
-  font-weight: 400;
-}
-
-/* 折叠后的细条（VS Code 式）：占 16px，点击展开 */
-.sidebar-collapsed {
-  flex: 0 0 auto;
-  width: 16px;
-  align-self: stretch;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-right: 1px solid var(--el-border-color-lighter);
-  color: var(--el-text-color-secondary);
-  cursor: pointer;
-  transition: background 0.15s ease;
-}
-
-.sidebar-collapsed:hover {
-  background: var(--el-fill-color);
-  color: var(--el-color-primary);
-}
-
-.session-item {
-  padding: 7px 9px;
-  border-radius: 8px;
-  cursor: pointer;
-  transition: background 0.15s ease;
-}
-
-.session-item:hover {
-  background: var(--el-fill-color);
-}
-
-.session-item.active {
-  background: var(--el-fill-color-darker);
-}
-
-.session-name {
-  font-size: 13px;
-}
-
-.session-sub {
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.com-badge {
-  font-family: var(--font-mono);
-  font-size: 13px;
-  letter-spacing: 0.5px;
-}
-
-.term-col {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  gap: 8px;
-}
-
-.term-opts {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.counters {
-  margin-left: auto;
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
-}
-
-.counters b {
-  color: var(--el-color-success);
-  font-family: var(--font-mono);
-}
-
-.send-bar {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-  padding-top: 2px;
-}
-
-.send-input {
-  flex: 1;
-  min-width: 200px;
-}
-
+.transfer-form { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:0 12px; }
+.transfer-path { grid-column:1/-1; }
+.log-dir-actions { margin-top:10px; }
+.log-cleanup { margin-top:14px; padding-top:12px; border-top:1px solid var(--el-border-color-lighter); }
+.log-cleanup h3 { font-size:14px; margin:0 0 4px; }
 .xfer-box {
   display: flex;
   flex-direction: column;
@@ -1376,13 +1252,6 @@ async function deleteSession(idx: number): Promise<void> {
   white-space: nowrap;
   direction: rtl;
   text-align: left;
-}
-
-.xfer-path {
-  font-family: var(--font-mono);
-  font-size: 12px;
-  word-break: break-all;
-  color: var(--el-text-color-regular);
 }
 
 .xfer-count {

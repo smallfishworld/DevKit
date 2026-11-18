@@ -6,7 +6,7 @@
  */
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { ArrowDown, ArrowRight, CopyDocument, Delete, Download, EditPen, FolderAdd, Plus, Timer, Upload, VideoCamera } from '@element-plus/icons-vue'
+import { ArrowDown, ArrowRight, CopyDocument, Delete, EditPen, Plus, Timer, VideoCamera } from '@element-plus/icons-vue'
 import type { QuickCmd, QuickCmdStep, PluginActionReference, PluginMacroAction } from '../../../shared/term-macro'
 import { TERM_KEYS, keyName, stepPreview, resolveDropInsertion, validatePlayback } from '../../../shared/term-macro'
 import { useTermMacros } from '../composables/useTermMacros'
@@ -457,9 +457,9 @@ async function onImport(): Promise<void> {
 
 <template>
   <div>
-    <div class="sessions-head cmd-head" style="margin-top: 10px">
+    <div class="sessions-head cmd-head">
       <span>快捷命令</span>
-      <span>
+      <span class="cmd-head-actions">
         <el-tooltip
           :content="recording ? '停止录制并整理保存' : '录制宏：终端键入与发送都会记入（含自动延时与按键）'"
           placement="top"
@@ -468,18 +468,17 @@ async function onImport(): Promise<void> {
             <el-icon><VideoCamera /></el-icon>
           </el-button>
         </el-tooltip>
-        <el-tooltip content="新建分组：先建组，再在组内添加命令" placement="top">
-          <el-button size="small" text :icon="FolderAdd" @click="newGroupDlg = true" />
-        </el-tooltip>
-        <el-tooltip content="新建命令（可设分组）" placement="top">
-          <el-button size="small" text :icon="Plus" aria-label="新建快捷命令" @click="openCmdDlg(-1)" />
-        </el-tooltip>
-        <el-tooltip content="导入配置：支持 DevKit JSON 与 MobaXterm 宏文件（.mxtmacros / ini）" placement="top">
-          <el-button size="small" text :icon="Download" @click="onImport" />
-        </el-tooltip>
-        <el-tooltip content="导出配置：全部快捷命令存为 JSON" placement="top">
-          <el-button size="small" text :icon="Upload" @click="onExport" />
-        </el-tooltip>
+        <el-button size="small" text :icon="Plus" aria-label="新建快捷命令" @click="openCmdDlg(-1)" />
+        <el-dropdown trigger="click">
+          <el-button size="small" text aria-label="快捷命令分组与导入导出">⋯</el-button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item @click="newGroupDlg = true">新建分组…</el-dropdown-item>
+              <el-dropdown-item @click="onImport">导入命令…</el-dropdown-item>
+              <el-dropdown-item @click="onExport">导出命令…</el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
       </span>
     </div>
     <div class="cmd-list">
@@ -765,6 +764,10 @@ async function onImport(): Promise<void> {
 </template>
 
 <style scoped>
+.cmd-head { display:flex; align-items:center; justify-content:space-between; gap:4px; font-size:13px; font-weight:600; margin-top:12px; padding-top:10px; border-top:1px solid var(--el-border-color-lighter); }
+.cmd-head-actions { display:flex; gap:2px; }
+.cmd-head-actions :deep(.el-button) { margin:0; padding-inline:4px; }
+
 .hint {
   font-size: 12px;
   color: var(--el-text-color-secondary);

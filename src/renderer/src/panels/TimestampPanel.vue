@@ -46,17 +46,31 @@ function fmtUtc(ms: number): string {
 }
 
 const nowMs = ref(Date.now())
+const clockPaused = ref(false)
 let timer: ReturnType<typeof setInterval> | null = null
 
 onMounted(() => {
-  timer = setInterval(() => (nowMs.value = Date.now()), 500)
+  timer = setInterval(() => {
+    if (!clockPaused.value) nowMs.value = Date.now()
+  }, 500)
 })
 onUnmounted(() => {
   if (timer) clearInterval(timer)
 })
 
 const tsInput = ref('')
-const dateInput = ref('')
+const dateInput = ref<Date | null>(null)
+const dateResult = computed(() => {
+  const ms = dateInput.value?.getTime()
+  if (ms === undefined || Number.isNaN(ms)) return []
+  const sec = Math.floor(ms / 1000)
+  return [
+    { label: 'Unix 秒', value: String(sec) },
+    { label: 'Unix 毫秒', value: String(ms) },
+    { label: 'HEX 秒', value: '0x' + sec.toString(16).toUpperCase() },
+    { label: 'HEX 毫秒', value: '0x' + ms.toString(16).toUpperCase() }
+  ]
+})
 
 const parsed = computed(() => parseTs(tsInput.value))
 
@@ -64,6 +78,7 @@ const result = computed(() => {
   if (parsed.value === null) return null
   const ms = parsed.value
   const d = new Date(ms)
+  if (!Number.isFinite(d.getTime())) return null
   return {
     ms,
     local: fmtLocal(ms),
@@ -93,6 +108,12 @@ function useNow(): void {
   tsInput.value = nowMs.value.toString()
 }
 
+function syncNow(): void {
+  nowMs.value = Date.now()
+  dateInput.value = new Date(nowMs.value)
+  useNow()
+}
+
 function useNowSec(): void {
   tsInput.value = Math.floor(nowMs.value / 1000).toString()
 }
@@ -117,119 +138,73 @@ function fromDate(): void {
 </script>
 
 <template>
-  <div class="panel ts-panel">
-    <div class="panel-section">
-      <h3>当前时间</h3>
-      <div class="now-row mono">
-        <div class="now-item">
-          <span class="lbl">Unix 秒</span>
-          <b>{{ Math.floor(nowMs / 1000) }}</b>
-          <el-button size="small" text :icon="CopyDocument" @click="copy(Math.floor(nowMs / 1000).toString())" />
-        </div>
-        <div class="now-item">
-          <span class="lbl">Unix 毫秒</span>
-          <b>{{ nowMs }}</b>
-          <el-button size="small" text :icon="CopyDocument" @click="copy(nowMs.toString())" />
-        </div>
-        <div class="now-item">
-          <span class="lbl">本地时间</span>
-          <b>{{ fmtLocal(nowMs) }}</b>
-        </div>
+  <div class="panel ts-panel converter-page">
+    <header class="converter-head">
+      <div>
+        <h1>时间戳转换</h1>
+        <p>秒、毫秒、微秒、纳秒、十六进制与日期互转</p>
       </div>
-    </div>
-
-    <div class="panel-section">
-      <h3>时间戳 → 日期</h3>
-      <div class="row">
-        <el-input
-          v-model="tsInput"
-          class="mono"
-          placeholder="输入时间戳：秒 / 毫秒 / 微秒 / 纳秒 / 0xHEX / 日期文本均可"
-          style="flex: 1"
-          clearable
-        />
-        <el-button size="small" @click="useNowSec">当前(秒)</el-button>
-        <el-button size="small" @click="useNow">当前(毫秒)</el-button>
+      <el-button size="small" type="primary" plain @click="syncNow">同步当前时刻</el-button>
+    </header>
+    <section class="clock-strip" aria-label="实时 Unix 时钟">
+      <strong class="clock-state">{{ clockPaused ? '已暂停' : '实时时钟' }}</strong>
+      <el-button size="small" @click="copy(Math.floor(nowMs / 1000).toString())">秒 (s) <code>{{ Math.floor(nowMs / 1000) }}</code></el-button>
+      <el-button size="small" @click="copy(nowMs.toString())">毫秒 (ms) <code>{{ nowMs }}</code></el-button>
+      <span class="clock-local">本地 <code>{{ fmtLocal(nowMs) }}</code></span>
+      <div class="clock-actions">
+        <el-button size="small" @click="useNow">填入下方解析</el-button>
+        <el-button size="small" text :aria-pressed="clockPaused" @click="clockPaused = !clockPaused">{{ clockPaused ? '继续刷新' : '暂停刷新' }}</el-button>
       </div>
-      <template v-if="tsInput && result">
-        <el-descriptions :column="2" border size="small" style="margin-top: 10px">
-          <el-descriptions-item label="本地时间">{{ result.local }}</el-descriptions-item>
-          <el-descriptions-item label="UTC">{{ result.utc }}</el-descriptions-item>
-          <el-descriptions-item label="ISO 8601">{{ result.iso }}</el-descriptions-item>
-          <el-descriptions-item label="相对当前">{{ result.rel }}</el-descriptions-item>
-          <el-descriptions-item label="秒级时间戳">
-            {{ result.sec }}
-            <el-button size="small" text :icon="CopyDocument" @click="copy(result.sec.toString())" />
-          </el-descriptions-item>
-          <el-descriptions-item label="毫秒级时间戳">
-            {{ result.msStr }}
-            <el-button size="small" text :icon="CopyDocument" @click="copy(result.msStr)" />
-          </el-descriptions-item>
-          <el-descriptions-item label="HEX(秒)">
-            {{ result.hexSec }}
-            <el-button size="small" text :icon="CopyDocument" @click="copy(result.hexSec)" />
-          </el-descriptions-item>
-          <el-descriptions-item label="HEX(毫秒)">
-            {{ result.hexMs }}
-            <el-button size="small" text :icon="CopyDocument" @click="copy(result.hexMs)" />
-          </el-descriptions-item>
-        </el-descriptions>
-      </template>
-      <el-alert
-        v-else-if="tsInput && !result"
-        type="error"
-        :closable="false"
-        title="无法解析的时间戳"
-        style="margin-top: 10px"
-      />
-    </div>
-
-    <div class="panel-section">
-      <h3>日期 → 时间戳</h3>
-      <div class="row">
-        <el-date-picker
-          v-model="dateInput"
-          type="datetime"
-          placeholder="选择日期时间"
-          format="YYYY-MM-DD HH:mm:ss"
-          style="flex: 1"
-        />
-        <el-button size="small" type="primary" @click="fromDate">转换到上方</el-button>
-      </div>
+    </section>
+    <div class="converter-split">
+      <section class="panel-section">
+        <h3>时间戳 → 日期时间</h3>
+        <el-input v-model="tsInput" class="mono" aria-label="输入时间戳" placeholder="输入时间戳或日期字符串" clearable />
+        <div class="converter-row">
+          <el-button size="small" @click="useNowSec">当前秒</el-button>
+          <el-button size="small" @click="useNow">当前毫秒</el-button>
+        </div>
+        <div v-if="result" class="result-grid">
+          <button
+            v-for="[label, value] in [
+              ['本地时间', result.local], ['UTC', result.utc], ['ISO 8601', result.iso],
+              ['相对当前', result.rel], ['Unix 秒', result.sec], ['Unix 毫秒', result.msStr],
+              ['HEX 秒', result.hexSec], ['HEX 毫秒', result.hexMs]
+            ]"
+            :key="label" type="button" class="result-item" @click="copy(String(value))"
+          >
+            <span>{{ label }}</span><code>{{ value }}</code><el-icon><CopyDocument /></el-icon>
+          </button>
+        </div>
+        <el-alert v-else-if="tsInput.trim()" type="error" :closable="false" title="无法解析的时间戳" />
+      </section>
+      <section class="panel-section">
+        <h3>日期时间 → 时间戳</h3>
+        <el-date-picker v-model="dateInput" type="datetime" aria-label="选择日期时间" placeholder="选择日期时间" format="YYYY-MM-DD HH:mm:ss" />
+        <div class="converter-row">
+          <el-button size="small" @click="dateInput = new Date()">当前时刻</el-button>
+          <el-button size="small" type="primary" @click="fromDate">转换到左侧</el-button>
+        </div>
+        <div v-if="dateResult.length" class="result-grid">
+          <button v-for="item in dateResult" :key="item.label" type="button" class="result-item" @click="copy(item.value)">
+            <span>{{ item.label }}</span><code>{{ item.value }}</code><el-icon><CopyDocument /></el-icon>
+          </button>
+        </div>
+      </section>
     </div>
   </div>
 </template>
 
 <style scoped>
-.ts-panel {
-  overflow: auto;
-}
-
-.mono,
-.now-item b {
-  font-family: var(--font-mono);
-}
-
-.now-row {
-  display: flex;
-  gap: 40px;
-  flex-wrap: wrap;
-}
-
-.now-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.now-item .lbl {
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
-}
-
-.row {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
+.mono, code { font-family:var(--font-mono); }
+.clock-strip { display:flex; align-items:center; flex-wrap:wrap; gap:8px; padding:9px 12px; background:var(--el-bg-color-overlay); border:1px solid var(--el-border-color-lighter); border-radius:8px; font-size:12px; }
+.clock-strip .el-button { margin:0; }
+.clock-state { color:var(--el-color-success); }
+.clock-actions { display:flex; gap:5px; margin-inline-start:auto; }
+.clock-local { color:var(--el-text-color-secondary); }
+.result-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(160px, 1fr)); gap:8px; margin-top:10px; }
+.result-item { display:grid; gap:4px 10px; grid-template-columns:minmax(0,1fr) auto; padding:8px 10px; border:1px solid var(--el-border-color-lighter); border-radius:7px; background:var(--el-bg-color-page); color:inherit; text-align:start; cursor:pointer; }
+.result-item:hover { border-color:var(--el-color-primary); }
+.result-item span { grid-column:1/-1; color:var(--el-text-color-secondary); font-size:12px; }
+.result-item code { overflow-wrap:anywhere; }
 </style>

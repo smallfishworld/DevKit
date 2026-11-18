@@ -81,11 +81,12 @@ async function main(): Promise<void> {
   const text = (selector: string, contains: string): Promise<boolean> => js(
     '[...document.querySelectorAll(' + JSON.stringify(selector) + ')].some(x=>x.getClientRects().length&&x.textContent.includes(' + JSON.stringify(contains) + '))')
 
-  await until(() => click('.tool-card .tool-name', '串口助手'), '打开串口面板')
+  await until(() => click('.toolbox .tool-row strong', '串口助手'), '打开串口面板')
   await until(() => text('.conn-bar', portName), '模拟设备参数')
-  await until(() => click('.conn-bar button', '打开'), '连接模拟串口')
-  await until(() => text('.com-badge', portName), '串口已连接')
-  await until(() => click('.term-opts button', '插件'), '打开插件管理')
+  await until(() => click('.conn-bar button', '连接'), '连接模拟串口')
+  await until(() => text('.port-status.online', '已连接'), '串口已连接')
+  await until(() => click('.conn-bar [aria-label=设备插件]'), '打开插件入口')
+  await until(() => click('.el-popper button', '插件管理'), '打开插件管理')
   await until(() => click('.el-tabs__item', '已安装插件'), '插件安装页')
   await until(() => fill('input[placeholder="插件目录或 JSON 插件包路径"]', join(userData, 'responder.json')), '插件包路径')
   await until(() => click('.install-row button', '安装'), '安装独立JSON插件包')
@@ -123,7 +124,8 @@ async function main(): Promise<void> {
   await until(() => sent.length >= 5, '插件动作后继续宏')
   assert.deepEqual(sent.slice(-2), ['PONG\r\n', 'AFTER\r\n'])
 
-  await until(() => click('.term-opts button', '插件'), '重新打开插件管理')
+  await until(() => click('.conn-bar [aria-label=设备插件]'), '重新打开插件入口')
+  await until(() => click('.el-popper button', '插件管理'), '重新打开插件管理')
   await until(() => click('.instance-controls button', '停止'), '停止插件并回收资源')
   await delay(300)
   const before = sent.length

@@ -159,10 +159,10 @@ async function main(): Promise<void> {
     if (!input) return false;
     input.value = ${JSON.stringify(value)}; input.dispatchEvent(new Event('input', { bubbles: true })); return true;
   })()`)
-  await until(() => click('.tool-card .tool-name', '串口助手'), '串口面板')
+  await until(() => click('.toolbox .tool-row strong', '串口助手'), '串口面板')
   await until(() => js(`document.querySelector('.conn-bar').textContent.includes('${portName}')`), '模拟串口配置')
-  await until(() => click('.conn-bar button', '打开'), '打开串口')
-  await until(() => js(`!!document.querySelector('.com-badge')`), '串口连接成功')
+  await until(() => click('.conn-bar button', '连接'), '打开串口')
+  await until(() => js(`!!document.querySelector('.port-status.online')`), '串口连接成功')
   await until(() => click('[aria-label="新建快捷命令"]'), '快捷命令编辑器')
   await until(() => fill('input[placeholder="如：上电自检流程"]', '模拟解锁并查版本'), '宏名称')
   await until(() => click('.steps-head button', '设备动作'), '添加设备动作步骤')

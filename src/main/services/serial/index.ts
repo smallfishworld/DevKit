@@ -17,6 +17,9 @@ import { getSection, setSection } from '../macro/configStore'
 import { ByteQueue, TransferCancelled, ymodemRecv, ymodemSend } from './ymodem'
 import { zmodemRecv, zmodemSend } from './zmodem'
 import { TerminalRuntime } from '../terminal/runtime'
+import { cleanSerialArchives, LogRetentionStore } from '../terminal/log-retention'
+import { validLogRetention } from '../../../shared/log-retention'
+import type { LogRetentionSettings } from '../../../shared/log-retention'
 import { fmtDuration, txAuditLine } from '../../../shared/logtext'
 import { SerialSecretRedactor } from './device-actions'
 import { OaDevicePlugin } from './oa-plugin'
@@ -282,6 +285,46 @@ export class SerialService implements ToolService {
   }
 
   private runtime = new TerminalRuntime('serial')
+  private retentionStore?: LogRetentionStore
+  private retentionTimer?: ReturnType<typeof setInterval>
+  private retentionRun?: Promise<void>
+  private retentionLast?: { at: number; removed: number; failed: number }
+
+  startLogRetention(): void {
+    if (this.retentionTimer) return
+    const run = (): void => {
+      void this.cleanLogs().catch((error) => console.warn('[serial] 历史日志清理失败', error))
+    }
+    this.retentionTimer = setInterval(run, 24 * 60 * 60 * 1000)
+    this.retentionTimer.unref()
+    run()
+  }
+
+  private get logRetention(): LogRetentionStore {
+    return this.retentionStore ??= new LogRetentionStore(app.getPath('userData'))
+  }
+
+  private retentionSettings(): Promise<LogRetentionSettings> {
+    return this.logRetention.read()
+  }
+
+  private async saveRetention(settings: unknown): Promise<unknown> {
+    if (!validLogRetention(settings)) return { ok: false, error: '保留月数须为 1 到 120 的整数' }
+    await this.logRetention.save({ enabled: settings.enabled, months: settings.months })
+    return { ok: true, settings }
+  }
+
+  private cleanLogs(): Promise<void> {
+    return this.retentionRun ??= (async () => {
+      const settings = await this.retentionSettings()
+      if (!settings.enabled) return
+      const cfg = await getSection('serial', DEFAULT_SERIAL_CONFIG)
+      const result = await cleanSerialArchives([serialLogDir(), cfg.logDir || serialLogDir()],
+        settings.months, () => this.runtime.protectedPaths)
+      this.retentionLast = { at: Date.now(), ...result }
+      if (result.failed) console.warn(`[serial] 有 ${result.failed} 个归档清理项未完成`)
+    })().finally(() => { this.retentionRun = undefined })
+  }
   private powerBlockerId: number | null = null
   private viewVisible = new Map<string, boolean>()
   private resumeHold = new Set<string>()
@@ -442,6 +485,8 @@ export class SerialService implements ToolService {
         return this.noteLog(panelId, (payload as { text: string }).text)
       case 'log:set-dir':
         return this.setLogDir()
+      case 'log:retention:get': return this.retentionSettings().then((settings) => ({ ok: true, settings, last: this.retentionLast }))
+      case 'log:retention:set': return this.saveRetention(payload)
       case 'log:get-dir':
         return getSection<SerialConfig>('serial', DEFAULT_SERIAL_CONFIG).then((c) => ({ dir: c.logDir || serialLogDir() }))
       case 'log:open-dir':
