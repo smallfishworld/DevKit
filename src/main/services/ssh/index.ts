@@ -3,6 +3,7 @@
  * ssh2 纯 JS 实现（无原生模块）；输出与串口相同按 32ms 批量合并推送防卡 UI
  */
 import { Client, type ClientChannel } from 'ssh2'
+import { randomUUID } from 'node:crypto'
 import { StringDecoder } from 'node:string_decoder'
 import { app, dialog, shell } from 'electron'
 import { promises as fs } from 'node:fs'
@@ -11,6 +12,7 @@ import type { ToolService } from '../../ipc'
 import { emitToolEvent } from '../../ipc'
 import type { SshConfig, SshParams } from '../../../shared/ssh'
 import { DEFAULT_SSH_CONFIG } from '../../../shared/ssh'
+import type { StreamEvent, StreamSessionBridge } from '../../../shared/plugins'
 import { getSection, setSection } from '../macro/configStore'
 import { TerminalRuntime } from '../terminal/runtime'
 
@@ -20,6 +22,9 @@ interface RxPiece {
 }
 
 interface SshSession {
+  connectionId: string
+  pluginDecoder: StringDecoder
+  pluginSequence: number
   client: Client
   stream: ClientChannel
   params: SshParams
@@ -40,6 +45,81 @@ function sshLogDir(): string {
 
 class SshService implements ToolService {
   private runtime = new TerminalRuntime('ssh')
+  private readonly pluginListeners = new Map<string, Set<{ receive: (event: StreamEvent) => void; owner?: string }>>()
+  private readonly pluginOwners = new Map<string, string>()
+
+  readonly pluginBridge: StreamSessionBridge = {
+    transport: 'ssh',
+    describe: (panelId) => {
+      const s = sessions.get(panelId)
+      if (!s || s.stream.destroyed) return undefined
+      return {
+        panelId,
+        connectionId: s.connectionId,
+        transport: 'ssh',
+        target: `${s.params.username}@${s.params.host}:${s.params.port}`,
+        encoding: 'utf8'
+      }
+    },
+    subscribe: (panelId, receive, owner) => {
+      if (!this.pluginBridge.describe(panelId)) throw new Error('SSH 会话不可绑定')
+      const existing = this.pluginListeners.get(panelId)
+      const listeners = existing ?? new Set()
+      if (!existing) this.pluginListeners.set(panelId, listeners)
+      const sub = { receive, owner }
+      listeners.add(sub)
+      return () => {
+        listeners.delete(sub)
+        if (listeners.size === 0 && this.pluginListeners.get(panelId) === listeners) this.pluginListeners.delete(panelId)
+      }
+    },
+    acquire: async (panelId, owner, signal) => {
+      signal.throwIfAborted()
+      const s = sessions.get(panelId)
+      if (!s || s.stream.destroyed) throw new Error('SSH 未连接')
+      const active = this.pluginOwners.get(panelId)
+      if (active && active !== owner) throw new Error('SSH 写入租约正被其他插件占用')
+      this.pluginOwners.set(panelId, owner)
+      return {
+        connectionId: s.connectionId,
+        write: async (bytes) => {
+          if (sessions.get(panelId) !== s || s.stream.destroyed) throw new Error('SSH 连接已断开')
+          await new Promise<void>((resolve, reject) => {
+            s.stream.write(Buffer.from(bytes), (err?: Error | null) => (err ? reject(err) : resolve()))
+          })
+          s.txBytes += bytes.length
+        },
+        release: () => {
+          if (this.pluginOwners.get(panelId) === owner) this.pluginOwners.delete(panelId)
+        }
+      }
+    }
+  }
+
+  private publishPluginData(panelId: string, session: SshSession, chunk: Buffer, receivedAt: number): void {
+    const listeners = this.pluginListeners.get(panelId)
+    if (!listeners?.size) return
+    const text = session.pluginDecoder.write(chunk)
+    const activeOwner = this.pluginOwners.get(panelId)
+    const event: StreamEvent = {
+      type: 'data',
+      connectionId: session.connectionId,
+      bytes: [...chunk],
+      text,
+      receivedAt,
+      sequence: ++session.pluginSequence
+    }
+    for (const listener of [...listeners]) {
+      if (!activeOwner || listener.owner === activeOwner) listener.receive(event)
+    }
+  }
+
+  private closePluginSession(panelId: string, session: SshSession, reason: string): void {
+    this.pluginOwners.delete(panelId)
+    const listeners = this.pluginListeners.get(panelId)
+    this.pluginListeners.delete(panelId)
+    for (const listener of listeners ?? []) listener.receive({ type: 'closed', connectionId: session.connectionId, reason })
+  }
   private emit(panelId: string, type: string, payload: unknown): void {
     emitToolEvent('ssh', panelId, type, payload)
   }
@@ -209,6 +289,9 @@ class SshService implements ToolService {
     if (cancelled() || stream.destroyed) throw new Error('连接已关闭')
     stream.pause()
     const session: SshSession = {
+      connectionId: randomUUID(),
+      pluginDecoder: new StringDecoder('utf8'),
+      pluginSequence: 0,
       client, stream, params, rxBytes: 0, txBytes: 0, pending: [], pendingBytes: 0,
       decoder: new StringDecoder('utf8'), flushTimer: null
     }
@@ -226,8 +309,10 @@ class SshService implements ToolService {
     sessions.set(panelId, session)
     const receive = (chunk: Buffer): void => {
       if (sessions.get(panelId) !== session) return
+      const receivedAt = Date.now()
       session.rxBytes += chunk.length
-      session.pending.push({ buf: chunk, time: Date.now() })
+      this.publishPluginData(panelId, session, chunk, receivedAt)
+      session.pending.push({ buf: chunk, time: receivedAt })
       session.pendingBytes += chunk.length
       if (session.pendingBytes >= 64 * 1024) {
         if (session.flushTimer) clearTimeout(session.flushTimer)
@@ -251,6 +336,7 @@ class SshService implements ToolService {
   private async close(panelId: string): Promise<{ ok: boolean }> {
     const s = sessions.get(panelId)
     if (!s) return { ok: true }
+    this.closePluginSession(panelId, s, 'SSH 已断开')
     if (s.flushTimer) clearTimeout(s.flushTimer)
     s.flushTimer = null
     this.flush(panelId)

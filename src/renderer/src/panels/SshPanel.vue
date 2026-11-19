@@ -19,6 +19,7 @@ import TerminalHistory from '@renderer/components/TerminalHistory.vue'
 import { useTerminalStream } from '../composables/useTerminalStream'
 import { ByteCounterThrottle } from '../../../shared/terminal-stream'
 import QuickCmdManager from '@renderer/components/QuickCmdManager.vue'
+import SerialDevicePlugins from '@renderer/components/SerialDevicePlugins.vue'
 import type { SshConfig, SshParams, SshSessionInfo } from '../../../shared/ssh'
 
 import type { QuickCmdStep } from '../../../shared/term-macro'
@@ -406,6 +407,23 @@ async function pickKeyFile(): Promise<void> {
       <!-- 终端 -->
       <div class="term-col">
         <div class="term-opts">
+          <el-button size="small" text :icon="Search" title="查找（Ctrl+F）" @click="openTermSearch">查找</el-button>
+          <el-button size="small" text @click="clearTerm">清屏</el-button>
+          <el-button size="small" text :icon="Download" @click="saveLog">保存日志</el-button>
+          <TerminalHistory tool="ssh" :panel-id="props.panelId" />
+          <el-popover placement="bottom-start" :width="270" trigger="click">
+            <template #reference><el-button size="small" text :icon="FolderOpened">日志设置</el-button></template>
+          <el-tooltip content="连接期间所有收发自动落盘（关闭后仅手动「存日志」）" placement="top">
+            <el-checkbox v-model="autoLog" size="small" title="新会话生效；关闭后使用临时历史，关闭面板或开始新会话时删除" @change="persistConfig">保留日志</el-checkbox>
+          </el-tooltip>
+            <div class="panel-row">
+              <el-button size="small" @click="setLogDir">设置保存路径</el-button>
+              <el-button size="small" @click="openLogDir">打开保存路径</el-button>
+            </div>
+          </el-popover>
+          <el-popover placement="bottom-end" :width="280" trigger="click">
+            <template #reference><el-button size="small" text>显示设置</el-button></template>
+            <div class="ssh-display-settings">
           <el-tooltip content="终端字体（可手输系统内已安装的字体名）" placement="top">
             <el-select
               v-model="termFont"
@@ -425,25 +443,12 @@ async function pickKeyFile(): Promise<void> {
               <el-option v-for="s in TERM_SIZES" :key="s" :value="s" :label="String(s)" />
             </el-select>
           </el-tooltip>
-          <el-button size="small" text :icon="Search" title="查找（Ctrl+F）" @click="openTermSearch">查找</el-button>
-        <TerminalHistory tool="ssh" :panel-id="props.panelId" />
-          <el-button size="small" text @click="clearTerm">清空</el-button>
           <el-tooltip content="每行前显示本地时间 [HH:MM:SS.mmm]，与日志落盘格式一致" placement="top">
             <el-checkbox v-model="showTime" size="small" @change="persistConfig">时间戳</el-checkbox>
           </el-tooltip>
-          <el-button size="small" text :icon="Download" @click="saveLog">存日志</el-button>
-          <el-dropdown trigger="click" @command="(cmd: string) => (cmd === 'set' ? setLogDir() : openLogDir())">
-            <el-button size="small" text :icon="FolderOpened">日志目录</el-button>
-            <template #dropdown>
-              <el-dropdown-menu>
-                <el-dropdown-item command="set">设置保存路径</el-dropdown-item>
-                <el-dropdown-item command="open">打开保存路径</el-dropdown-item>
-              </el-dropdown-menu>
-            </template>
-          </el-dropdown>
-          <el-tooltip content="连接期间所有收发自动落盘（关闭后仅手动「存日志」）" placement="top">
-            <el-checkbox v-model="autoLog" size="small" title="新会话生效；关闭后使用临时历史，关闭面板或开始新会话时删除" @change="persistConfig">保留日志</el-checkbox>
-          </el-tooltip>
+            </div>
+          </el-popover>
+          <SerialDevicePlugins :panel-id="props.panelId" :connected="open" transport="ssh" />
           <span class="counters">
             RX <b>{{ rxBytes }}</b> TX <b>{{ txBytes }}</b>
           </span>
@@ -462,6 +467,15 @@ async function pickKeyFile(): Promise<void> {
 </template>
 
 <style scoped>
+.panel.ssh-panel { padding:0; gap:0; }
+.ssh-panel > .panel-section { padding:6px 10px; border-width:0 0 1px; border-radius:0; background:var(--el-bg-color-overlay); }
+.ssh-panel .body { gap:0; }
+.ssh-panel .sessions { padding:10px; background:var(--el-bg-color-overlay); }
+.ssh-panel .term-col { gap:0; }
+.ssh-panel .term-opts { padding:4px 10px; flex-wrap:wrap; background:var(--el-bg-color-overlay); border-bottom:1px solid var(--el-border-color-lighter); }
+.ssh-panel .term-col :deep(.term) { border:0; border-radius:0; box-shadow:none; padding:10px 12px; }
+.ssh-display-settings { display:flex; flex-wrap:wrap; gap:8px; }
+
 .ssh-panel {
   display: flex;
   flex-direction: column;

@@ -2,10 +2,12 @@
  * 网络调试助手服务（多实例：panelId -> 主机实例）
  * 与串口一致的 80ms 批量推送，防高速收发卡 UI
  */
+import { randomUUID } from 'node:crypto'
 import type { ToolService } from '../../ipc'
 import { emitToolEvent } from '../../ipc'
 import type { NetConfig, NetParams } from '../../../shared/net'
 import { DEFAULT_NET_CONFIG } from '../../../shared/net'
+import type { StreamEvent, StreamSessionBridge } from '../../../shared/plugins'
 import { getSection, setSection } from '../macro/configStore'
 import { createHost, type NetHost, type PeerInfo } from './hosts'
 
@@ -17,6 +19,8 @@ interface PendingPiece {
 }
 
 interface NetSession {
+  connectionId: string
+  pluginSequence: number
   host: NetHost
   params: NetParams
   rxBytes: number
@@ -29,6 +33,78 @@ const sessions = new Map<string, NetSession>()
 const FLUSH_MS = 80
 
 class NetService implements ToolService {
+  private readonly pluginListeners = new Map<string, Set<{ receive: (event: StreamEvent) => void; owner?: string }>>()
+  private readonly pluginOwners = new Map<string, string>()
+
+  readonly pluginBridge: StreamSessionBridge = {
+    transport: 'net',
+    describe: (panelId) => {
+      const s = sessions.get(panelId)
+      if (!s) return undefined
+      const target = s.params.mode === 'tcp-server'
+        ? `tcp-server:${s.params.localPort}`
+        : s.params.mode === 'tcp-client'
+          ? `tcp://${s.params.host}:${s.params.port}`
+          : `udp:${s.params.localPort}->${s.params.host}:${s.params.port}`
+      return { panelId, connectionId: s.connectionId, transport: 'net', target, encoding: 'utf8' }
+    },
+    subscribe: (panelId, receive, owner) => {
+      if (!this.pluginBridge.describe(panelId)) throw new Error('网络会话不可绑定')
+      const existing = this.pluginListeners.get(panelId)
+      const listeners = existing ?? new Set()
+      if (!existing) this.pluginListeners.set(panelId, listeners)
+      const sub = { receive, owner }
+      listeners.add(sub)
+      return () => {
+        listeners.delete(sub)
+        if (listeners.size === 0 && this.pluginListeners.get(panelId) === listeners) this.pluginListeners.delete(panelId)
+      }
+    },
+    acquire: async (panelId, owner, signal) => {
+      signal.throwIfAborted()
+      const s = sessions.get(panelId)
+      if (!s) throw new Error('网络会话未启动')
+      const active = this.pluginOwners.get(panelId)
+      if (active && active !== owner) throw new Error('网络写入租约正被其他插件占用')
+      this.pluginOwners.set(panelId, owner)
+      return {
+        connectionId: s.connectionId,
+        write: async (bytes) => {
+          if (sessions.get(panelId) !== s) throw new Error('网络会话已停止')
+          const r = s.host.send(Buffer.from(bytes))
+          if (!r.ok) throw new Error(r.error || '网络发送失败')
+          s.txBytes += bytes.length
+        },
+        release: () => {
+          if (this.pluginOwners.get(panelId) === owner) this.pluginOwners.delete(panelId)
+        }
+      }
+    }
+  }
+
+  private publishPluginData(panelId: string, session: NetSession, chunk: Buffer, receivedAt: number): void {
+    const listeners = this.pluginListeners.get(panelId)
+    if (!listeners?.size) return
+    const activeOwner = this.pluginOwners.get(panelId)
+    const event: StreamEvent = {
+      type: 'data',
+      connectionId: session.connectionId,
+      bytes: [...chunk],
+      text: chunk.toString('utf8'),
+      receivedAt,
+      sequence: ++session.pluginSequence
+    }
+    for (const listener of [...listeners]) {
+      if (!activeOwner || listener.owner === activeOwner) listener.receive(event)
+    }
+  }
+
+  private closePluginSession(panelId: string, session: NetSession, reason: string): void {
+    this.pluginOwners.delete(panelId)
+    const listeners = this.pluginListeners.get(panelId)
+    this.pluginListeners.delete(panelId)
+    for (const listener of listeners ?? []) listener.receive({ type: 'closed', connectionId: session.connectionId, reason })
+  }
   private emit(panelId: string, type: string, payload: unknown): void {
     emitToolEvent('net', panelId, type, payload)
   }
@@ -108,6 +184,8 @@ class NetService implements ToolService {
 
   private async start(panelId: string, params: NetParams): Promise<{ ok: boolean; error?: string }> {
     const session: NetSession = {
+      connectionId: randomUUID(),
+      pluginSequence: 0,
       host: null as unknown as NetHost,
       params: { ...params },
       rxBytes: 0,
@@ -120,6 +198,7 @@ class NetService implements ToolService {
       onData: (peer, buf, time) => {
         if (!s) return
         s.rxBytes += buf.length
+        this.publishPluginData(panelId, s, buf, time)
         s.pending.push({ buf, time, peer })
         if (!s.flushTimer) {
           s.flushTimer = setTimeout(() => {
@@ -154,6 +233,7 @@ class NetService implements ToolService {
   private async stop(panelId: string): Promise<{ ok: boolean }> {
     const s = sessions.get(panelId)
     if (!s) return { ok: true }
+    this.closePluginSession(panelId, s, '网络会话已停止')
     sessions.delete(panelId)
     this.flush(panelId)
     const timer = s.flushTimer
