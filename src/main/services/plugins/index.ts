@@ -6,7 +6,7 @@ import { randomUUID } from 'node:crypto'
 import { emitToolEvent } from '../../ipc'
 import type { ToolService } from '../../ipc'
 import type {
-  BuiltinPluginDefinition, PluginContext, PluginDescriptor, PluginExchangeOptions, PluginExchangeResult,
+  BuiltinPluginDefinition, PluginContext, PluginDescriptor, PluginInstallSource, PluginExchangeOptions, PluginExchangeResult,
   PluginInstance, PluginLogEntry, PluginModuleInstance, PluginRuntimeStatus, PluginSerialBridge,
   PluginSerialEvent, PluginSerialLease, PluginSessionInfo, PluginWriteData, PluginWriteOptions
 } from '../../../shared/plugins'
@@ -277,19 +277,22 @@ export class PluginService implements ToolService {
     return { ok: true }
   }
   private async installFromSource(panelId: string, request: Record<string, unknown>): Promise<unknown> {
-    const bytes = await this.sources.package(string(request.sourceId, '扩展源'),
+    const sourceId = string(request.sourceId, '扩展源')
+    const source = (await this.sources.list()).find((entry) => entry.id === sourceId)
+    if (!source) throw new Error('扩展源不存在')
+    const bytes = await this.sources.package(sourceId,
       string(request.pluginId, '插件 ID'), string(request.sha256, 'SHA-256'), MAX_PACKAGE_BYTES)
     const directory = await fs.mkdtemp(join(tmpdir(), 'devkit-plugin-'))
     try {
       const path = join(directory, 'bundle.json')
       await fs.writeFile(path, bytes, { flag: 'wx' })
-      return await this.install(panelId, path)
+      return await this.install(panelId, path, false, { name: source.name, url: source.url })
     } finally {
       await fs.rm(directory, { recursive: true, force: true }).catch(() => {})
     }
   }
 
-  private async install(panelId: string, value: unknown, file = false): Promise<unknown> {
+  private async install(panelId: string, value: unknown, file = false, installSource?: PluginInstallSource): Promise<unknown> {
     let path: string
     if (value === undefined || value === '') {
       const result = await dialog.showOpenDialog(file
@@ -300,7 +303,7 @@ export class PluginService implements ToolService {
     } else path = string(value, 'path')
     const blocked = new Set(this.builtins.keys())
     for (const runtime of this.runtimes.values()) blocked.add(runtime.instance.pluginId)
-    const descriptor = await this.store.install(path, blocked)
+    const descriptor = await this.store.install(path, blocked, installSource ?? { name: '本地安装', url: '' })
     this.descriptors.set(descriptor.id, descriptor)
     this.changed(panelId)
     return { ok: true, plugin: clone(descriptor) }

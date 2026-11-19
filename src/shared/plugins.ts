@@ -32,7 +32,8 @@ export interface PluginManifest {
   autoRespond: boolean
   capabilities: string[]
 }
-export interface PluginDescriptor extends PluginManifest { builtin: boolean; path?: string }
+export interface PluginInstallSource { name: string; url: string }
+export interface PluginDescriptor extends PluginManifest { builtin: boolean; path?: string; installSource?: PluginInstallSource }
 export interface PluginInstance {
   id: string
   pluginId: string

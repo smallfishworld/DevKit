@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { nextTick, ref } from 'vue'
+import { ref } from 'vue'
 import { Box, Close, House, Plus } from '@element-plus/icons-vue'
-import { useTabStore } from '@renderer/stores/tabs'
+import { connectionLabels, useTabStore } from '@renderer/stores/tabs'
 
 import { toolById } from '@renderer/tools/registry'
+import ToolLauncher from './ToolLauncher.vue'
 
 const tabs = useTabStore()
 
@@ -30,11 +31,7 @@ function onDragEnd(): void {
   overId.value = null
 }
 
-async function openToolSearch(): Promise<void> {
-  tabs.activate('home')
-  await nextTick()
-  document.querySelector<HTMLInputElement>('.toolbox input[aria-label="搜索工具"]')?.focus()
-}
+const launcher = ref<InstanceType<typeof ToolLauncher>>()
 
 function onDrop(toId: string): void {
   if (draggingId.value) tabs.moveTab(draggingId.value, toId)
@@ -62,6 +59,7 @@ function onDrop(toId: string): void {
         :aria-current="tab.id === tabs.activeId ? 'page' : undefined"
         @click="tabs.activate(tab.id)"
       >
+        <span v-if="tab.connection" class="tab-dot" :data-state="tab.connection" :title="connectionLabels[tab.connection]" :aria-label="connectionLabels[tab.connection]" role="img" />
         <el-icon :size="15">
           <House v-if="tab.id === 'home'" />
           <Box v-else-if="tab.toolId === 'extensions'" />
@@ -73,10 +71,11 @@ function onDrop(toId: string): void {
         <el-icon :size="12"><Close /></el-icon>
       </button>
     </div>
-    <button class="new-tool" type="button" aria-label="打开工具箱" title="打开工具箱" @click="openToolSearch">
+    <button class="new-tool" type="button" aria-label="快速打开工具" title="快速打开工具（Ctrl+K）" aria-keyshortcuts="Control+K" @click="launcher?.open()">
       <el-icon><Plus /></el-icon>
     </button>
   </nav>
+  <ToolLauncher ref="launcher" />
 </template>
 
 <style scoped>
@@ -88,5 +87,8 @@ function onDrop(toId: string): void {
 .tab-close { flex:none; padding:3px; }
 
 .new-tool { flex:none; align-self:center; display:grid; place-items:center; width:30px; height:28px; border:0; border-radius:6px; background:transparent; color:var(--el-text-color-secondary); cursor:pointer; }
+.tab-dot { width:6px; height:6px; border-radius:50%; background:var(--el-text-color-placeholder); }
+.tab-dot[data-state="connected"] { background:var(--el-color-success); }
+.tab-dot[data-state="connecting"] { background:var(--el-color-warning); }
 .new-tool:hover { background:var(--el-fill-color-light); color:var(--el-text-color-primary); }
 </style>

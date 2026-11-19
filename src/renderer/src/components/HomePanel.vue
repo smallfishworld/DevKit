@@ -4,13 +4,25 @@ import { ElMessage } from 'element-plus'
 import { Search } from '@element-plus/icons-vue'
 import { TOOLS } from '@renderer/tools/registry'
 import type { ToolDef } from '@renderer/tools/registry'
-import { useTabStore } from '@renderer/stores/tabs'
+import { connectionLabels, useTabStore, type TabItem } from '@renderer/stores/tabs'
+import { matchesTool } from './workbench-navigation'
 
 const tabs = useTabStore()
 const keyword = ref('')
 const connectionTools = ['serial', 'ssh', 'local-terminal', 'tftp', 'net', 'bridge', 'input', 'macro']
 const dataTools = ['timestamp', 'endian', 'encoding', 'calc', 'diff', 'color']
-const recentSessions = computed(() => tabs.tabs.filter((tab) => ['serial', 'ssh', 'local-terminal'].includes(tab.toolId)))
+const sessionLabel = (tab: TabItem): string | undefined =>
+  tab.toolId === 'local-terminal' && tab.connection === 'connected' ? '运行中' :
+    tab.connection ? connectionLabels[tab.connection] : undefined
+
+function reopen(tab: TabItem): void {
+  if (tabs.tabs.some((item) => item.id === tab.id)) {
+    tabs.activate(tab.id)
+    return
+  }
+  const tool = TOOLS.find((item) => item.id === tab.toolId)
+  if (tool) tabs.openTool(tool, tab)
+}
 const groups = computed(() => [
   { label: '连接与硬件调试', ids: connectionTools },
   { label: '数据转换与编码', ids: dataTools }
@@ -22,9 +34,7 @@ const groups = computed(() => [
 const filtered = computed<ToolDef[]>(() => {
   const kw = keyword.value.trim().toLowerCase()
   if (!kw) return TOOLS
-  return TOOLS.filter(
-    (t) => t.name.toLowerCase().includes(kw) || t.description.toLowerCase().includes(kw)
-  )
+  return TOOLS.filter((tool) => matchesTool(kw, tool.name, tool.id, tool.description))
 })
 
 function open(tool: ToolDef): void {
@@ -39,12 +49,18 @@ function open(tool: ToolDef): void {
 <template>
   <section class="toolbox">
     <header class="page-head">
-      <h1>工具箱</h1>
-      <el-input v-model="keyword" type="search" aria-label="搜索工具" placeholder="搜索串口、SSH、时间戳、编码…" clearable :prefix-icon="Search" />
+      <div><h1>工具箱</h1><p class="muted">选择连接会话或独立开发工具</p></div>
+      <el-input v-model="keyword" type="search" aria-label="搜索工具" placeholder="搜索串口、SSH、时间戳、编码…" clearable :prefix-icon="Search">
+        <template #suffix><kbd>Ctrl+K</kbd></template>
+      </el-input>
     </header>
-    <div v-if="recentSessions.length" class="recent-sessions">
+    <div v-if="tabs.recent.length" class="recent-sessions">
       <h2>最近会话</h2>
-      <el-button v-for="tab in recentSessions" :key="tab.id" round size="small" @click="tabs.activate(tab.id)">{{ tab.title }}</el-button>
+      <button v-for="tab in tabs.recent" :key="tab.id" type="button" class="recent-chip" @click="reopen(tab)">
+        <el-icon><component :is="TOOLS.find((tool) => tool.id === tab.toolId)?.icon" /></el-icon>
+        {{ tab.title }}
+        <small v-if="sessionLabel(tab)" :data-state="tab.connection">{{ sessionLabel(tab) }}</small>
+      </button>
     </div>
     <div class="tool-lists">
       <section v-for="group in groups.filter((group) => group.tools.length)" :key="group.label">
@@ -64,15 +80,20 @@ function open(tool: ToolDef): void {
 <style scoped>
 .toolbox { max-width:1120px; margin:auto; padding:clamp(16px, 2.4vw, 26px); container-type:inline-size; }
 .page-head { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; margin-bottom:16px; }
+.page-head p { margin:4px 0 0; }
+kbd { font-size:11px; white-space:nowrap; }
 .page-head h1 { margin:0; font-size:19px; font-weight:650; }
 .page-head :deep(.el-input) { width:min(300px, 100%); }
 .recent-sessions { display:flex; align-items:center; flex-wrap:wrap; gap:8px 10px; padding:10px 12px; margin-bottom:18px; border:1px solid var(--el-border-color-lighter); border-radius:9px; background:var(--el-bg-color-page); }
-.recent-sessions .el-button { margin:0; }
+.recent-chip { display:inline-flex; align-items:center; gap:6px; padding:4px 9px; border-radius:999px; border:1px solid var(--el-border-color); background:var(--el-bg-color-overlay); color:inherit; font:inherit; cursor:pointer; }
+.recent-chip:hover { border-color:var(--el-color-primary); }
+.recent-chip small { color:var(--el-text-color-secondary); }
+.recent-chip small[data-state="connected"] { color:var(--el-color-success); }
 .toolbox h2 { margin:0 0 6px; font-size:12px; font-weight:600; color:var(--el-text-color-secondary); }
 .recent-sessions h2 { margin:0 4px 0 0; }
 .tool-lists { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:20px; }
-.tool-list { display:grid; gap:4px; }
-.tool-row { display:flex; align-items:center; width:100%; gap:10px; padding:8px 9px; border:1px solid transparent; border-radius:8px; background:transparent; text-align:start; color:inherit; cursor:pointer; }
+.tool-list { display:grid; gap:6px; }
+.tool-row { display:flex; align-items:center; width:100%; gap:12px; padding:10px 12px; border:1px solid var(--el-border-color-lighter); border-radius:8px; background:var(--el-bg-color-page); text-align:start; color:inherit; cursor:pointer; }
 .tool-row:hover { border-color:var(--el-border-color-lighter); background:var(--el-fill-color-light); }
 .tool-icon { flex:none; width:32px; height:32px; border-radius:7px; color:var(--el-color-primary); background:var(--el-color-primary-light-9); }
 .tool-copy { display:grid; gap:2px; }

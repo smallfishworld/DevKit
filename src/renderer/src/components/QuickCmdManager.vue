@@ -292,6 +292,8 @@ function onRecord(): void {
   openCmdDlg(-1, r.steps)
 }
 
+defineExpose({ finishRecording: () => { if (recording.value) onRecord() } })
+
 // ---------- 回放 ----------
 async function onPlay(cmd: QuickCmd): Promise<void> {
   if (!props.enabled) {

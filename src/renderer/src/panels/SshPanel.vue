@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   ArrowRight,
@@ -28,6 +28,7 @@ import { useTabStore } from '@renderer/stores/tabs'
 
 const props = defineProps<{ panelId: string }>()
 const tabStore = useTabStore()
+const recentParams = tabStore.tabs.find((tab) => tab.id === props.panelId)?.sshParams
 
 interface DataEvt {
   text: string
@@ -49,6 +50,9 @@ const params = reactive<SshParams>({
 })
 const open = ref(false)
 const connecting = ref(false)
+watch([open, connecting], ([connected, pending]) => {
+  tabStore.setConnection(props.panelId, connected ? 'connected' : pending ? 'connecting' : 'disconnected')
+}, { immediate: true })
 const rxBytes = ref(0)
 const txBytes = ref(0)
 
@@ -128,7 +132,8 @@ onMounted(async () => {
   )
   const res = (await window.api.invoke('ssh', 'attach', props.panelId)) as { config: SshConfig }
   config.value = res.config
-  Object.assign(params, res.config.last)
+  Object.assign(params, res.config.last, recentParams ? { ...recentParams, password: '' } : undefined)
+  if (params.host) rememberConnection()
   termFont.value = config.value.termFont || 'Consolas'
   termFontSize.value = config.value.termFontSize || 13
   autoLog.value = config.value.autoLog !== false
@@ -145,6 +150,14 @@ onUnmounted(() => {
   window.api.invoke('ssh', 'dispose', props.panelId).catch(() => {})
 })
 
+function rememberConnection(): void {
+  const { host, port, username, authType, privateKeyPath } = params
+  tabStore.setConnection(props.panelId, open.value ? 'connected' : 'disconnected', {
+    sshParams: { host, port, username, authType, privateKeyPath }
+  })
+  tabStore.rename(props.panelId, `${username}@${host}`)
+}
+
 // ---------- 连接 ----------
 async function connect(): Promise<void> {
   if (!params.host.trim()) {
@@ -160,7 +173,7 @@ async function connect(): Promise<void> {
   if (res.ok) {
     open.value = true
     termView.value?.info(`已连接 ${params.username}@${params.host}:${params.port}`)
-    tabStore.rename(props.panelId, `${params.username}@${params.host}`)
+    rememberConnection()
     persistConfig()
     termView.value?.focus()
   } else {

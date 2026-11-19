@@ -1,12 +1,18 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { Box, VideoPause } from '@element-plus/icons-vue'
+import DevicePluginEditor from './DevicePluginEditor.vue'
+import { useTabStore } from '@renderer/stores/tabs'
 import { pluginRequest, useDevicePlugins } from '@renderer/stores/devicePlugins'
-import type { PluginInstance } from '../../../shared/plugins'
+import type { PluginDescriptor, PluginInstance, PluginRuntimeStatus } from '../../../shared/plugins'
 
 const props = defineProps<{ panelId: string; connected: boolean }>()
-const emit = defineEmits<{ manage: [] }>()
+const emit = defineEmits<{ manage: []; extensions: [] }>()
 const plugins = useDevicePlugins()
+const tabs = useTabStore()
+const editorOpen = ref(false)
+const editor = ref<{ instance: PluginInstance; plugin: PluginDescriptor }>()
+const sessionTitle = computed(() => tabs.tabs.find((tab) => tab.id === props.panelId)?.title ?? '当前串口')
 const visible = ref(false)
 const picked = ref('')
 const error = ref('')
@@ -19,7 +25,22 @@ const available = computed(() => plugins.instances.filter((instance) =>
   !plugins.statuses.some((status) => status.bound && status.instanceId === instance.id)
 ))
 const instanceFor = (id: string): PluginInstance | undefined => plugins.instances.find((instance) => instance.id === id)
-const actionsFor = (id: string) => plugins.plugins.find((plugin) => plugin.id === instanceFor(id)?.pluginId)?.actions ?? []
+const pluginFor = (id: string) => plugins.plugins.find((plugin) => plugin.id === instanceFor(id)?.pluginId)
+const actionsFor = (id: string) => pluginFor(id)?.actions ?? []
+function editBound(id: string): void {
+  const instance = instanceFor(id)
+  const plugin = pluginFor(id)
+  if (!instance || !plugin) return
+  visible.value = false
+  editor.value = { instance, plugin }
+  editorOpen.value = true
+}
+
+function bindingState(status: PluginRuntimeStatus): string {
+  if (status.state === 'starting') return '启动中'
+  if (status.state === 'running') return '执行中'
+  return instanceFor(status.instanceId)?.autoEnabled ? '监听中' : '待执行'
+}
 const statusLabel = computed(() => bound.value.some((item) => item.state === 'running')
   ? '执行中'
   : bound.value.some((item) => item.state === 'starting')
@@ -62,24 +83,30 @@ async function stop(instanceId: string): Promise<void> {
       <p v-if="!connected" class="plugin-note">连接串口后可绑定插件配置。</p>
       <div v-for="status in bound" :key="status.instanceId" class="bound-instance">
         <strong>{{ instanceFor(status.instanceId)?.label }}</strong>
+        <p class="plugin-note">{{ pluginFor(status.instanceId)?.name }} · {{ sessionTitle }} · {{ bindingState(status) }}</p>
         <div class="plugin-actions">
           <el-button size="small" v-for="action in actionsFor(status.instanceId)" :key="action.id"
             :disabled="status.state !== 'ready' || !!pending" @click="operate('run', status.instanceId, action.id)">{{ action.label }}</el-button>
           <el-button size="small" :loading="stopping.includes(status.instanceId)" @click="stop(status.instanceId)">停止插件</el-button>
+          <el-button size="small" text :disabled="status.state !== 'ready' || !!pending" @click="editBound(status.instanceId)">配置</el-button>
         </div>
       </div>
       <div v-if="available.length" class="plugin-actions">
-        <el-select v-model="picked" size="small" placeholder="选择配置实例" aria-label="选择配置实例" :disabled="!connected || !!pending">
+        <el-select v-model="picked" :teleported="false" size="small" placeholder="选择配置实例" aria-label="选择配置实例" :disabled="!connected || !!pending">
           <el-option v-for="instance in available" :key="instance.id" :label="instance.label" :value="instance.id" />
         </el-select>
         <el-button size="small" type="primary" :disabled="!picked || !connected || !!pending" @click="operate('bind', picked)">绑定到当前串口</el-button>
       </div>
       <p v-else-if="!bound.length && connected" class="plugin-note">在扩展中心安装插件并新建配置。</p>
-      <el-button size="small" text @click="visible = false; emit('manage')">插件管理</el-button>
+      <div class="plugin-actions plugin-links">
+        <el-button size="small" text @click="visible = false; emit('manage')">插件管理</el-button>
+        <el-button size="small" text @click="visible = false; emit('extensions')">扩展中心</el-button>
+      </div>
       <p v-if="recentLog" class="plugin-note">{{ recentLog.message }}</p>
     </el-popover>
     <el-button v-if="bound.length === 1" size="small" text :icon="VideoPause" :loading="stopping.includes(bound[0].instanceId)"
       aria-label="停止设备插件" @click="stop(bound[0].instanceId)" />
+    <DevicePluginEditor v-if="editor" v-model="editorOpen" :plugin="editor.plugin" :instance="editor.instance" />
   </div>
 </template>
 
@@ -92,5 +119,6 @@ async function stop(instanceId: string): Promise<void> {
 .plugin-actions { display:flex; align-items:center; flex-wrap:wrap; gap:7px; margin-block:7px; }
 .plugin-actions .el-select { flex:1; min-width:130px; }
 .plugin-actions .el-button { margin:0; }
+.plugin-links { justify-content:space-between; }
 .bound-instance { border-bottom:1px solid var(--el-border-color-lighter); margin-block:8px; }
 </style>

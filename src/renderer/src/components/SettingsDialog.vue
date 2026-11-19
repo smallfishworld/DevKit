@@ -1,214 +1,67 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { Close, Monitor, Moon, Sunny, Brush } from '@element-plus/icons-vue'
 import { useAppearanceStore } from '@renderer/stores/appearance'
 
-const props = defineProps<{ modelValue: boolean }>()
-const emit = defineEmits<{ (e: 'update:modelValue', value: boolean): void }>()
-
+const visible = defineModel<boolean>({ required: true })
 const appearance = useAppearanceStore()
-const visible = computed({
-  get: () => props.modelValue,
-  set: (value: boolean) => emit('update:modelValue', value)
-})
-
 const terminal = computed(() => appearance.terminalTheme)
+const presets = [
+  { id: 'system', label: '跟随系统', icon: Monitor },
+  { id: 'devkit-default', label: '深色石墨', icon: Moon },
+  { id: 'solarized-light', label: '浅色纸感', icon: Sunny },
+  { id: 'tokyo-night', label: '深海蓝', icon: Brush }
+] as const
+const selected = computed(() => appearance.settings.followSystem ? 'system' : appearance.settings.terminalTheme)
 
-const ansiRows = computed(() => [
-  ['black', terminal.value.ansi.black],
-  ['red', terminal.value.ansi.red],
-  ['green', terminal.value.ansi.green],
-  ['yellow', terminal.value.ansi.yellow],
-  ['blue', terminal.value.ansi.blue],
-  ['magenta', terminal.value.ansi.magenta],
-  ['cyan', terminal.value.ansi.cyan],
-  ['white', terminal.value.ansi.white],
-  ['brightBlack', terminal.value.ansi.brightBlack],
-  ['brightRed', terminal.value.ansi.brightRed],
-  ['brightGreen', terminal.value.ansi.brightGreen],
-  ['brightYellow', terminal.value.ansi.brightYellow],
-  ['brightBlue', terminal.value.ansi.brightBlue],
-  ['brightMagenta', terminal.value.ansi.brightMagenta],
-  ['brightCyan', terminal.value.ansi.brightCyan],
-  ['brightWhite', terminal.value.ansi.brightWhite]
-] as const)
-
-function onTerminalThemeChange(value: string): void {
-  appearance.setTerminalTheme(value)
+function selectTheme(id: string): void {
+  if (id === 'system') appearance.followSystem()
+  else appearance.setTerminalTheme(id)
 }
 </script>
 
 <template>
-  <el-dialog v-model="visible" title="终端配色" width="720px" append-to-body>
-    <div class="appearance-settings">
-      <section class="setting-section">
-        <div class="setting-head">
-          <div>
-            <h3>终端配色</h3>
-            <p>选定的终端主题同时驱动整个界面：主界面、面板、标签栏、按钮、边框与弹层全部跟随，切换后立即生效。</p>
-          </div>
-          <el-select
-            :model-value="appearance.settings.terminalTheme"
-            filterable
-            style="width: 220px"
-            @change="onTerminalThemeChange"
-          >
-            <el-option
-              v-for="theme in appearance.terminalThemes"
-              :key="theme.id"
-              :value="theme.id"
-              :label="theme.name"
-            />
-          </el-select>
-        </div>
-
-        <div
-          class="terminal-preview"
-          :style="{ background: terminal.background, color: terminal.foreground }"
-        >
-          <div class="preview-line dim">devkit@device:~$ <span class="cmd">make test</span></div>
-          <div class="preview-line">
-            <span :style="{ color: terminal.ansi.green }">PASS</span>
-            <span> serial protocol tests</span>
-          </div>
-          <div class="preview-line">
-            <span :style="{ color: terminal.ansi.yellow }">WARN</span>
-            <span> retrying connection...</span>
-          </div>
-          <div class="preview-line">
-            <span :style="{ color: terminal.ansi.red }">ERROR</span>
-            <span> device timeout</span>
-          </div>
-          <div class="preview-line">
-            <span :style="{ color: terminal.ansi.blue }">INFO</span>
-            <span> RX 1024 bytes · TX 256 bytes</span>
-            <span class="cursor" :style="{ background: terminal.cursor }"></span>
-          </div>
-        </div>
-
+  <el-popover v-model:visible="visible" placement="bottom-end" :width="336" trigger="click" popper-class="appearance-popper">
+    <template #reference><slot /></template>
+    <section class="appearance-settings" aria-label="外观与终端配色">
+      <header>
+        <h2>外观与终端配色</h2>
+        <el-button text size="small" :icon="Close" aria-label="关闭外观浮层" @click="visible = false" />
+      </header>
+      <div class="skin-presets" role="group" aria-label="快速换肤">
+        <button v-for="preset in presets" :key="preset.id" type="button" :aria-pressed="selected === preset.id" @click="selectTheme(preset.id)">
+          <el-icon><component :is="preset.icon" /></el-icon>{{ preset.label }}
+        </button>
+      </div>
+      <div class="terminal-preview" :style="{ background: terminal.background, color: terminal.foreground }">
+        <div><span :style="{ color: terminal.ansi.blue }">devkit@board:~$</span> status</div>
+        <div><span :style="{ color: terminal.ansi.green }">RX [OK]</span> vcc=3.30V</div>
+        <div><span :style="{ color: terminal.ansi.yellow }">[WARN]</span> retrying link...</div>
+      </div>
+      <footer><small>当前 · {{ presets.find((preset) => preset.id === selected)?.label ?? terminal.name }}</small></footer>
+      <details>
+        <summary>更多终端配色</summary>
+        <el-select :model-value="terminal.id" aria-label="更多终端配色" filterable @change="selectTheme">
+          <el-option v-for="theme in appearance.terminalThemes" :key="theme.id" :value="theme.id" :label="theme.name" />
+        </el-select>
         <div class="palette" aria-label="ANSI 16 色预览">
-          <div
-            v-for="([name, color]) in ansiRows"
-            :key="name"
-            class="swatch-wrap"
-            :title="`${name}: ${color}`"
-          >
-            <span class="swatch" :style="{ background: color }"></span>
-            <span class="swatch-name">{{ name.replace('bright', '+') }}</span>
-          </div>
+          <span v-for="(color, name) in terminal.ansi" :key="name" :title="name" :style="{ background: color }" />
         </div>
-
-        <div class="theme-meta">
-          <span>{{ terminal.name }}</span>
-          <span v-if="terminal.author">· {{ terminal.author }}</span>
-          <span>· ANSI 16 色</span>
-        </div>
-      </section>
-    </div>
-
-    <template #footer>
-      <el-button type="primary" @click="visible = false">完成</el-button>
-    </template>
-  </el-dialog>
+      </details>
+    </section>
+  </el-popover>
 </template>
 
 <style scoped>
-.appearance-settings {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-.setting-section {
-  padding: 14px 16px;
-  border: 1px solid var(--el-border-color-lighter);
-  border-radius: 10px;
-  background: var(--el-bg-color);
-}
-
-.setting-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 20px;
-}
-
-.setting-head h3 {
-  margin: 0 0 4px;
-  font-size: 14px;
-}
-
-.setting-head p {
-  margin: 0;
-  color: var(--el-text-color-secondary);
-  font-size: 12px;
-  line-height: 1.6;
-}
-
-.terminal-preview {
-  margin-top: 14px;
-  min-height: 132px;
-  padding: 14px 16px;
-  border: 1px solid var(--el-border-color-lighter);
-  border-radius: 8px;
-  font-family: var(--font-mono);
-  font-size: 13px;
-  line-height: 1.65;
-  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.28);
-}
-
-.preview-line {
-  white-space: pre-wrap;
-}
-
-.preview-line.dim {
-  opacity: 0.82;
-}
-
-.cmd {
-  font-weight: 600;
-}
-
-.cursor {
-  display: inline-block;
-  width: 7px;
-  height: 14px;
-  margin-left: 4px;
-  vertical-align: -2px;
-}
-
-.palette {
-  display: grid;
-  grid-template-columns: repeat(8, minmax(0, 1fr));
-  gap: 8px;
-  margin-top: 12px;
-}
-
-.swatch-wrap {
-  min-width: 0;
-  text-align: center;
-}
-
-.swatch {
-  display: block;
-  height: 24px;
-  border: 1px solid rgba(127, 127, 127, 0.35);
-  border-radius: 5px;
-}
-
-.swatch-name {
-  display: block;
-  margin-top: 3px;
-  overflow: hidden;
-  color: var(--el-text-color-secondary);
-  font-family: var(--font-mono);
-  font-size: 9px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.theme-meta {
-  margin-top: 10px;
-  color: var(--el-text-color-secondary);
-  font-size: 11px;
-}
+.appearance-settings { display:grid; gap:10px; }
+header { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+h2 { margin:0; font-size:14px; }
+.skin-presets { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:6px; }
+.skin-presets button { display:flex; align-items:center; gap:8px; border:1px solid var(--el-border-color); border-radius:6px; padding:7px 9px; color:inherit; background:var(--el-bg-color); font:inherit; cursor:pointer; }
+.skin-presets button:hover, .skin-presets button[aria-pressed="true"] { border-color:var(--el-color-primary); color:var(--el-color-primary); background:var(--el-color-primary-light-9); }
+.terminal-preview { padding:10px 11px; border:1px solid var(--el-border-color-lighter); border-radius:6px; font:12px/1.6 var(--font-mono); }
+footer, summary { color:var(--el-text-color-secondary); font-size:12px; }
+summary { margin-bottom:6px; cursor:pointer; }
+.palette { display:grid; grid-template-columns:repeat(8,1fr); gap:3px; margin-top:7px; }
+.palette span { min-height:12px; border-radius:3px; border:1px solid var(--el-border-color-lighter); }
 </style>

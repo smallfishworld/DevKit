@@ -24,6 +24,7 @@ const sent: string[] = []
 let oaVisits = 0
 let issueRequests = 0
 let rejectNext = false
+let holdChallenge = false
 let authOrigin = ''
 let serviceOrigin = ''
 let cookieSeen = false
@@ -124,7 +125,7 @@ async function main(): Promise<void> {
     const text = bytes.toString()
     sent.push(text)
     done?.()
-    if (text === 'debug\r') {
+    if (text === 'debug\r' && !holdChallenge) {
       this.emit('data', Buffer.from('Chall'))
       setTimeout(() => this.emit('data', Buffer.from(`enge: ${challenge}\r\n`)), 60)
     }
@@ -220,6 +221,15 @@ async function main(): Promise<void> {
   port.emit('data', Buffer.from(`${autoChallenge}\r\n`))
   await delay(500)
   assert.equal(autoCount(), beforeAuto + 1)
+
+  holdChallenge = true
+  await until(play, '启动待取消的设备动作')
+  await until(() => js('!!document.querySelector(".device-action-strip")'), '终端顶部显示动作进度')
+  await until(() => click('[aria-label="会话与快捷命令"]'), '折叠快捷命令侧栏')
+  await until(() => js('!document.querySelector(".sessions").getClientRects().length'), '侧栏已隐藏')
+  await until(() => click('.device-action-strip button', '取消动作'), '侧栏隐藏时取消动作')
+  await until(() => js('!document.querySelector(".device-action-strip")'), '取消后顶部状态消失')
+  assert.equal(versionCount(), 2, '取消后不再发送宏的后续命令')
 
   // 可视化配置：空目录 → 创建示例 → 保存落盘
   const userData = process.env.DEVKIT_SMOKE_USER_DATA ?? process.argv[2]

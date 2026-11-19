@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from 'vue'
+import { Brush } from '@element-plus/icons-vue'
 import { PLUGIN_CATALOG_PANEL, useDevicePlugins } from '@renderer/stores/devicePlugins'
 import { useTabStore } from '@renderer/stores/tabs'
 import { useAppearanceStore } from '@renderer/stores/appearance'
@@ -86,24 +87,11 @@ onMounted(() => {
       <button class="header-action" title="扩展中心" @click="tabs.openTool(extensions)">
         <el-icon><Box /></el-icon><span>扩展</span>
       </button>
-      <button class="header-action" title="终端配色（皮肤）" @click="settingsOpen = true">
-        <svg
-          class="skin-icon"
-          :width="16"
-          :height="16"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="1.8"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          aria-hidden="true"
-        >
-          <!-- T恤（皮肤/主题）图标 -->
-          <path d="M15 4l6 2v5h-3v8a1 1 0 0 1 -1 1h-10a1 1 0 0 1 -1 -1v-8h-3v-5l6 -2a3 3 0 0 0 6 0" />
-        </svg>
-        <span>换肤</span>
-      </button>
+      <SettingsDialog v-model="settingsOpen">
+        <button class="header-action" title="外观与终端配色" :aria-expanded="settingsOpen">
+          <el-icon><Brush /></el-icon><span>外观</span>
+        </button>
+      </SettingsDialog>
       <div class="win-controls">
         <button class="win-btn" title="最小化" @click="winMinimize">
           <el-icon :size="15"><Minus /></el-icon>
@@ -125,7 +113,7 @@ onMounted(() => {
         v-show="tab.id === tabs.activeId"
         class="tab-page"
       >
-        <component :is="compFor(tab.toolId)" :panel-id="tab.id" />
+        <component :is="compFor(tab.toolId)" :panel-id="tab.id" @open-extensions="tabs.openTool(extensions)" />
       </section>
     </main>
 
@@ -133,7 +121,6 @@ onMounted(() => {
       {{ tabs.active?.title ?? 'DevKit' }}
     </footer>
 
-    <SettingsDialog v-model="settingsOpen" />
   </div>
 </template>
 

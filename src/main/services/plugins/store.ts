@@ -1,7 +1,7 @@
 import { promises as fs } from 'node:fs'
 import { join, resolve, relative, isAbsolute, dirname, extname } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import type { PluginDescriptor, PluginManifest, PluginInstance } from '../../../shared/plugins'
+import type { PluginDescriptor, PluginManifest, PluginInstance, PluginInstallSource } from '../../../shared/plugins'
 import { validateSchema } from './schema'
 
 const ID = /^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)+$/
@@ -108,16 +108,21 @@ export class PluginStore {
     for (const entry of entries) {
       if (!entry.isDirectory() || entry.name.startsWith('.')) continue
       const path = join(this.directory, entry.name)
-      const manifest = parseManifest(parseJson(await fs.readFile(join(path, 'manifest.json'), 'utf8')))
+      const stored = record(parseJson(await fs.readFile(join(path, 'manifest.json'), 'utf8')))
+      const manifest = parseManifest(stored)
+      const source = stored.devkitInstallSource
+      const installSource = source && typeof source === 'object' && 'name' in source && 'url' in source &&
+        typeof source.name === 'string' && typeof source.url === 'string'
+        ? { name: source.name, url: source.url } : undefined
       if (manifest.id !== entry.name) throw new Error('插件目录ID与manifest不一致：' + entry.name)
       const stat = await fs.lstat(safePackagePath(path, manifest.entry))
       if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('插件入口不存在或不是普通文件')
-      output.push({ ...manifest, builtin: false, path })
+      output.push({ ...manifest, builtin: false, path, installSource })
     }
     return output
   }
   /** Import a self-contained directory or JSON bundle; packages are trusted local code. */
-  async install(source: string, blockedIds: Set<string>): Promise<PluginDescriptor> {
+  async install(source: string, blockedIds: Set<string>, installSource?: PluginInstallSource): Promise<PluginDescriptor> {
     await fs.mkdir(this.directory, { recursive: true })
     const stage = join(this.directory, '.install-' + randomUUID())
     await fs.mkdir(stage)
@@ -166,7 +171,12 @@ export class PluginStore {
         }
         await fs.writeFile(join(stage, 'manifest.json'), JSON.stringify(bundle.manifest, null, 2))
       } else throw new Error('请选择插件目录或JSON插件包（不支持ZIP）')
-      const manifest = parseManifest(parseJson(await fs.readFile(join(stage, 'manifest.json'), 'utf8')))
+      const manifestPath = join(stage, 'manifest.json')
+      const rawManifest = record(parseJson(await fs.readFile(manifestPath, 'utf8')))
+      const manifest = parseManifest(rawManifest)
+      if (installSource || 'devkitInstallSource' in rawManifest) {
+        await fs.writeFile(manifestPath, JSON.stringify({ ...rawManifest, devkitInstallSource: installSource }, null, 2))
+      }
       if (blockedIds.has(manifest.id)) throw new Error('内置插件或正在使用的插件不能覆盖；请先解除实例绑定')
       const entry = await fs.lstat(safePackagePath(stage, manifest.entry))
       if (!entry.isFile()) throw new Error('插件入口不存在')
@@ -181,7 +191,7 @@ export class PluginStore {
         throw error
       }
       if (backed) await fs.rm(backup, { recursive: true, force: true })
-      return { ...manifest, builtin: false, path: target }
+      return { ...manifest, builtin: false, path: target, installSource }
     } finally { await fs.rm(stage, { recursive: true, force: true }).catch(() => {}) }
   }
   async remove(id: string): Promise<void> {

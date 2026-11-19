@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { CopyDocument } from '@element-plus/icons-vue'
+import { encodeInteger } from '../../../shared/converter-workbench'
 
 /** 解析任意 HEX 字节序列（宽容分隔） */
 function parseBytes(input: string): number[] {
@@ -89,29 +90,13 @@ const numHex = computed(() => {
     v = null
   }
   if (v === null) return null
-  const abs = v < 0n ? -v : v
-  return {
-    v,
-    le32: bytesToHexLe(abs, 4),
-    be32: bytesToHexBe(abs, 4),
-    le64: bytesToHexLe(abs, 8),
-    be64: bytesToHexBe(abs, 8),
-    hex: '0x' + abs.toString(16).toUpperCase()
-  }
+  return ([2, 4, 8] as const).map((width) => ({ width: width * 8, ...encodeInteger(v, width) }))
 })
 
-function bytesToHexLe(v: bigint, width: number): string {
-  const out: string[] = []
-  for (let i = 0; i < width; i += 1) out.push(((v >> BigInt(8 * i)) & 0xffn).toString(16).padStart(2, '0').toUpperCase())
-  return out.join(' ')
-}
-
-function bytesToHexBe(v: bigint, width: number): string {
-  const out: string[] = []
-  for (let i = width - 1; i >= 0; i -= 1) out.push(((v >> BigInt(8 * i)) & 0xffn).toString(16).padStart(2, '0').toUpperCase())
-  return out.join(' ')
-}
-
+const integerExamples = [
+  ['0x12345678', '0x12345678'], ['4660 (0x1234)', '4660'],
+  ['-100 (补码)', '-100'], ['64-bit 示例', '0x0102030405060708']
+]
 /** 字节交换 */
 const swapInput = ref('12345678')
 const swapResult = computed(() => {
@@ -236,29 +221,23 @@ async function copy(text: string): Promise<void> {
           v-model="numInput"
           class="mono"
           style="width: 260px"
-          placeholder="十进制或 0x 十六进制"
+          aria-label="待编码数值" placeholder="十进制（支持负数补码）或 0x 十六进制"
           clearable
         />
-        <span v-if="numHex" class="mono hint">= {{ numHex.hex }}</span>
+
       </div>
-      <el-descriptions v-if="numHex" :column="2" border size="small" style="margin-top: 10px">
-        <el-descriptions-item label="u32 LE 字节">
-          <span class="mono">{{ numHex.le32 }}</span>
-          <el-button size="small" text :icon="CopyDocument" @click="copy(numHex.le32)" />
-        </el-descriptions-item>
-        <el-descriptions-item label="u32 BE 字节">
-          <span class="mono">{{ numHex.be32 }}</span>
-          <el-button size="small" text :icon="CopyDocument" @click="copy(numHex.be32)" />
-        </el-descriptions-item>
-        <el-descriptions-item label="u64 LE 字节">
-          <span class="mono">{{ numHex.le64 }}</span>
-          <el-button size="small" text :icon="CopyDocument" @click="copy(numHex.le64)" />
-        </el-descriptions-item>
-        <el-descriptions-item label="u64 BE 字节">
-          <span class="mono">{{ numHex.be64 }}</span>
-          <el-button size="small" text :icon="CopyDocument" @click="copy(numHex.be64)" />
-        </el-descriptions-item>
-      </el-descriptions>
+      <div class="converter-row">
+        <el-button v-for="[label, value] in integerExamples" :key="label" size="small" @click="numInput = value">{{ label }}</el-button>
+      </div>
+      <el-alert v-if="numInput.trim() && !numHex" type="error" :closable="false" title="请输入有效的整数" />
+      <div v-if="numHex" class="encoded-result">
+        <template v-for="result in numHex" :key="result.width">
+          <button v-for="order in (['le', 'be'] as const)" :key="order" type="button" @click="copy(result[order])">
+            <span>u{{ result.width }} {{ order.toUpperCase() }} 字节 <small v-if="result.truncated">· 低 {{ result.width }} 位</small></span>
+            <code>{{ result[order] }}</code><el-icon><CopyDocument /></el-icon>
+          </button>
+        </template>
+      </div>
     </div>
 
     <div class="panel-section">
@@ -271,6 +250,10 @@ async function copy(text: string): Promise<void> {
           placeholder="HEX 值，如 12345678"
           clearable
         />
+      </div>
+      <div class="converter-row">
+        <el-button size="small" :disabled="!parseBytes(swapInput).length" @click="bytesInput = parseBytes(swapInput).map((byte) => hex(byte, 2)).join(' ')">送入上方解析</el-button>
+        <el-button size="small" text @click="swapInput = ''">清空</el-button>
       </div>
       <el-descriptions v-if="swapResult" :column="2" border size="small" style="margin-top: 10px">
         <el-descriptions-item :label="`u16 交换`">
@@ -301,6 +284,11 @@ async function copy(text: string): Promise<void> {
 </template>
 
 <style scoped>
+.encoded-result { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:6px; margin-top:9px; }
+.encoded-result button { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:4px; padding:7px; border:1px solid var(--el-border-color-lighter); border-radius:6px; background:var(--el-bg-color-page); color:inherit; cursor:pointer; text-align:start; }
+.encoded-result button:hover { border-color:var(--el-color-primary); }
+.encoded-result span { grid-column:1/-1; font-size:12px; color:var(--el-text-color-secondary); }
+.encoded-result code { overflow-wrap:anywhere; }
 .endian-panel {
   overflow: auto;
 }

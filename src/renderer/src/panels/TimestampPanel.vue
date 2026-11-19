@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { CopyDocument } from '@element-plus/icons-vue'
+import { encodeInteger, parseCalendarTime } from '../../../shared/converter-workbench'
 
 /** 自动识别 s / ms / us / ns / 0xHEX 时间戳 */
 function parseTs(input: string): number | null {
@@ -59,16 +60,27 @@ onUnmounted(() => {
 })
 
 const tsInput = ref('')
-const dateInput = ref<Date | null>(null)
+const dateInput = ref('')
+const dateMillis = ref<number | string>(0)
+const dateZone = ref<'local' | 'utc'>('local')
+const reverseTime = computed(() => typeof dateMillis.value === 'number' ? parseCalendarTime(dateInput.value, dateMillis.value, dateZone.value) : null)
+
+function setCalendar(ms: number): void {
+  const d = new Date(ms)
+  const calendar = dateZone.value === 'local' ? new Date(ms - d.getTimezoneOffset() * 60_000) : d
+  dateInput.value = calendar.toISOString().slice(0, 19)
+  dateMillis.value = d.getMilliseconds()
+}
 const dateResult = computed(() => {
-  const ms = dateInput.value?.getTime()
-  if (ms === undefined || Number.isNaN(ms)) return []
+  const ms = reverseTime.value
+  if (ms === null) return []
   const sec = Math.floor(ms / 1000)
   return [
     { label: 'Unix 秒', value: String(sec) },
     { label: 'Unix 毫秒', value: String(ms) },
     { label: 'HEX 秒', value: '0x' + sec.toString(16).toUpperCase() },
-    { label: 'HEX 毫秒', value: '0x' + ms.toString(16).toUpperCase() }
+    { label: 'HEX 毫秒', value: '0x' + ms.toString(16).toUpperCase() },
+    { label: 'u32 小端字节序（秒）', value: encodeInteger(BigInt(sec), 4).le }
   ]
 })
 
@@ -110,7 +122,7 @@ function useNow(): void {
 
 function syncNow(): void {
   nowMs.value = Date.now()
-  dateInput.value = new Date(nowMs.value)
+  setCalendar(nowMs.value)
   useNow()
 }
 
@@ -124,16 +136,22 @@ async function copy(text: string): Promise<void> {
 }
 
 function fromDate(): void {
-  if (!dateInput.value) {
-    ElMessage.warning('请先选择日期时间')
+  if (reverseTime.value === null) {
+    ElMessage.warning('请选择有效日期与毫秒')
     return
   }
-  const ms = new Date(dateInput.value).getTime()
-  if (Number.isNaN(ms)) {
-    ElMessage.error('日期格式无效')
-    return
-  }
-  tsInput.value = ms.toString()
+  tsInput.value = new Date(reverseTime.value).toISOString()
+}
+
+function setMidnight(): void {
+  const date = new Date()
+  date.setHours(0, 0, 0, 0)
+  tsInput.value = date.getTime().toString()
+}
+
+function shiftTimestamp(delta: number): void {
+  const adjusted = new Date((parsed.value ?? nowMs.value) + delta)
+  if (Number.isFinite(adjusted.getTime())) tsInput.value = adjusted.toISOString()
 }
 </script>
 
@@ -163,6 +181,10 @@ function fromDate(): void {
         <div class="converter-row">
           <el-button size="small" @click="useNowSec">当前秒</el-button>
           <el-button size="small" @click="useNow">当前毫秒</el-button>
+          <el-button size="small" @click="tsInput = '0x68037880'">0xHEX 示例</el-button>
+          <el-button size="small" @click="setMidnight">今日零点</el-button>
+          <el-button v-for="[label, delta] in ([['−1 天', -86400000], ['−1 小时', -3600000], ['+1 小时', 3600000], ['+1 天', 86400000]] as const)"
+            :key="label" size="small" @click="shiftTimestamp(delta)">{{ label }}</el-button>
         </div>
         <div v-if="result" class="result-grid">
           <button
@@ -180,10 +202,19 @@ function fromDate(): void {
       </section>
       <section class="panel-section">
         <h3>日期时间 → 时间戳</h3>
-        <el-date-picker v-model="dateInput" type="datetime" aria-label="选择日期时间" placeholder="选择日期时间" format="YYYY-MM-DD HH:mm:ss" />
+        <el-radio-group v-model="dateZone" size="small" aria-label="日期解析时区">
+          <el-radio-button value="local">本地时区</el-radio-button>
+          <el-radio-button value="utc">UTC</el-radio-button>
+        </el-radio-group>
+        <div class="calendar-fields">
+          <label>选择或输入日期时间<input v-model="dateInput" type="datetime-local" step="1" /></label>
+          <label>毫秒<input v-model.number="dateMillis" type="number" min="0" max="999" step="1" /></label>
+        </div>
+        <p v-if="dateInput && reverseTime === null" role="alert" class="calendar-error">请输入有效的日期和 0–999 毫秒。</p>
         <div class="converter-row">
-          <el-button size="small" @click="dateInput = new Date()">当前时刻</el-button>
-          <el-button size="small" type="primary" @click="fromDate">转换到左侧</el-button>
+          <el-button size="small" @click="setCalendar(Date.now())">当前时刻</el-button>
+          <el-button size="small" :disabled="!dateInput" @click="dateInput = dateInput.slice(0, 16); dateMillis = 0">整分归零</el-button>
+          <el-button size="small" type="primary" :disabled="reverseTime === null" @click="fromDate">填入左侧解析器</el-button>
         </div>
         <div v-if="dateResult.length" class="result-grid">
           <button v-for="item in dateResult" :key="item.label" type="button" class="result-item" @click="copy(item.value)">
@@ -197,6 +228,11 @@ function fromDate(): void {
 
 <style scoped>
 .mono, code { font-family:var(--font-mono); }
+.calendar-fields { display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; }
+.calendar-fields label { display:grid; gap:4px; font-size:12px; color:var(--el-text-color-secondary); }
+.calendar-fields input { color:var(--el-text-color-primary); background:var(--el-fill-color-blank); border:1px solid var(--el-border-color); border-radius:5px; font:inherit; padding:5px 8px; }
+.calendar-fields input[type="number"] { width:80px; }
+.calendar-error { color:var(--el-color-danger); font-size:12px; }
 .clock-strip { display:flex; align-items:center; flex-wrap:wrap; gap:8px; padding:9px 12px; background:var(--el-bg-color-overlay); border:1px solid var(--el-border-color-lighter); border-radius:8px; font-size:12px; }
 .clock-strip .el-button { margin:0; }
 .clock-state { color:var(--el-color-success); }

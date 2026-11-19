@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { ArrowRight, FolderOpened, RefreshRight, Search, SwitchButton, VideoPlay } from '@element-plus/icons-vue'
 import TerminalView from '@renderer/components/TerminalView.vue'
@@ -21,6 +21,7 @@ import {
 
 const props = defineProps<{ panelId: string }>()
 const tabStore = useTabStore()
+const recentShell = tabStore.tabs.find((tab) => tab.id === props.panelId)?.shell
 const termView = ref<InstanceType<typeof TerminalView> | null>(null)
 useTerminalStream('local-terminal', props.panelId, termView)
 
@@ -36,6 +37,9 @@ const font = ref(DEFAULT_LOCAL_TERMINAL_CONFIG.font)
 const fontSize = ref(DEFAULT_LOCAL_TERMINAL_CONFIG.fontSize)
 const running = ref(false)
 const starting = ref(false)
+watch([running, starting], ([connected, pending]) => {
+  tabStore.setConnection(props.panelId, connected ? 'connected' : pending ? 'connecting' : 'disconnected')
+}, { immediate: true })
 const activeProfileId = ref<string | undefined>()
 const lastSize = ref({ cols: 120, rows: 30 })
 const TERM_SIZES = [10, 11, 12, 13, 14, 15, 16, 17, 18, 20, 22, 24, 26, 28]
@@ -110,6 +114,7 @@ async function start(clearFirst = false): Promise<void> {
     profileId.value = startedProfileId
     if (result.cwd) cwd.value = result.cwd
     tabStore.rename(props.panelId, result.profile?.name ?? profile.name)
+    tabStore.setConnection(props.panelId, 'connected', { shell: { profileId: startedProfileId, cwd: cwd.value } })
     await persistConfig()
     termView.value?.focus()
   } finally {
@@ -188,8 +193,8 @@ onMounted(async () => {
 
   const result = (await window.api.invoke('local-terminal', 'attach', props.panelId)) as LocalTerminalAttachResult
   profiles.value = result.profiles
-  profileId.value = result.config.defaultProfileId || DEFAULT_LOCAL_TERMINAL_CONFIG.defaultProfileId
-  cwd.value = result.cwd ?? result.config.cwd ?? ''
+  profileId.value = recentShell?.profileId || result.config.defaultProfileId || DEFAULT_LOCAL_TERMINAL_CONFIG.defaultProfileId
+  cwd.value = recentShell?.cwd ?? result.cwd ?? result.config.cwd ?? ''
   font.value = result.config.font || DEFAULT_LOCAL_TERMINAL_CONFIG.font
   fontSize.value = result.config.fontSize || DEFAULT_LOCAL_TERMINAL_CONFIG.fontSize
   if (result.config.quickCmdWidth) quickCmdWidth.value = result.config.quickCmdWidth
