@@ -81,8 +81,6 @@ export class PluginService implements ToolService {
   private logs: PluginLogEntry[] = []
   private initialized?: Promise<void>
   private mutations: Promise<unknown> = Promise.resolve()
-  private legacyImported = false
-  private legacyMigrationError = ''
 
   constructor(private readonly bridge: PluginSerialBridge, builtins: BuiltinPluginDefinition[] = [], options: PluginServiceOptions = {}) {
     const userData = options.userData ?? app.getPath('userData')
@@ -109,10 +107,7 @@ export class PluginService implements ToolService {
           statuses: clone([...this.statuses.values()]), logs: clone(this.logs)
         }
         case 'list': return { ok: true, plugins: clone([...this.descriptors.values()]) }
-        case 'instance:list':
-          if (!this.legacyImported) await this.mutate(() => this.importLegacy())
-          return { ok: true, instances: clone(this.instances) }
-        case 'legacy:retry': return { ok: await this.mutate(() => this.importLegacy()), error: this.legacyMigrationError || undefined }
+        case 'instance:list': return { ok: true, instances: clone(this.instances) }
         case 'status': return { ok: true, statuses: clone([...this.statuses.values()]), logs: clone(this.logs) }
         case 'instance:save': return await this.mutate(() => this.saveInstance(panelId, object(p.instance)))
         case 'instance:delete': return await this.mutate(() => this.deleteInstance(panelId, string(p.instanceId, 'instanceId')))
@@ -159,50 +154,9 @@ export class PluginService implements ToolService {
     return this.initialized ??= (async () => {
       const state = await this.store.readState()
       this.instances = state.instances
-      this.legacyImported = state.legacyImported
       for (const descriptor of await this.store.listInstalled()) this.descriptors.set(descriptor.id, descriptor)
       for (const builtin of this.builtins.values()) this.descriptors.set(builtin.manifest.id, { ...builtin.manifest, builtin: true })
-      await this.importLegacy()
     })()
-  }
-  private async importLegacy(): Promise<boolean> {
-    if (this.legacyImported || !this.builtins.has('devkit.oa-debug')) return true
-    try {
-      let legacy: Record<string, unknown> | undefined
-      try {
-        const raw = await fs.readFile(join(this.store.root, 'device-actions.json'), 'utf8')
-        if (Buffer.byteLength(raw) > MAX_QUEUE_BYTES) throw new Error('旧设备动作配置超过256KiB')
-        legacy = object(parseJson(raw))
-      } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error }
-      const next = [...this.instances]
-      if (legacy) {
-        if (!Array.isArray(legacy.profiles) || legacy.profiles.length > 32) throw new Error('旧设备动作profiles无效')
-        for (const rawProfile of legacy.profiles) {
-          const profile = object(rawProfile)
-          const profileId = string(profile.id, '旧profile.id')
-          const id = 'legacy-' + profileId
-          if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,95}$/.test(id)) throw new Error('旧profile.id无法迁移')
-          if (next.some((item) => item.id === id)) continue
-          next.push({
-            id, pluginId: 'devkit.oa-debug', label: (typeof profile.label === 'string' ? profile.label : profileId).slice(0,128),
-            config: { deviceActions: clone(legacy), profileId }, enabled: true, autoEnabled: false, configVersion: 1
-          })
-        }
-      }
-      if (next.length > 128) throw new Error('迁移后实例超过128个')
-      await this.store.writeState(next, true)
-      this.instances = next
-      this.legacyImported = true
-      this.legacyMigrationError = ''
-      return true
-    } catch (error) {
-      const message = '旧设备动作尚未迁移，其他插件仍可使用：' + errorMessage(error)
-      if (message !== this.legacyMigrationError) {
-        this.legacyMigrationError = message
-        this.logs.push({ timestamp: Date.now(), instanceId: 'legacy-migration', panelId: '*', level: 'warn', message })
-      }
-      return false
-    }
   }
   private changed(panelId: string): void {
     this.emitEvent(panelId, 'changed', {})
@@ -254,7 +208,7 @@ export class PluginService implements ToolService {
     const next = this.instances.filter((item) => item.id !== id).concat(instance)
     if (next.length > 128) throw new Error('最多128个插件实例')
     if (runtime && stopping) await this.stopRuntime(runtime, 'stopped')
-    await this.store.writeState(next, this.legacyImported)
+    await this.store.writeState(next)
     this.instances = next
     if (runtime) {
       const boundPanel = runtime.session.panelId
@@ -270,7 +224,7 @@ export class PluginService implements ToolService {
     const runtime = this.runtimes.get(id)
     if (runtime) await this.stopRuntime(runtime, 'stopped')
     const next = this.instances.filter((item) => item.id !== id)
-    await this.store.writeState(next, this.legacyImported)
+    await this.store.writeState(next)
     this.instances = next
     this.statuses.delete(id)
     this.changed(panelId)

@@ -38,14 +38,14 @@ export class SerialTxBroker {
   /** UI writes retain their synchronous accepted/error result. Port errors arrive separately. */
   writeNow(bytes: Uint8Array, completed?: (error?: Error) => void): void {
     this.check()
-    if (this.busy) throw new Error('设备动作或插件正在使用此串口')
+    if (this.busy) throw new Error('插件或文件传输正在使用此串口')
     this.dispatch(bytes, undefined, completed)
   }
 
   tryAcquire(owner: string, signal?: AbortSignal): SerialTxLease {
     this.check()
     signal?.throwIfAborted()
-    if (this.busy) throw new Error('设备动作或插件正在使用此串口')
+    if (this.busy) throw new Error('插件或文件传输正在使用此串口')
     return this.createLease(owner, signal)
   }
 

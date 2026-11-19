@@ -38,6 +38,12 @@
 
 IPC 统一使用 `window.api.invoke(tool, action, panelId, payload)` 和已有的 `tool:event` 机制；不得为同一行为另开通道。
 
+### 终端尺寸与缩放
+
+- xterm 的屏幕有固有宽度（列数 × 字符宽）。`TerminalView.vue` 的 `.term-wrap` / `.term-stage` / `.term` 必须保持 `min-width: 0` 加 `overflow: hidden`，否则 flex 项拒绝缩到固有宽度以下，FitAddon 会按更宽的父容器算出更多列，形成「父变宽 → 列变多 → 更宽」的自激循环：表现为字号变大时宽度跟着涨、高度不变，以及 ResizeObserver 与 fit 互相触发的持续闪烁。
+- 尺寸变化只由宿主容器驱动：容器尺寸稳定后调用一次 fit，写入的行列数用于 PTY 同步（SSH）或串口参数展示。不要在 `fit` 回调里再改容器样式。
+- 字号缩放按比例改变字符宽高（xterm 内建的 `fontSize` 缩放），盒宽保持不变，验证时按渲染出的字形墨迹包围盒测宽高比，而不是读 DOM 行高（WebGL 渲染没有可测量的行元素）。
+
 ## 4. 已验证与待验证
 
 | 场景 | 证据或方式 | 现状 |

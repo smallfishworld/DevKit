@@ -49,7 +49,7 @@ async function main(): Promise<void> {
     if (action === 'open') panelId = id
     return invoke(id, action, payload)
   }
-  const plugins = new PluginService(serial.pluginBridge, [serial.oaPlugin], {
+  const plugins = new PluginService(serial.pluginBridge, [], {
     userData, hostPath: join(process.cwd(), 'out/main/plugin-host.js'),
     hostFactory: (path) => {
       const child = utilityProcess.fork(path, [], { stdio: 'ignore', serviceName: 'DevKit Device Extension' })

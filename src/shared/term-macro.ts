@@ -5,12 +5,10 @@
 
 /** 单个步骤：发命令 / 延时 / 按键 */
 export interface QuickCmdStep {
-  type: 'cmd' | 'sleep' | 'key' | 'device-action' | 'plugin-action'
+  type: 'cmd' | 'sleep' | 'key' | 'plugin-action'
   /** Stable plugin configuration instance and contributed action references. */
   instanceId?: string
   actionId?: string
-  /** 本地设备动作配置 ID（device-action；具体行为由部署方 device-actions.json 定义） */
-  profile?: string
   /** 命令文本（cmd） */
   text?: string
   /** 命令格式（cmd，hex 时 text 为十六进制串） */
@@ -81,7 +79,6 @@ export function keyName(seq: string): string {
 /** 步骤 → 纯文本预览 */
 export function stepPreview(st: QuickCmdStep): string {
   if (st.type === 'plugin-action') return st.instanceId && st.actionId ? `插件动作（${st.instanceId} / ${st.actionId}）` : '插件动作'
-  if (st.type === 'device-action') return st.profile ? `设备动作（${st.profile}）` : '设备动作'
   if (st.type === 'sleep') return `延时 ${st.ms}ms`
   if (st.type === 'key') return `按键 ${keyName(st.key ?? '')}`
   return st.mode === 'hex' ? `[HEX] ${st.text}` : `${st.text}${st.crlf ? '⏎' : ''}`
@@ -91,20 +88,19 @@ export function stepPreview(st: QuickCmdStep): string {
 export function migrateQuickCmd(c: { name: string; group?: string; mode?: string; text?: string; newline?: string } | QuickCmd): QuickCmd {
   const anyC = c as { steps?: QuickCmdStep[]; mode?: string; text?: string; newline?: string }
   if (Array.isArray(anyC.steps)) {
-    const steps = anyC.steps.map((step): QuickCmdStep => {
-      // 设备动作步骤只保留 profile 引用，丢弃导入数据可能携带的任何额外字段
-      if ((step as { type?: unknown } | undefined)?.type === 'device-action') {
-        return { type: 'device-action', profile: typeof step.profile === 'string' ? step.profile : '' }
-      }
-      if ((step as { type?: unknown } | undefined)?.type === 'plugin-action') {
-        return {
-          type: 'plugin-action',
-          instanceId: typeof step.instanceId === 'string' ? step.instanceId : '',
-          actionId: typeof step.actionId === 'string' ? step.actionId : ''
+    // 旧版「设备动作」步骤已随该子系统移除：导入时直接丢弃，避免回放时卡在未知步骤
+    const steps = anyC.steps
+      .filter((step) => (step as { type?: unknown } | undefined)?.type !== 'device-action')
+      .map((step): QuickCmdStep => {
+        if ((step as { type?: unknown } | undefined)?.type === 'plugin-action') {
+          return {
+            type: 'plugin-action',
+            instanceId: typeof step.instanceId === 'string' ? step.instanceId : '',
+            actionId: typeof step.actionId === 'string' ? step.actionId : ''
+          }
         }
-      }
-      return step
-    })
+        return step
+      })
     return { name: c.name, group: (c as QuickCmd).group ?? '', steps }
   }
   return {
@@ -124,7 +120,6 @@ export function migrateQuickCmd(c: { name: string; group?: string; mode?: string
 /** Validate the full macro before sending anything to an unsupported terminal. */
 export function validatePlayback(
   cmd: QuickCmd,
-  deviceProfiles?: readonly string[],
   pluginActions?: readonly PluginActionReference[]
 ): string | undefined {
   for (const step of cmd.steps) {
@@ -132,10 +127,6 @@ export function validatePlayback(
       case 'cmd':
       case 'sleep':
       case 'key': break
-      case 'device-action':
-        if (!deviceProfiles) return '设备动作仅支持串口终端'
-        if (!step.profile || !deviceProfiles.includes(step.profile)) return '找不到此设备动作的设备配置'
-        break
       case 'plugin-action':
         if (!pluginActions) return '插件动作仅支持串口终端'
         if (!step.instanceId || !step.actionId || !pluginActions.some(action =>

@@ -10,7 +10,6 @@ const props = defineProps<{ visible: boolean; panelId: string; connected: boolea
 const emit = defineEmits<{
   (event: 'update:visible', value: boolean): void
   (event: 'changed'): void
-  (event: 'legacy-config'): void
 }>()
 const visible = computed({ get: () => props.visible, set: (value: boolean) => emit('update:visible', value) })
 const tab = ref('instances')
@@ -282,7 +281,6 @@ onUnmounted(() => {
             <el-option v-for="plugin in plugins" :key="plugin.id" :label="plugin.name" :value="plugin.id" />
           </el-select>
           <el-tag :type="connected ? 'success' : 'info'">{{ connected ? '当前串口已连接' : '连接串口后可绑定和运行' }}</el-tag>
-          <el-button link @click="emit('legacy-config')">原有 OA 设备动作配置</el-button>
         </div>
         <el-empty v-if="!instances.length" description="还没有配置，选择一个插件来创建" :image-size="65" />
         <div class="instance-list">

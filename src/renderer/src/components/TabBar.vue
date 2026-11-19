@@ -79,14 +79,14 @@ function onDrop(toId: string): void {
 </template>
 
 <style scoped>
-.tab-item { padding-inline:0 6px; gap:2px; }
+.tab-item { padding-inline:0 7px; gap:3px; }
 .tab-select, .tab-close { border:0; background:transparent; color:inherit; cursor:pointer; }
-.tab-select { height:100%; display:flex; align-items:center; gap:6px; padding:0 6px 0 11px; font:inherit; }
+.tab-select { height:100%; display:flex; align-items:center; gap:8px; padding:0 7px 0 13px; font:inherit; }
 .tab-item:first-child { padding-inline-end:0; }
 .tab-item:first-child .tab-select { padding-inline-end:11px; }
-.tab-close { flex:none; padding:3px; }
+.tab-close { flex:none; padding:4px; }
 
-.new-tool { flex:none; align-self:center; display:grid; place-items:center; width:30px; height:28px; border:0; border-radius:6px; background:transparent; color:var(--el-text-color-secondary); cursor:pointer; }
+.new-tool { flex:none; align-self:center; display:grid; place-items:center; width:32px; height:30px; margin-inline-start:2px; border:0; border-radius:6px; background:transparent; color:var(--el-text-color-secondary); cursor:pointer; }
 .tab-dot { width:6px; height:6px; border-radius:50%; background:var(--el-text-color-placeholder); }
 .tab-dot[data-state="connected"] { background:var(--el-color-success); }
 .tab-dot[data-state="connecting"] { background:var(--el-color-warning); }

@@ -2,7 +2,7 @@
 
 ## 安装与运行
 
-串口面板提供插件管理入口。插件分为内置 OA 设备动作和用户安装的可信 JavaScript 插件。外部插件运行于独立 Electron utilityProcess，串口仍由 DevKit 主进程持有。**该进程不是安全沙箱**：插件仍能使用 Node.js 文件系统、网络和环境变量；manifest 的 capabilities 仅约束 DevKit 提供的串口 API。只安装经过核实的可信插件，安装前 UI 会再次确认。
+串口面板提供插件管理入口，用于安装与运行用户安装的可信 JavaScript 插件。外部插件运行于独立 Electron utilityProcess，串口仍由 DevKit 主进程持有。**该进程不是安全沙箱**：插件仍能使用 Node.js 文件系统、网络和环境变量；manifest 的 capabilities 仅约束 DevKit 提供的串口 API。只安装经过核实的可信插件，安装前 UI 会再次确认。
 
 1. 导入包含 manifest.json 和入口文件的本地插件目录，或自包含 JSON 插件包；API v1 不支持直接导入 ZIP。
 2. 选择插件并创建配置实例。实例保存配置，不等于已经连接设备。
@@ -68,9 +68,8 @@ manifest 字段：
 
 ## 例子
 
-- examples/plugins/text-hex-responder：无需 OA 的完整文本/HEX 自动应答插件，支持分批、多次命中、延时与停用清理。
+- examples/plugins/text-hex-responder：完整的文本/HEX 自动应答插件，支持分批、多次命中、延时与停用清理。
 - examples/plugins/template：主动查询和等待响应的起始模板。
-- 现有 OA 配置/宏保持兼容，OA 业务通过内置适配器接入。
 
 ## 配置与版本
 
@@ -80,13 +79,13 @@ manifest 字段：
 ## 信任与运行边界
 
 API v1 外部包是用户信任的本地代码。utilityProcess 隔离卡死/崩溃并便于终止，但仍具有 Node API；能力清单不构成文件和网络的操作系统沙箱。不要安装来源不可信的代码。
-端口与现有 OA 登录会话由宿主管理。插件自动布防与安装分开，敏感串口事务不应向无关监听者广播秘密。
+串口端口由宿主统一管理。插件自动布防与安装分开，敏感串口事务不应向无关监听者广播秘密。
 
 ## 验证
 
 独立协议测试：node examples/plugins/text-hex-responder/test.cjs。
 宿主单元与集成测试挂入 npm test；Electron 插件冒烟验证实际构建后的独立 worker、安装、绑定和动作。
-Box 的模拟串口与 Linux Electron 测试不替代 Windows CI 和真实设备/OA 联调。实际通过项见[三阶段验收记录](../openspec/changes/archive/2026-11-16-add-device-plugin-system/tasks.md)和 PR。
+Box 的模拟串口与 Linux Electron 测试不替代 Windows CI 和真实设备联调。实际通过项见[三阶段验收记录](../openspec/changes/archive/2026-11-16-add-device-plugin-system/tasks.md)和 PR。
 
 ## 插件包生成
 

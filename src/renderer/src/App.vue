@@ -137,9 +137,9 @@ onMounted(() => {
   align-items: center;
   justify-content: center;
   gap: 6px;
-  min-height: 28px;
+  min-height: 30px;
   align-self: center;
-  padding: 4px 8px;
+  padding: 5px 10px;
   font-size: 12px;
   border-radius: 6px;
   border: none;
@@ -154,12 +154,17 @@ onMounted(() => {
   background: var(--el-fill-color-dark);
   color: var(--el-color-primary);
 }
-.app-header { height:40px; align-items:stretch; gap:4px; padding:5px 0 0 8px; }
-.app-logo { align-self:center; width:auto; height:28px; margin-bottom:5px; gap:6px; padding:4px 8px; color:inherit; font-size:13px; font-weight:700; }
-.header-divider { align-self:center; width:1px; height:16px; margin:0 4px 5px 2px; background:var(--el-border-color); }
-:deep(.tab-bar) { flex:1; min-width:0; height:auto; padding:0; gap:3px; border:0; background:transparent; }
-:deep(.tab-item) { height:34px; border-radius:8px 8px 0 0; }
+/* 顶栏留出更多呼吸空间：标签 38px 高，上下各留 8px，不再贴着窗口边缘 */
+.app-header { height:46px; align-items:stretch; gap:6px; padding:8px 0 0 10px; }
+/* 图标与文字统一对齐到标签行的光学中心（8px 顶留白 + 38px 标签行 = 27px），
+   不再靠 margin-bottom 把 DevKit 字样顶高 4px、和标签页错开 */
+.app-logo { align-self:center; width:auto; height:30px; gap:7px; padding:5px 10px; color:inherit; font-size:13px; font-weight:700; }
+.header-divider { align-self:center; width:1px; height:18px; margin:0 6px 0 2px; background:var(--el-border-color); }
+:deep(.tab-bar) { flex:1; min-width:0; height:auto; padding:0; gap:5px; border:0; background:transparent; }
+:deep(.tab-item) { height:38px; border-radius:9px 9px 0 0; }
 :deep(.tab-item.active) { background:var(--el-bg-color-overlay); }
-.win-controls { margin-top:-5px; }
-.win-btn { width:40px; }
+/* 窗口按钮贴满标题栏高度（抵消 header 的 padding-top，与最小化/关闭的悬停底色齐边）；
+   图标用等量 padding-top 下移，和标签页同一水平中轴 */
+.win-controls { margin-top:-8px; }
+.win-btn { width:40px; padding-top:8px; }
 </style>

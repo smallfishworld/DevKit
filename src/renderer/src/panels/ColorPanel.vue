@@ -21,7 +21,10 @@ function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
 }
 
 async function pick(): Promise<void> {
+  if (picking.value) return
   picking.value = true
+  // 取点窗口会盖住整个屏幕：先给个提示，避免用户以为按钮没反应
+  const hint = ElMessage({ message: '请单击屏幕取色，右键或 Esc 取消', duration: 0, showClose: false })
   try {
     const res = (await window.api.invoke('color', 'pick', `color#${Date.now()}`)) as {
       x: number
@@ -31,14 +34,18 @@ async function pick(): Promise<void> {
     if (res) {
       history.value.unshift({ ...res, time: Date.now() })
       if (history.value.length > 50) history.value.pop()
+      ElMessage.success(`已取色 ${res.color}`)
     }
+  } catch (error) {
+    ElMessage.error(`取色失败：${String(error)}`)
   } finally {
+    hint.close()
     picking.value = false
   }
 }
 
 async function copy(text: string): Promise<void> {
-  await navigator.clipboard.writeText(text)
+  await window.api.win.writeClipboard(text)
   ElMessage.success(`已复制 ${text}`)
 }
 
@@ -60,9 +67,9 @@ onUnmounted(onUnmountClear)
       <h3>屏幕取色</h3>
       <div class="row">
         <el-button type="primary" :icon="Aim" :loading="picking" @click="pick">
-          截屏取点（点击屏幕任意位置取色，Esc 取消）
+          截屏取色
         </el-button>
-        <span class="hint">坐标为物理像素，颜色为截图像素值</span>
+        <span class="hint">取点窗口铺满光标所在屏幕：单击取色，右键 / Esc 取消；坐标为全局物理像素</span>
       </div>
     </div>
 

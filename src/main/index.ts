@@ -105,7 +105,7 @@ app.whenReady().then(() => {
   registerService('tftp', tftpService)
   registerService('macro', macroService)
   registerService('serial', serialService)
-  registerService('plugins', new PluginService(serialService.pluginBridge, [serialService.oaPlugin]))
+  registerService('plugins', new PluginService(serialService.pluginBridge))
   serialService.startLogRetention()
   registerService('ssh', sshService)
   registerService('local-terminal', localTerminalService)

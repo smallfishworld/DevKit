@@ -182,22 +182,9 @@ async function main() {
     assert.equal((await reloaded.invoke('p1','remove',{pluginId:fixtureManifest.id})).ok,true)
     assert.equal((await reloaded.invoke('p1','instance:list')).instances[0].id,id,'uninstall retains configuration identity')
     assert.equal((await reloaded.invoke('p1','list')).plugins.length,0)
-    const migratedRoot=path.join(root,'migration')
-    await fs.mkdir(migratedRoot)
-    await fs.writeFile(path.join(migratedRoot,'device-actions.json'),'{malformed')
-    const builtin={manifest:{...fixtureManifest,id:'devkit.oa-debug'},activate:()=>({})}
-    const migration=new PluginService(bridge,[builtin],{userData:migratedRoot,emit:()=>{}})
-    assert.equal((await migration.invoke('p1','list')).ok,true,'bad OA config cannot block unrelated plugins')
-    assert.ok((await migration.invoke('p1','status')).logs.some(entry=>entry.level==='warn'))
-    await fs.writeFile(path.join(migratedRoot,'device-actions.json'),JSON.stringify({profiles:[{id:'a'.repeat(64),label:'Legacy'}]}))
-    const legacyInstances=(await migration.invoke('p1','instance:list')).instances
-    assert.equal(legacyInstances.length,1,'fixed legacy file retries migration')
-    assert.equal(legacyInstances[0].id.length,71)
-    const migrationReload=new PluginService(bridge,[builtin],{userData:migratedRoot,emit:()=>{}})
-    assert.equal((await migrationReload.invoke('p1','instance:list')).instances.length,1,'71-character legacy identity reloads')
     const stateStore=new PluginStore(path.join(root,'size-limit'))
-    await stateStore.writeState([],false)
-    await assert.rejects(stateStore.writeState([{...saved.instance,config:{huge:'x'.repeat(2*1024*1024)}}],false),/2MiB/)
+    await stateStore.writeState([])
+    await assert.rejects(stateStore.writeState([{...saved.instance,config:{huge:'x'.repeat(2*1024*1024)}}]),/2MiB/)
     assert.deepEqual((await stateStore.readState()).instances,[],'oversized write leaves old state intact')
     const contexts=[]
     const generationPlugin={

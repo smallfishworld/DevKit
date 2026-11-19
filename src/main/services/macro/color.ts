@@ -93,34 +93,43 @@ export async function waitColor(
   return false
 }
 
-/** 截取主屏并返回 PNG 与取色函数（取点器用） */
-export async function grabScreenPng(): Promise<{
+/**
+ * 按显示器截屏并返回 PNG 与取色函数（取点器用）。
+ * 缩略图按该显示器的**物理像素**尺寸申请；坐标原点取显示器的物理位置
+ * （DIP bounds × scaleFactor），与 uiohook/SendInput 的物理屏幕坐标一致。
+ */
+export async function grabDisplayPng(display: Electron.Display): Promise<{
   png: Buffer
   width: number
   height: number
-  offsetX: number
-  offsetY: number
-  /** 图像局部坐标取色，返回 '#RRGGBB' */
+  /** 该显示器左上角在全局物理屏幕坐标中的位置 */
+  offset: { x: number; y: number }
+  /** 图像局部像素取色，返回 '#RRGGBB' */
   sample: (localX: number, localY: number) => string
 }> {
-  const primary = screen.getPrimaryDisplay()
-  const scale = primary.scaleFactor || 1
-  const w = Math.round(primary.size.width * scale)
-  const h = Math.round(primary.size.height * scale)
+  const scale = display.scaleFactor || 1
+  const w = Math.round(display.size.width * scale)
+  const h = Math.round(display.size.height * scale)
   const sources = await desktopCapturer.getSources({
     types: ['screen'],
     thumbnailSize: { width: w, height: h }
   })
-  const img = sources[0]?.thumbnail
+  // 多屏按 display_id 匹配；匹配不到退回第一张（单屏时即唯一一张）
+  const source = sources.find((s) => s.display_id === String(display.id)) ?? sources[0]
+  const img = source?.thumbnail
+  if (!img || img.isEmpty()) throw new Error('截屏失败：未获取到屏幕画面（可能被系统权限拦截）')
+  const to2 = (n: number): string => Math.max(0, Math.min(255, n)).toString(16).padStart(2, '0')
   return {
     png: img.toPNG(),
     width: img.getSize().width,
     height: img.getSize().height,
-    offsetX: primary.bounds.x,
-    offsetY: primary.bounds.y,
+    offset: {
+      x: Math.round(display.bounds.x * scale),
+      y: Math.round(display.bounds.y * scale)
+    },
     sample: (localX: number, localY: number): string => {
       const p = pixelAt(img, localX, localY)
-      const to2 = (n: number): string => Math.max(0, Math.min(255, n)).toString(16).padStart(2, '0')
+      if (p.r < 0) return '#000000'
       return `#${to2(p.r)}${to2(p.g)}${to2(p.b)}`.toUpperCase()
     }
   }

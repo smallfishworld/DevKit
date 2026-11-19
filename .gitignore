@@ -15,4 +15,5 @@ design/
 
 # esbuild 测试打包临时产物
 tests/.*.cjs
+tests/.*.png
 tmp/

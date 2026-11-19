@@ -58,6 +58,8 @@ export interface SerialConfig {
   sidebarWidth: number
   /** 左侧会话/快捷命令栏显示/隐藏 */
   sidebarHidden?: boolean
+  /** 端口备注名（键为归一化端口路径，如 `COM1`）：标签页显示为「备注 (COM1)」 */
+  portLabels?: Record<string, string>
   /** 收发编码（收：按它解码线上的字节；发：按它编码下发文本；默认 UTF-8） */
   encoding: SerialEncoding
 }

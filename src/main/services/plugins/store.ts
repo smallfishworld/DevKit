@@ -67,7 +67,7 @@ export function parseManifest(value: unknown): PluginManifest {
     capabilities: [...new Set(m.capabilities as string[])]
   }
 }
-interface StoreState { version: 1; instances: PluginInstance[]; legacyImported: boolean }
+interface StoreState { version: 1; instances: PluginInstance[] }
 export class PluginStore {
   readonly directory: string
   private statePath: string
@@ -78,7 +78,7 @@ export class PluginStore {
   async readState(): Promise<StoreState> {
     let text: string
     try { text = await fs.readFile(this.statePath, 'utf8') }
-    catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { version: 1, instances: [], legacyImported: false }; throw error }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { version: 1, instances: [] }; throw error }
     if (Buffer.byteLength(text) > 2 * 1024 * 1024) throw new Error('插件实例配置文件过大')
     const state = record(parseJson(text))
     if (state.version !== 1 || !Array.isArray(state.instances) || state.instances.length > 128) throw new Error('插件配置版本或格式不支持')
@@ -91,12 +91,12 @@ export class PluginStore {
       if (item.configVersion !== 1 || typeof item.enabled !== 'boolean' || typeof item.autoEnabled !== 'boolean') throw new Error('插件实例版本或开关无效')
       return { id, pluginId: short(item.pluginId, 'pluginId', 96), label: short(item.label, 'label', 128), config: record(item.config), enabled: item.enabled, autoEnabled: item.autoEnabled, configVersion: 1 }
     })
-    return { version: 1, instances, legacyImported: state.legacyImported === true }
+    return { version: 1, instances }
   }
-  async writeState(instances: PluginInstance[], legacyImported: boolean): Promise<void> {
+  async writeState(instances: PluginInstance[]): Promise<void> {
     await fs.mkdir(dirname(this.statePath), { recursive: true })
     const temp = this.statePath + '.' + randomUUID() + '.tmp'
-    const text = JSON.stringify({ version: 1, instances, legacyImported }, null, 2) + '\n'
+    const text = JSON.stringify({ version: 1, instances }, null, 2) + '\n'
     if (Buffer.byteLength(text) > 2 * 1024 * 1024) throw new Error('插件实例配置总大小超过2MiB')
     try { await fs.writeFile(temp, text, { mode: 0o600 }); await fs.rename(temp, this.statePath) }
     finally { await fs.rm(temp, { force: true }).catch(() => {}) }

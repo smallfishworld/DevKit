@@ -264,11 +264,10 @@ onUnmounted(() => {
           {{ profileChanged ? '切换终端' : '重启' }}
         </el-button>
         <el-button v-if="running" size="small" type="danger" plain :icon="SwitchButton" @click="stop">终止</el-button>
-      </div>
 
-      <div class="toolbar-row secondary">
+        <!-- 状态并入同一行：原先单独占一行，把操作条撑成两行且右对齐只剩一个词 -->
         <span v-if="profileChanged" class="switch-hint">
-          当前 {{ activeProfile?.name ?? activeProfileId }}，待切换到 {{ selectedProfile?.name ?? profileId }}
+          当前 {{ activeProfile?.name ?? activeProfileId }} → {{ selectedProfile?.name ?? profileId }}
         </span>
         <span class="status" :class="{ online: running }">
           {{ running ? `运行中 · ${activeProfile?.name ?? activeProfileId ?? profileId}` : '已停止' }}
@@ -297,21 +296,23 @@ onUnmounted(() => {
       </div>
 
       <div class="terminal-host">
+        <!-- 终端操作条压在终端上方通栏（与串口/SSH 一致）；
+             原先 .terminal-host 是横向 flex，这条会变成一列竖排文字夹在快捷命令栏和终端之间 -->
         <div class="local-term-opts">
-        <el-button size="small" text :icon="Search" @click="openSearch">查找</el-button>
-        <TerminalHistory tool="local-terminal" :panel-id="props.panelId" />
-        <el-button size="small" text @click="clearTerm">清屏</el-button>
+          <el-button size="small" text :icon="Search" title="查找（Ctrl+F）" @click="openSearch">查找</el-button>
+          <el-button size="small" text @click="clearTerm">清屏</el-button>
+          <TerminalHistory tool="local-terminal" :panel-id="props.panelId" />
           <el-popover placement="bottom-end" :width="250" trigger="click">
             <template #reference><el-button size="small" class="local-display-button" text>显示设置</el-button></template>
             <div class="panel-row">
-        <el-select v-model="font" size="small" filterable allow-create style="width: 132px" @change="onFontChanged">
-          <el-option value="Consolas" label="Consolas" />
-          <el-option value="Cascadia Mono" label="Cascadia Mono" />
-          <el-option value="Courier New" label="Courier New" />
-        </el-select>
-        <el-select v-model="fontSize" size="small" style="width: 72px" @change="onFontChanged">
-          <el-option v-for="size in TERM_SIZES" :key="size" :value="size" :label="String(size)" />
-        </el-select>
+              <el-select v-model="font" size="small" filterable allow-create style="width: 132px" @change="onFontChanged">
+                <el-option value="Consolas" label="Consolas" />
+                <el-option value="Cascadia Mono" label="Cascadia Mono" />
+                <el-option value="Courier New" label="Courier New" />
+              </el-select>
+              <el-select v-model="fontSize" size="small" style="width: 72px" @change="onFontChanged">
+                <el-option v-for="size in TERM_SIZES" :key="size" :value="size" :label="String(size)" />
+              </el-select>
             </div>
           </el-popover>
         </div>
@@ -329,35 +330,22 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-.panel.local-terminal-panel { padding:0; gap:0; }
-.local-terminal-panel .terminal-toolbar { padding:6px 10px; border-width:0 0 1px; border-radius:0; background:var(--el-bg-color-overlay); }
+.local-terminal-panel { height:100%; overflow:hidden; padding:0; gap:0; }
+/* 顶部配置栏：终端 / 工作目录 / 启动重启终止 + 状态；与串口、SSH 的连接栏同一套间距 */
+.local-terminal-panel .terminal-toolbar { flex:none; padding:9px 14px; border-width:0 0 1px; border-radius:0; background:var(--el-bg-color-overlay); }
 .local-terminal-panel .term-body { gap:0; }
-.local-terminal-panel .quick-cmd-col { padding:10px; background:var(--el-bg-color-overlay); }
-.local-terminal-panel .terminal-host :deep(.term) { border:0; border-radius:0; box-shadow:none; padding:10px 12px; }
-.local-term-opts { display:flex; align-items:center; flex-wrap:wrap; gap:5px; padding:4px 10px; background:var(--el-bg-color-overlay); border-bottom:1px solid var(--el-border-color-lighter); }
-.local-term-opts .el-button { margin:0; }
+/* 顶部内边距与 .local-term-opts 的 7px 对齐：快捷命令标题与终端工具栏同一水平线 */
+.local-terminal-panel .quick-cmd-col { display:flex; flex-direction:column; padding:7px 12px 14px; background:var(--el-bg-color-overlay); }
+.local-terminal-panel .terminal-host :deep(.term) { border:0; border-radius:0; box-shadow:none; padding:12px 14px; }
+.local-term-opts { display:flex; align-items:center; flex-wrap:wrap; gap:6px; padding:7px 14px; background:var(--el-bg-color-overlay); border-bottom:1px solid var(--el-border-color-lighter); }
+.local-term-opts :deep(.el-button) { margin:0; }
 .local-term-opts .local-display-button { margin-inline-start:auto; }
-
-.local-terminal-panel {
-  height: 100%;
-  overflow: hidden;
-  gap: 10px;
-}
-
-.terminal-toolbar {
-  padding: 10px 12px;
-  flex-shrink: 0;
-}
 
 .toolbar-row {
   display: flex;
   align-items: center;
   gap: 8px;
   min-width: 0;
-}
-
-.toolbar-row.secondary {
-  margin-top: 8px;
 }
 
 .label {
@@ -479,9 +467,10 @@ onUnmounted(() => {
   min-width: 0;
   min-height: 0;
   display: flex;
+  flex-direction: column;
 }
 
-.terminal-host :deep(.term-wrap) {
-  width: 100%;
-}
+.local-term-opts { display:flex; align-items:center; flex-wrap:wrap; gap:6px; padding:7px 14px; background:var(--el-bg-color-overlay); border-bottom:1px solid var(--el-border-color-lighter); }
+.local-term-opts :deep(.el-button) { margin:0; }
+.local-term-opts .local-display-button { margin-inline-start:auto; }
 </style>

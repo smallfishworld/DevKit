@@ -17,12 +17,7 @@ const props = defineProps<{
   enabled: boolean
   /** 面板注入的步骤执行器（串口 / SSH / 本地终端写法不同） */
   writer: (st: QuickCmdStep) => Promise<void> | void
-  /** 串口面板注入的设备动作执行器；不传则该面板不支持设备动作步骤 */
-  runDeviceAction?: (profile: string) => Promise<void>
-  getDeviceProfiles?: () => Promise<{ profiles: DeviceProfileInfo[]; error?: string }>
   getConnectionGeneration?: () => number
-  /** 设备动作配置保存版本号：变化后重新读取可选动作 */
-  deviceConfigVersion?: number
   runPluginAction?: (action: PluginActionReference) => Promise<void>
   getPluginActions?: () => Promise<{ actions: PluginMacroAction[]; error?: string }>
   pluginConfigVersion?: number
@@ -31,18 +26,8 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  (e: 'request-device-config'): void
   (e: 'request-plugin-config'): void
 }>()
-
-interface DeviceProfileInfo {
-  id: string
-  label: string
-  /** 展示在步骤标签上的动作名（如「解锁 Debug」） */
-  actionLabel?: string
-  /** auto = 常驻自动应答，不出现在快捷命令步骤里 */
-  trigger?: 'manual' | 'auto'
-}
 
 const {
   quickCmds,
@@ -72,10 +57,6 @@ const cmdDlg = ref(false)
 /** 正在编辑的宏索引；-1 = 新增 */
 const cmdEditIdx = ref(-1)
 const cmdDraft = reactive<QuickCmd>({ name: '', group: '', steps: [] })
-const deviceProfiles = ref<DeviceProfileInfo[]>([])
-/** 只有 manual 档能作为宏步骤；auto 档由串口面板的「自动应答」开关驱动 */
-const manualProfiles = computed(() => deviceProfiles.value.filter((profile) => profile.trigger !== 'auto'))
-const deviceConfigError = ref('')
 const pluginActions = ref<PluginMacroAction[]>([])
 const pluginConfigError = ref('')
 
@@ -101,33 +82,6 @@ function pluginActionAvailable(step: QuickCmdStep): boolean {
   return pluginActions.value.some(item => item.instanceId === step.instanceId && item.actionId === step.actionId)
 }
 watch(() => props.pluginConfigVersion, () => { void refreshPluginActions() })
-
-async function refreshDeviceProfiles(): Promise<void> {
-  if (!props.getDeviceProfiles) return
-  try {
-    const result = await props.getDeviceProfiles()
-    deviceProfiles.value = result.profiles
-    deviceConfigError.value = result.error ?? ''
-    // 保存配置后回到编辑弹窗：已添加但还没选中的设备动作步骤自动选第一项
-    const first = manualProfiles.value[0]
-    if (cmdDlg.value && first) {
-      for (const step of cmdDraft.steps) {
-        if (step.type === 'device-action' && !step.profile) step.profile = first.id
-      }
-    }
-  } catch {
-    deviceProfiles.value = []
-    deviceConfigError.value = '无法读取设备动作配置'
-  }
-}
-
-watch(() => props.deviceConfigVersion, () => { void refreshDeviceProfiles() })
-
-/** 步骤标签：优先配置的 actionLabel（如「解锁 Debug」），未知配置退回「设备动作」 */
-function deviceActionLabel(profileId?: string): string {
-  if (!profileId) return '设备动作'
-  return deviceProfiles.value.find(({ id }) => id === profileId)?.actionLabel ?? '设备动作'
-}
 
 // ---------- 新建分组 ----------
 const newGroupDlg = ref(false)
@@ -234,17 +188,12 @@ function openCmdDlg(idx = -1, steps?: QuickCmdStep[], prefillGroup?: string): vo
       ? JSON.parse(JSON.stringify(steps))
       : []
   cmdDlg.value = true
-  void refreshDeviceProfiles()
   void refreshPluginActions()
 }
 
 async function onSaveCmd(): Promise<void> {
   if (!cmdDraft.name.trim() || cmdDraft.steps.length === 0) {
     ElMessage.warning('名称与至少一个步骤必填')
-    return
-  }
-  if (cmdDraft.steps.some((step) => step.type === 'device-action' && !step.profile)) {
-    ElMessage.warning(deviceConfigError.value || '请选择设备动作的设备配置')
     return
   }
   if (cmdDraft.steps.some(step => step.type === 'plugin-action' && (!step.instanceId || !step.actionId))) {
@@ -266,7 +215,6 @@ async function onSaveCmd(): Promise<void> {
 function addStep(type: QuickCmdStep['type']): void {
   if (type === 'cmd') cmdDraft.steps.push({ type: 'cmd', text: '', mode: 'ascii', crlf: true })
   else if (type === 'sleep') cmdDraft.steps.push({ type: 'sleep', ms: 500 })
-  else if (type === 'device-action') cmdDraft.steps.push({ type, profile: manualProfiles.value[0]?.id ?? '' })
   else if (type === 'plugin-action') {
     const first = pluginActions.value[0]
     cmdDraft.steps.push({ type, instanceId: first?.instanceId || '', actionId: first?.actionId || '' })
@@ -300,36 +248,30 @@ async function onPlay(cmd: QuickCmd): Promise<void> {
     ElMessage.warning('连接未打开')
     return
   }
-  const usesAction = cmd.steps.some((step) => step?.type === 'device-action')
   const usesPlugin = cmd.steps.some((step) => step?.type === 'plugin-action')
-  const generation = usesAction || usesPlugin ? props.getConnectionGeneration?.() : undefined
+  const generation = usesPlugin ? props.getConnectionGeneration?.() : undefined
   const canContinue = (): boolean => props.enabled &&
     (generation === undefined || generation === props.getConnectionGeneration?.())
-  await Promise.all([
-    usesAction && props.runDeviceAction ? refreshDeviceProfiles() : Promise.resolve(),
-    usesPlugin && props.runPluginAction ? refreshPluginActions() : Promise.resolve()
-  ])
-  const error = validatePlayback(
-    cmd,
-    props.runDeviceAction ? manualProfiles.value.map(({ id }) => id) : undefined,
-    props.runPluginAction ? pluginActions.value : undefined
-  )
+  if (usesPlugin && props.runPluginAction) await refreshPluginActions()
+  const error = validatePlayback(cmd, props.runPluginAction ? pluginActions.value : undefined)
   if (error) {
-    ElMessage.warning(usesPlugin && pluginConfigError.value ? pluginConfigError.value : usesAction && deviceConfigError.value ? deviceConfigError.value : error)
+    ElMessage.warning(usesPlugin && pluginConfigError.value ? pluginConfigError.value : error)
     return
   }
   if (!canContinue()) {
     ElMessage.warning('连接已变化，请重新运行快捷命令')
     return
   }
-  try { await playCmd(cmd, props.writer, canContinue, props.runDeviceAction, props.runPluginAction) } catch (failure) {
+  try { await playCmd(cmd, props.writer, canContinue, props.runPluginAction) } catch (failure) {
     ElMessage.warning(failure instanceof Error ? failure.message : '快捷命令执行失败')
   }
 }
 
 // ---------- 多选 / 拖拽（排序 + 分组移动） ----------
 const selected = ref(new Set<string>())
-const dragOver = ref('') // 悬停目标：分组名 / '__ungrouped__' / 'item:<name>'（插到该命令前） / 'itemafter:<name>'（插到该命令后）
+/** 是否有命令正在拖动：只有拖动时才显示「移出分组」落区，平时侧栏底部就是干净的留白 */
+const dragging = ref(false)
+const dragOver = ref('') // 悬停目标：分组名 / '__tail__' / 'item:<name>'（插到该命令前） / 'itemafter:<name>'（插到该命令后）
 
 /** 点击命令：Ctrl/Shift 多选，否则执行该命令 */
 function onItemClick(name: string, e: MouseEvent): void {
@@ -351,8 +293,15 @@ function onDragStart(name: string, e: DragEvent): void {
   const next = new Set(selected.value)
   next.add(name)
   selected.value = next
+  dragging.value = true
   e.dataTransfer!.effectAllowed = 'move'
   e.dataTransfer!.setData('text/plain', [...next].join('\n'))
+}
+
+/** 拖动结束（无论落在哪里）：复位落区，避免「拖到此处」提示残留在侧栏底部 */
+function onDragEnd(): void {
+  dragging.value = false
+  dragOver.value = ''
 }
 
 /** 拖动悬停判定：行上半部 = 插到该命令前，下半部 = 插到该命令后 */
@@ -458,7 +407,7 @@ async function onImport(): Promise<void> {
 </script>
 
 <template>
-  <div>
+  <div class="quick-cmd">
     <div class="sessions-head cmd-head">
       <span>快捷命令</span>
       <span class="cmd-head-actions">
@@ -545,6 +494,7 @@ async function onImport(): Promise<void> {
             :title="it.cmd.steps.map(stepPreview).join(' → ')"
             @click="onItemClick(it.cmd.name, $event)"
             @dragstart="onDragStart(it.cmd.name, $event)"
+            @dragend="onDragEnd"
             @dragover.prevent.stop="onItemDragOver(it.cmd.name, $event)"
             @dragleave="onItemDragLeave(it.cmd.name, $event)"
             @drop.prevent.stop="onItemDrop(it.cmd.name)"
@@ -582,6 +532,7 @@ async function onImport(): Promise<void> {
         :title="it.cmd.steps.map(stepPreview).join(' → ')"
         @click="onItemClick(it.cmd.name, $event)"
         @dragstart="onDragStart(it.cmd.name, $event)"
+        @dragend="onDragEnd"
         @dragover.prevent.stop="onItemDragOver(it.cmd.name, $event)"
         @dragleave="onItemDragLeave(it.cmd.name, $event)"
         @drop.prevent.stop="onItemDrop(it.cmd.name)"
@@ -599,17 +550,6 @@ async function onImport(): Promise<void> {
           </el-button>
         </span>
       </div>
-      <div
-        v-if="grouped.ungrouped.length > 0"
-        class="ungrouped-drop"
-        :class="{ 'drop-hover': dragOver === '__ungrouped__' }"
-        @dragover.prevent="dragOver = '__ungrouped__'"
-        @dragleave="dragOver === '__ungrouped__' ? (dragOver = '') : null"
-        @drop.prevent="onDrop('')"
-      >
-        拖到此处移出分组 ▼
-      </div>
-
       <div v-if="quickCmds.length === 0" class="hint" style="padding: 4px 8px">
         {{ emptyHint ?? '点 + 添加多步骤命令，或用录制按钮录下操作序列' }}
       </div>
@@ -620,6 +560,18 @@ async function onImport(): Promise<void> {
         ● 录制中（{{ recordedCount }} 步）— 再点录制键停止并保存
       </div>
       <div v-if="playing" class="hint rec-hint">▶ 正在回放快捷命令…</div>
+    </div>
+
+    <!-- 列表下方的空白：平时就是留白，拖命令时才变成「移出分组」落区。
+         放在滚动区之外，命令再多也不会被挤走，侧栏剩余高度也有了用途 -->
+    <div
+      class="cmd-tail"
+      :class="{ active: dragOver === '__tail__', visible: dragging }"
+      @dragover.prevent="dragOver = '__tail__'"
+      @dragleave="dragOver === '__tail__' ? (dragOver = '') : null"
+      @drop.prevent="onDrop('')"
+    >
+      <span v-if="dragging">拖到此处移出分组 ▼</span>
     </div>
 
     <!-- 新建分组 -->
@@ -680,9 +632,6 @@ async function onImport(): Promise<void> {
           <el-button size="small" text :icon="Timer" @click="addStep('sleep')">延时</el-button>
           <el-button size="small" text :icon="EditPen" @click="addStep('key')">按键</el-button>
           <el-button v-if="runPluginAction" size="small" text :icon="Plus" @click="addStep('plugin-action')">插件动作</el-button>
-          <el-tooltip content="运行设备动作：解锁 / 授权等由部署配置定义的流程" placement="top">
-            <el-button v-if="runDeviceAction" size="small" text :icon="Plus" @click="addStep('device-action')">设备动作</el-button>
-          </el-tooltip>
         </span>
       </div>
       <div class="steps-list">
@@ -721,22 +670,6 @@ async function onImport(): Promise<void> {
             </el-select>
             <el-button link type="primary" size="small" @click="emit('request-plugin-config')">管理插件</el-button>
           </template>
-          <template v-else-if="st.type === 'device-action'">
-            <el-tag size="small" effect="plain">{{ deviceActionLabel(st.profile) }}</el-tag>
-            <el-select v-model="st.profile" size="small" class="step-input" placeholder="选择设备动作">
-              <el-option v-if="st.profile && !deviceProfiles.some(({ id }) => id === st.profile)" :label="st.profile" :value="st.profile" disabled />
-              <el-option v-for="profile in manualProfiles" :key="profile.id" :label="profile.label" :value="profile.id" />
-            </el-select>
-            <el-button
-              v-if="getDeviceProfiles"
-              link
-              type="primary"
-              size="small"
-              @click="emit('request-device-config')"
-            >
-              {{ manualProfiles.length ? '管理动作' : '尚未配置，去添加' }}
-            </el-button>
-          </template>
           <template v-else-if="st.type === 'key'">
             <el-tag size="small" type="warning" effect="plain">按键</el-tag>
             <el-select v-model="st.key" size="small" filterable class="step-input">
@@ -748,9 +681,6 @@ async function onImport(): Promise<void> {
           <el-button link type="danger" size="small" @click="delStep(i)">
             <el-icon><Delete /></el-icon>
           </el-button>
-        </div>
-        <div v-if="deviceConfigError && cmdDraft.steps.some((step) => step.type === 'device-action')" class="hint">
-          {{ deviceConfigError }}
         </div>
         <div v-if="pluginConfigError && cmdDraft.steps.some(step => step.type === 'plugin-action')" class="hint">{{ pluginConfigError }}</div>
         <div v-if="cmdDraft.steps.length === 0" class="hint" style="padding: 8px">
@@ -766,7 +696,11 @@ async function onImport(): Promise<void> {
 </template>
 
 <style scoped>
-.cmd-head { display:flex; align-items:center; justify-content:space-between; gap:4px; font-size:13px; font-weight:600; margin-top:12px; padding-top:10px; border-top:1px solid var(--el-border-color-lighter); }
+/* 组件填满侧栏：标题固定，列表自己滚动，剩下的高度留给底部落区。
+   这样侧栏再长也不会出现「上面一小块、下面一大片空白」 */
+.quick-cmd { display:flex; flex-direction:column; flex:1 1 auto; min-height:0; }
+
+.cmd-head { display:flex; align-items:center; justify-content:space-between; gap:4px; margin-bottom:6px; font-size:13px; font-weight:600; flex:none; }
 .cmd-head-actions { display:flex; gap:2px; }
 .cmd-head-actions :deep(.el-button) { margin:0; padding-inline:4px; }
 
@@ -778,14 +712,25 @@ async function onImport(): Promise<void> {
 .cmd-list {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 3px;
+  /* 列表吃掉侧栏剩余的全部高度：与下方落区共用 flex:1 时两者会被对半切开，
+     命令少也把列表压成半屏、下半截空着 */
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
 }
+
+/* 列表下方的落区：平时高度为 0（侧栏全部留给列表）；
+   拖命令时才展开成虚线框接收「移出分组」 */
+.cmd-tail { flex:0 0 auto; display:flex; align-items:center; justify-content:center; height:0; border-radius:7px; font-size:12px; color:var(--el-text-color-secondary); transition:height .12s ease; }
+.cmd-tail.visible { height:44px; margin-top:6px; border:1px dashed var(--el-border-color); }
+.cmd-tail.active { border:1px dashed var(--el-color-primary); background:var(--el-color-primary-light-9); }
 
 .cmd-item {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 5px 9px;
+  padding: 7px 9px;
   border-radius: 7px;
   font-size: 13px;
   cursor: pointer;
@@ -812,22 +757,6 @@ async function onImport(): Promise<void> {
   background: var(--el-color-primary-light-9);
   outline: 1px dashed var(--el-color-primary);
   border-radius: 6px;
-}
-
-.ungrouped-drop {
-  padding: 5px 9px;
-  margin-top: 2px;
-  border: 1px dashed var(--el-border-color);
-  border-radius: 7px;
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
-  text-align: center;
-  cursor: pointer;
-}
-
-.ungrouped-drop.drop-hover {
-  background: var(--el-color-primary-light-9);
-  outline: 1px dashed var(--el-color-primary);
 }
 
 .empty-item {
@@ -877,8 +806,8 @@ async function onImport(): Promise<void> {
 .cmd-group-head {
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 5px 6px;
+  gap: 5px;
+  padding: 6px 8px;
   border-radius: 6px;
   font-size: 12px;
   font-weight: 600;

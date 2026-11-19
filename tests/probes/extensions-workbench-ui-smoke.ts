@@ -169,9 +169,9 @@ async function main(): Promise<void> {
     await until(() => click('.ts-panel button', '填入左侧解析器'), '同步日期到左侧')
     await until(() => has('.ts-panel .result-grid', '2025-04-19T10:00:12.345Z'), '左侧验证带毫秒的日期')
     await until(() => click('.app-header button', '外观'), '打开无模态外观浮层')
-    await until(() => click('.skin-presets button', '浅色纸感'), '切换浅色')
+    await until(() => click('.theme-tile', 'Solarized Light'), '切换浅色')
     await until(() => js('document.documentElement.dataset.uiTheme === "term-solarized-light"'), '外观颜色即时生效')
-    await until(() => click('.skin-presets button', '深色石墨'), '恢复深色')
+    await until(() => click('.theme-tile', 'DevKit Default'), '恢复深色')
     await screenshot('appearance-popover.png')
     await until(() => click('[aria-label="关闭外观浮层"]'), '关闭外观')
     await until(() => click('.app-header button', '扩展'), '打开扩展中心')
@@ -244,7 +244,14 @@ async function main(): Promise<void> {
     })()`), '打开串口')
     const editBaud = async (value: string): Promise<void> => {
       await until(() => click('.conn-bar [aria-label="连接参数"]'), '打开连接参数')
-      await until(() => click('.conn-fields .conn-field:nth-child(2) .el-select__wrapper'), '打开波特率选项')
+      // 按字段名定位而不是 nth-child：连接参数浮层顶部还有「已存预设 / 保存为预设」两行
+      await until(() => js(`(() => {
+        const field = [...document.querySelectorAll('.connection-editor .conn-field')]
+          .find(f => f.querySelector(':scope > span')?.textContent.trim() === '波特率');
+        const wrapper = field?.querySelector('.el-select__wrapper');
+        if (!wrapper) return false;
+        wrapper.click(); return true;
+      })()`), '打开波特率选项')
       await until(() => click('.connection-editor .el-select-dropdown__item', value), '选择波特率 ' + value)
       await until(async () => !await has('.connection-editor .el-select-dropdown__item', value), '选择后收起波特率菜单')
     }

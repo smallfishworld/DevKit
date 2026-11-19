@@ -82,9 +82,9 @@ async function main() {
   const macro = { name: 'test', steps: [{ type: 'cmd', text: 'before' }, step] }
   check('all macro steps are validated before execution on unsupported terminals', () => {
     assert.match(validatePlayback(macro), /仅支持串口/)
-    assert.match(validatePlayback(macro, [], []), /找不到/)
-    assert.equal(validatePlayback(macro, [], actions), undefined)
-    assert.match(validatePlayback({ name: 'bad', steps: [{ ...step, actionId: 'missing' }] }, [], actions), /找不到/)
+    assert.match(validatePlayback(macro, []), /找不到/)
+    assert.equal(validatePlayback(macro, actions), undefined)
+    assert.match(validatePlayback({ name: 'bad', steps: [{ ...step, actionId: 'missing' }] }, actions), /找不到/)
   })
   check('import keeps stable references while stripping plugin code/credentials', () => {
     const migrated = migrateQuickCmd({
@@ -92,8 +92,10 @@ async function main() {
     })
     assert.deepEqual(migrated.steps, [step])
     assert.match(stepPreview(step), /enabled.*send/)
-    assert.deepEqual(migrateQuickCmd({ name: 'legacy', steps: [{ type: 'device-action', profile: 'debug' }] }).steps,
-      [{ type: 'device-action', profile: 'debug' }])
+    // 已移除的「设备动作」步骤在导入时被丢弃，只保留仍然支持的步骤
+    assert.deepEqual(
+      migrateQuickCmd({ name: 'legacy', steps: [{ type: 'device-action', profile: 'debug' }, { type: 'cmd', text: 'x' }] }).steps,
+      [{ type: 'cmd', text: 'x' }])
   })
 
   const { playCmd } = useTermMacros()
@@ -102,7 +104,7 @@ async function main() {
   const waiting = new Promise(resolve => { release = resolve })
   const playback = playCmd(
     { name: 'ordered', steps: [step, { type: 'cmd', text: 'after' }] },
-    async command => { events.push(command.text) }, () => true, undefined,
+    async command => { events.push(command.text) }, () => true,
     async ref => { assert.deepEqual(ref, { instanceId: 'enabled', actionId: 'send' }); events.push('start'); await waiting; events.push('complete') }
   )
   await Promise.resolve()
@@ -116,7 +118,7 @@ async function main() {
   const failureEvents = []
   await assert.rejects(() => playCmd(
     { name: 'failure', steps: [step, { type: 'cmd', text: 'must-not-send' }] },
-    command => failureEvents.push(command.text), () => true, undefined,
+    command => failureEvents.push(command.text), () => true,
     async () => { throw new Error('plugin failed') }
   ), /plugin failed/)
   check('plugin failure aborts later macro commands', () => { assert.deepEqual(failureEvents, []) })
@@ -125,7 +127,7 @@ async function main() {
   const reconnectEvents = []
   await playCmd(
     { name: 'reconnect', steps: [step, { type: 'cmd', text: 'must-not-send' }] },
-    command => reconnectEvents.push(command.text), () => connected, undefined,
+    command => reconnectEvents.push(command.text), () => connected,
     async () => { connected = false }
   )
   check('connection change after an action prevents subsequent macro writes', () => {

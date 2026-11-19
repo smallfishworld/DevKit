@@ -225,9 +225,9 @@ html[data-ui-theme] {
 .tab-item {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   height: 30px;
-  padding: 0 12px;
+  padding: 0 13px;
   border: 1px solid transparent;
   border-bottom: none;
   border-radius: 7px 7px 0 0;
