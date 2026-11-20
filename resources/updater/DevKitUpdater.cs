@@ -3,7 +3,9 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
+using System.Text;
 using System.Threading;
 
 internal static class DevKitUpdater
@@ -37,7 +39,7 @@ internal static class DevKitUpdater
                 if (!portable) AssertManagedDirectory(target, true);
                 StagePackage(args[2], args[3], portable, stage);
                 WriteSignal(handoff, "ready", "ok");
-                if (!electron.WaitForExit(120000)) return 1;
+                if (!electron.WaitForExit(120000)) throw new IOException("DevKit is still shutting down.");
                 if (launcher != null && !launcher.WaitForExit(20000)) throw new IOException("Portable launcher is still in use.");
             }
 
@@ -65,6 +67,7 @@ internal static class DevKitUpdater
         }
         catch (Exception error)
         {
+            TryWriteSignal(handoff, "error", error.ToString());
             if (!applying)
                 TryWriteSignal(handoff, "ready", error is DirectoryChanged ? "directory" : "failed");
             bool committed = File.Exists(Path.Combine(handoff, "apply"));
@@ -111,9 +114,18 @@ internal static class DevKitUpdater
         try
         {
             // Open the handle while the app is alive. A recycled PID cannot take its place.
-            if (process.Handle == IntPtr.Zero) throw new IOException("Unable to open application process.");
-            if (expectedPath != null && !PathComparer.Equals(process.MainModule.FileName, expectedPath))
-                throw new IOException("Unexpected application process path.");
+            IntPtr handle = process.Handle;
+            if (handle == IntPtr.Zero) throw new IOException("Unable to open application process.");
+            if (expectedPath != null)
+            {
+                // The NSIS portable launcher is 32-bit. Query its executable without enumerating modules.
+                var image = new StringBuilder(32768);
+                int length = image.Capacity;
+                if (!QueryFullProcessImageName(handle, 0, image, ref length))
+                    throw new IOException("Unable to identify the application process. Windows error: " + Marshal.GetLastWin32Error());
+                if (!PathComparer.Equals(image.ToString(), expectedPath))
+                    throw new IOException("Unexpected application process path: " + image);
+            }
             return process;
         }
         catch
@@ -122,6 +134,10 @@ internal static class DevKitUpdater
             throw;
         }
     }
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool QueryFullProcessImageName(IntPtr process, int flags, StringBuilder path, ref int length);
 
     private static void AssertLocalPath(string target)
     {
@@ -320,6 +336,7 @@ internal static class DevKitUpdater
     {
         try { WriteSignal(handoff, name, value); }
         catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
     }
 
     private static void TryDeleteManagedBackup(string path)

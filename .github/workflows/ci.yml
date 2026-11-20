@@ -73,7 +73,7 @@ jobs:
         run: |
           $current = [version](Get-Content package.json | ConvertFrom-Json).version
           $next = "$($current.Major).$($current.Minor).$($current.Build + 1)"
-          npm exec -- electron-builder --win --config.extraMetadata.version=$next --config.directories.output=release-update-next
+          npm exec -- electron-builder --win --config.compression=store --config.extraMetadata.version=$next --config.directories.output=release-update-next
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node tests/probes/windows-updates.cjs "$next" release-update-next
 

@@ -71,6 +71,7 @@ async function connect(profile) {
 }
 
 async function exercise(root, format, outcome) {
+  console.log('Testing Windows packaged ' + format + ' ' + outcome)
   const testRoot = join(root, format + '-' + outcome)
   const install = join(testRoot, 'DevKit 工具')
   const profile = join(testRoot, 'profile')
@@ -120,12 +121,19 @@ async function exercise(root, format, outcome) {
       assert.notEqual(child.exitCode, null)
     } else {
       await until('new version starts', async () => {
+        const failure = await readFile(join(cache, 'apply-error'), 'utf8').catch(() => '')
+        if (failure) throw new Error(failure)
         for (const entry of await readdir(cache)) {
           if (!entry.startsWith('apply-')) continue
+          const preflight = await readFile(join(cache, entry, 'ready'), 'utf8').catch(() => '')
+          if (preflight === 'failed' || preflight === 'directory') {
+            const details = await readFile(join(cache, entry, 'error'), 'utf8').catch(() => preflight)
+            throw new Error('Update preparation failed: ' + details)
+          }
           if (await readFile(join(cache, entry, 'started'), 'utf8').catch(() => '') === next) return true
         }
         return false
-      })
+      }, 165_000)
       assert.notEqual(child.exitCode, null)
       if (format === 'portable') assert.equal(await digest(exe), candidate.hash)
       await until('old backup removed after new window opens', async () =>
@@ -133,6 +141,15 @@ async function exercise(root, format, outcome) {
     }
     assert.equal(await readFile(dataMarker, 'utf8'), 'keep user data')
     console.log('PASS Windows packaged ' + format + ' ' + outcome)
+  } catch (error) {
+    for (const entry of await readdir(cache)) {
+      if (!entry.startsWith('apply-')) continue
+      const files = await readdir(join(cache, entry))
+      const failure = await readFile(join(cache, entry, 'error'), 'utf8').catch(() => '')
+      console.error('Update handoff: ' + files.join(', ') + (failure ? '\n' + failure : ''))
+    }
+    console.error('Original launcher exit status: ' + child.exitCode)
+    throw error
   } finally {
     close()
   }
@@ -142,6 +159,8 @@ async function main() {
   assert.equal(process.platform, 'win32')
   assert.match(next, /^\d+\.\d+\.\d+$/)
   assert.notEqual(next, current)
+  const asar = require('@electron/asar')
+  assert.equal(JSON.parse(asar.extractFile(join(nextRoot, 'win-unpacked', 'resources', 'app.asar'), 'package.json')).version, next)
   const root = await mkdtemp(join(tmpdir(), 'dk-update-'))
   try {
     await exercise(root, 'portable', 'upgrade')
