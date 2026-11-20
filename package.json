@@ -11,7 +11,7 @@
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json",
     "typecheck:web": "vue-tsc --noEmit -p tsconfig.web.json",
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
-    "test": "node tests/term-test.js && node tests/termflow-test.js && node tests/vtguard-test.js && node tests/logtext-test.js && node tests/diff-test.js && node tests/logic-test.js && node tests/mobamacro-test.js && node tests/quickcmd-test.js && node tests/net-test.js && node tests/tftp-test.js && node tests/ymodem-test.js && node tests/zmodem-test.js && node tests/bridge-test.js && node tests/theme-test.js && node tests/local-terminal-test.js && node tests/terminal-test.js && node tests/terminal-services-test.js && node tests/plugin-rx-redactor-test.js && node tests/plugin-retention-test.js && node tests/plugin-sdk-v2-test.js && node tests/workbench-review-test.js && node tests/picker-title-test.js && node tests/plugin-backend-test.js && node tests/plugin-ui-test.js && node tests/serial-plugins-test.js",
+    "test": "node tests/term-test.js && node tests/termflow-test.js && node tests/vtguard-test.js && node tests/logtext-test.js && node tests/diff-test.js && node tests/logic-test.js && node tests/mobamacro-test.js && node tests/quickcmd-test.js && node tests/net-test.js && node tests/tftp-test.js && node tests/ymodem-test.js && node tests/zmodem-test.js && node tests/bridge-test.js && node tests/theme-test.js && node tests/local-terminal-test.js && node tests/terminal-test.js && node tests/terminal-services-test.js && node tests/plugin-rx-redactor-test.js && node tests/plugin-retention-test.js && node tests/plugin-sdk-v2-test.js && node tests/workbench-review-test.js && node tests/picker-title-test.js && node tests/plugin-backend-test.js && node tests/plugin-ui-test.js && node tests/serial-plugins-test.js && node tests/branding-test.js && node tests/plugin-auth-branding-test.js && node --test tests/packaged-branding-test.cjs",
     "test:pty-smoke": "electron scripts/pty-smoke.cjs",
     "test:extensions-smoke": "node scripts/extensions-workbench-smoke.cjs",
     "test:debug-unlock-smoke": "node scripts/debug-unlock-smoke.cjs",
@@ -23,7 +23,8 @@
     "plugin:pack": "node scripts/package-device-plugin.cjs",
     "test:plugins-smoke": "node scripts/plugins-smoke.cjs",
     "icons:generate": "node scripts/generate-brand-icons.cjs",
-    "icons:check": "node scripts/generate-brand-icons.cjs --check"
+    "icons:check": "node scripts/generate-brand-icons.cjs --check",
+    "test:branding-smoke": "node scripts/branding-smoke.cjs"
   },
   "dependencies": {
     "@element-plus/icons-vue": "^2.3.2",
@@ -55,6 +56,7 @@
     "electron-vite": "^5.0.0",
     "resedit": "1.7.2",
     "typescript": "^5.9.0",
+    "unzipper": "0.12.5",
     "vite": "^7.0.0",
     "vue": "^3.5.42",
     "vue-tsc": "^3.3.11"
@@ -67,7 +69,8 @@
     },
     "files": [
       "out/**",
-      "resources/branding/app-256.png"
+      "resources/branding/app-256.png",
+      "resources/branding/devkit.ico"
     ],
     "npmRebuild": false,
     "asarUnpack": [

@@ -10,6 +10,7 @@ import { request as httpRequest } from 'node:http'
 import { request as httpsRequest } from 'node:https'
 import { setTimeout as delay } from 'node:timers/promises'
 import { getMainWindow } from '../../ipc'
+import { applyWindowsAppDetails, getWindowIconPath } from '../../branding'
 import type {
   PluginAuthCheck, PluginAuthLoginOptions, PluginAuthRequestOptions, PluginAuthResponse
 } from '../../../shared/plugins'
@@ -266,6 +267,8 @@ export class PluginAuthHost {
     if (activeLogins.has(options.partitionKey)) throw new Error('另一个串口正在等待 OA 登录，请完成后重试')
     const win = new BrowserWindow({
       width: 980, height: 720, title: options.title,
+      icon: getWindowIconPath(),
+      show: false,
       parent: getMainWindow() ?? undefined,
       webPreferences: { session: current, sandbox: true, contextIsolation: true, nodeIntegration: false }
     })
@@ -289,6 +292,8 @@ export class PluginAuthHost {
     ])
     activeLogins.add(options.partitionKey)
     try {
+      applyWindowsAppDetails(win)
+      win.show()
       void win.loadURL(options.scope.login.href).catch((error: { code?: string }) => {
         if (!loginSignal.aborted && error.code !== 'ERR_ABORTED') {
           blocked.abort(new Error('无法打开 OA 登录页面，请检查公司网络'))

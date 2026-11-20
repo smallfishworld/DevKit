@@ -33,6 +33,9 @@ jobs:
       - name: Unit tests
         run: npm test
 
+      - name: Verify generated brand icon assets
+        run: npm run icons:check
+
       - name: Build
         run: npm run build
 
@@ -47,14 +50,27 @@ jobs:
       - name: node-pty runtime smoke test
         run: npm run test:pty-smoke
 
-      - name: Build unpacked Windows app
-        run: npm run dist:dir
+      - name: Build Windows portable and ZIP packages
+        run: npm run dist
 
       - name: Verify packaged application branding
-        run: node scripts/check-packaged-branding.cjs
+        run: node scripts/check-packaged-branding.cjs --release
+
+      - name: Verify real Windows taskbar icons and relaunch properties
+        run: npm run test:branding-smoke -- --release
 
       - name: Verify packaged node-pty
         shell: pwsh
         run: |
           $env:DEVKIT_CHECK_PACKAGED = '1'
           npm run test:pty-smoke
+
+      - name: Upload verified Windows packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: DevKit-Windows-${{ github.sha }}
+          path: |
+            release/DevKit-*-portable.exe
+            release/DevKit-*-win-x64.zip
+          if-no-files-found: error
+          retention-days: 7
