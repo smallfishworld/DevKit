@@ -4,7 +4,8 @@ import vue from '@vitejs/plugin-vue'
 
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin()],
+    // Optional native packages must keep their loaders beside their installed prebuilds.
+    plugins: [externalizeDepsPlugin({ include: ['uiohook-napi', 'koffi'] })],
     build: {
       rollupOptions: {
         input: {
