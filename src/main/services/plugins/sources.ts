@@ -2,7 +2,10 @@ import { createHash, randomUUID } from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import { join } from 'node:path'
 import { OFFICIAL_PLUGIN_SOURCE } from '../../../shared/plugins'
-import type { PluginSource, PluginSourceEntry } from '../../../shared/plugins'
+import type { PluginSource, PluginSourceEntry, StreamTransport } from '../../../shared/plugins'
+import { SEMVER_PATTERN, satisfiesMinVersion } from '../../../../packages/plugin-sdk/src/manifest'
+
+const ALLOWED_TRANSPORTS: readonly StreamTransport[] = ['serial', 'ssh', 'net', 'pty']
 
 function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('扩展索引格式无效')
@@ -24,8 +27,8 @@ function httpsUrl(value: unknown, base?: string): string {
 
 export function parseSourceIndex(input: unknown, indexUrl: string): PluginSourceEntry[] {
   const index = object(input)
-  if (index.version !== 1 || !Array.isArray(index.plugins) || index.plugins.length > 128) {
-    throw new Error('需要版本 1 的扩展索引，最多 128 个插件')
+  if (index.version !== 2 || !Array.isArray(index.plugins) || index.plugins.length > 128) {
+    throw new Error('需要版本 2 的扩展索引，最多 128 个插件')
   }
   const ids = new Set<string>()
   return index.plugins.map((value) => {
@@ -36,7 +39,33 @@ export function parseSourceIndex(input: unknown, indexUrl: string): PluginSource
     const sha256 = text(item.sha256, 64).toLowerCase()
     if (!/^[a-f0-9]{64}$/.test(sha256)) throw new Error('插件缺少有效的 SHA-256')
     const version = text(item.version, 64)
-    return { id, version, sha256, name: text(item.name, 128), url: httpsUrl(item.url, indexUrl) }
+    if (item.apiVersion !== undefined && item.apiVersion !== 2) throw new Error('扩展索引条目仅支持 apiVersion 2')
+    let minHostVersion: string | undefined
+    if (item.minHostVersion !== undefined) {
+      minHostVersion = text(item.minHostVersion, 64)
+      if (!SEMVER_PATTERN.test(minHostVersion)) throw new Error('minHostVersion 须为语义版本号')
+    }
+    let transports: StreamTransport[] | undefined
+    if (item.transports !== undefined) {
+      if (!Array.isArray(item.transports) || item.transports.some((t) => typeof t !== 'string' || !ALLOWED_TRANSPORTS.includes(t as StreamTransport))) {
+        throw new Error('transports 字段无效')
+      }
+      transports = [...new Set(item.transports as StreamTransport[])]
+    }
+    const deprecated = item.deprecated !== undefined ? text(item.deprecated, 256) : undefined
+    const yanked = item.yanked === true ? true : undefined
+    return {
+      id,
+      version,
+      sha256,
+      apiVersion: 2,
+      name: text(item.name, 128),
+      url: httpsUrl(item.url, indexUrl),
+      ...(transports ? { transports } : {}),
+      ...(minHostVersion ? { minHostVersion } : {}),
+      ...(deprecated ? { deprecated } : {}),
+      ...(yanked ? { yanked } : {})
+    }
   })
 }
 
@@ -75,7 +104,11 @@ export async function fetchBounded(url: string, maxBytes: number): Promise<Buffe
 export class PluginSources {
   private readonly path: string
 
-  constructor(private readonly root: string, private readonly download = fetchBounded) {
+  constructor(
+    private readonly root: string,
+    private readonly download = fetchBounded,
+    private readonly hostVersion = '0.1.10'
+  ) {
     this.path = join(root, 'plugin-sources.json')
   }
 
@@ -93,7 +126,7 @@ export class PluginSources {
       return {
         id: text(row.id, 96), name: text(row.name, 128), url, enabled: row.enabled === true,
         refreshedAt: typeof row.refreshedAt === 'number' ? row.refreshedAt : undefined,
-        entries: parseSourceIndex({ version: 1, plugins: row.entries }, url)
+        entries: parseSourceIndex({ version: 2, plugins: row.entries }, url)
       }
     })
     const existingOfficial = saved.find((row) => row.url === OFFICIAL_PLUGIN_SOURCE.url)
@@ -150,6 +183,10 @@ export class PluginSources {
     const source = (await this.list()).find((row) => row.enabled && row.id === sourceId)
     const entry = source?.entries.find((item) => item.id === pluginId && item.sha256 === sha)
     if (!entry) throw new Error('下载条目已变化，请刷新后重新选择')
+    if (entry.yanked) throw new Error('该插件版本已被撤回（yanked），禁止安装')
+    if (entry.minHostVersion && !satisfiesMinVersion(this.hostVersion, entry.minHostVersion)) {
+      throw new Error(`该插件要求 DevKit >= ${entry.minHostVersion}（当前 ${this.hostVersion}）`)
+    }
     const bytes = await this.download(entry.url, maxBytes)
     if (createHash('sha256').update(bytes).digest('hex') !== entry.sha256) throw new Error('插件 SHA-256 校验失败')
     const manifest = object(object(JSON.parse(bytes.toString('utf8'))).manifest)

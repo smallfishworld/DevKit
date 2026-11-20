@@ -14,9 +14,9 @@ async function test() {
     const indexUrl = 'https://example.test/index.json'
     const bytes = Buffer.from(JSON.stringify({ manifest: { id: 'devkit.test', version: '1.0.0' }, files: {} }))
     const sha256 = createHash('sha256').update(bytes).digest('hex')
-    const entry = { id: 'devkit.test', name: 'Test plug-in', version: '1.0.0', url: 'plugin.json', sha256 }
+    const entry = { id: 'devkit.test', name: 'Test plug-in', version: '1.0.0', apiVersion: 2, url: 'plugin.json', sha256 }
     let download = bytes
-    const index = Buffer.from(JSON.stringify({ version: 1, plugins: [entry] }))
+    const index = Buffer.from(JSON.stringify({ version: 2, plugins: [entry] }))
     const sourceService = new PluginSources(root, async (address) => address === indexUrl ? index : download)
     const [official] = await sourceService.list()
     assert.equal(official.url, OFFICIAL_PLUGIN_SOURCE.url)
@@ -30,7 +30,7 @@ async function test() {
     const [, source] = await sourceService.add('Fixture', indexUrl)
     await assert.rejects(sourceService.add('Duplicate', indexUrl), /已添加/)
     await assert.rejects(sourceService.add('Insecure', 'http://example.test/index.json'), /HTTPS/)
-    assert.throws(() => parseSourceIndex({ version: 1, plugins: [entry, entry] }, indexUrl), /重复/)
+    assert.throws(() => parseSourceIndex({ version: 2, plugins: [entry, entry] }, indexUrl), /重复/)
     const [, refreshed] = await sourceService.refresh(source.id)
     assert.equal(refreshed.entries[0].url, 'https://example.test/plugin.json')
     assert.deepEqual(await sourceService.package(source.id, entry.id, sha256, 4096), bytes)

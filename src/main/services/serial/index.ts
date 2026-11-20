@@ -25,7 +25,7 @@ import { SerialSecretRedactor } from './secret-redactor'
 import { SerialTxBroker } from './tx-broker'
 import { PluginRxRedactor } from './plugin-rx-redactor'
 import type { SerialTxLease } from './tx-broker'
-import type { PluginSerialBridge, PluginSerialEvent, PluginSerialLease } from '../../../shared/plugins'
+import type { StreamEvent, StreamLease, StreamSessionBridge } from '../../../shared/plugins'
 
 interface RxPiece {
   buf: Buffer
@@ -45,7 +45,7 @@ function makeDecoder(encoding: SerialEncoding): TextDecoderLike {
 }
 
 interface PluginSubscription {
-  listener: (event: PluginSerialEvent) => void
+  listener: (event: StreamEvent) => void
   owner?: string
 }
 interface PluginRxStream {
@@ -107,11 +107,12 @@ function serialLogDir(): string {
 
 export class SerialService implements ToolService {
   private readonly pluginListeners = new Map<string, Set<PluginSubscription>>()
-  readonly pluginBridge: PluginSerialBridge = {
+  readonly pluginBridge: StreamSessionBridge = {
+    transport: 'serial',
     describe: (panelId) => {
       const session = sessions.get(panelId)
       if (!session?.port.isOpen || session.suspendedAt !== null) return undefined
-      return { panelId, connectionId: session.connectionId, path: session.params.path, encoding: session.encoding }
+      return { panelId, connectionId: session.connectionId, transport: 'serial', target: session.params.path, encoding: session.encoding }
     },
     subscribe: (panelId, listener, owner) => {
       let listeners = this.pluginListeners.get(panelId)
@@ -129,7 +130,7 @@ export class SerialService implements ToolService {
     acquire: (panelId, owner, signal) => this.acquirePluginLease(panelId, owner, signal)
   }
 
-  private notifyPlugins(panelId: string, event: PluginSerialEvent): void {
+  private notifyPlugins(panelId: string, event: StreamEvent): void {
     for (const { listener } of [...this.pluginListeners.get(panelId) ?? []]) {
       try { listener(event.type === 'data' ? { ...event, bytes: [...event.bytes] } : { ...event }) }
       catch { this.emit(panelId, 'error', { message: '插件接收回调异常' }) }
@@ -219,7 +220,7 @@ export class SerialService implements ToolService {
       () => sessions.get(panelId) === session && session.port.isOpen && session.suspendedAt === null)
   }
 
-  private async acquirePluginLease(panelId: string, owner: string, signal: AbortSignal): Promise<PluginSerialLease> {
+  private async acquirePluginLease(panelId: string, owner: string, signal: AbortSignal): Promise<StreamLease> {
     const session = sessions.get(panelId)
     if (!session?.port.isOpen || session.suspendedAt !== null) throw new Error('串口未打开')
     const connectionId = session.connectionId

@@ -18,6 +18,7 @@ export interface ToolEvent {
 
 /** 渲染进程暴露给面板的 API（由 preload 注入 window.api） */
 export interface DevKitApi {
+  readonly platform: string
   invoke(tool: string, action: string, panelId: string, payload?: unknown): Promise<unknown>
   /** 订阅某面板的事件，返回取消订阅函数 */
   on(
@@ -44,6 +45,7 @@ export interface WinInfo {
   electron: string
   chrome: string
   node: string
+  platform: string
 }
 
 // ---------- 键鼠输入（捕获/注入统一数据结构，M3 宏基于此存储） ----------

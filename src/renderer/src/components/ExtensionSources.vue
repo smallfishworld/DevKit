@@ -2,6 +2,7 @@
 import { ref, watch } from 'vue'
 import { ElMessageBox } from 'element-plus'
 import type { PluginSource, PluginSourceEntry } from '../../../shared/plugins'
+import { satisfiesMinVersion } from '../../../../packages/plugin-sdk/src/manifest'
 import { pluginRequest, useDevicePlugins } from '@renderer/stores/devicePlugins'
 
 const open = defineModel<boolean>({ required: true })
@@ -26,6 +27,11 @@ function add(): void {
     name.value = ''
     url.value = ''
   })
+}
+
+function isCompatible(entry: PluginSourceEntry): boolean {
+  if (!entry.minHostVersion || !plugins.hostVersion) return true
+  return satisfiesMinVersion(plugins.hostVersion, entry.minHostVersion)
 }
 
 async function install(source: PluginSource, entry: PluginSourceEntry): Promise<void> {
@@ -64,8 +70,13 @@ watch(open, (visible) => {
       <div class="source-note">{{ source.url }}</div>
       <div class="source-note">{{ source.refreshedAt ? `${source.entries.length} 个插件 · ${new Date(source.refreshedAt).toLocaleString()}` : '尚未刷新' }}</div>
       <div v-for="entry in source.enabled ? source.entries : []" :key="entry.id" class="source-entry">
-        <span>{{ entry.name }} <small>{{ entry.version }}</small></span>
-        <el-button size="small" :disabled="busy" @click="install(source, entry)">安装</el-button>
+        <span>
+          {{ entry.name }} <small>{{ entry.version }}</small>
+          <el-tag v-if="entry.yanked" size="small" type="danger" effect="plain">已撤回</el-tag>
+          <el-tag v-else-if="entry.deprecated" size="small" type="warning" effect="plain" :title="entry.deprecated">已废弃</el-tag>
+          <el-tag v-if="!isCompatible(entry)" size="small" type="info" effect="plain">需宿主 ≥ {{ entry.minHostVersion }}</el-tag>
+        </span>
+        <el-button size="small" :disabled="busy || entry.yanked || !isCompatible(entry)" @click="install(source, entry)">安装</el-button>
       </div>
     </section>
 
@@ -85,7 +96,7 @@ watch(open, (visible) => {
 .source-note, .source-empty { color: var(--el-text-color-secondary); font-size: 12px; overflow-wrap: anywhere; }
 .source-card { padding: 10px 12px; margin-block: 8px; border: 1px solid var(--el-border-color-lighter); border-radius: 8px; }
 .source-head, .source-entry { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
-.source-head strong, .source-entry span { flex: 1; }
+.source-head strong, .source-entry span { flex: 1; display: inline-flex; align-items: center; flex-wrap: wrap; gap: 6px; }
 .source-head .el-button, .source-entry .el-button { margin: 0; }
 .source-entry { margin-top: 7px; }
 .source-entry small { color: var(--el-text-color-secondary); }

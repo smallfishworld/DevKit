@@ -2,6 +2,7 @@
 import { onMounted, onUnmounted, ref } from 'vue'
 import { Brush } from '@element-plus/icons-vue'
 import { PLUGIN_CATALOG_PANEL, useDevicePlugins } from '@renderer/stores/devicePlugins'
+import type { PluginLogEntry, PluginRuntimeStatus } from '../../shared/plugins'
 import { useTabStore } from '@renderer/stores/tabs'
 import { useAppearanceStore } from '@renderer/stores/appearance'
 import { toolById, type ToolDef } from '@renderer/tools/registry'
@@ -42,7 +43,7 @@ function compFor(toolId: string) {
 }
 
 // ---------- 自绘标题栏（无边框窗口） ----------
-const winInfo = ref<WinInfo>({ version: '', electron: '', chrome: '', node: '' })
+const winInfo = ref<WinInfo>({ version: '', electron: '', chrome: '', node: '', platform: window.api?.platform ?? 'win32' })
 const maximized = ref(false)
 
 // 模板里拿不到 window 全局，经 setup 暴露
@@ -52,8 +53,15 @@ const winClose = (): void => window.api.win.close()
 
 onMounted(() => {
   void appearance.init()
-  pluginSubscriptions = ['changed', 'status', 'log'].map((type) =>
-    window.api.on('plugins', PLUGIN_CATALOG_PANEL, type, schedulePluginRefresh))
+  pluginSubscriptions = [
+    window.api.on('plugins', PLUGIN_CATALOG_PANEL, 'changed', schedulePluginRefresh),
+    window.api.on('plugins', PLUGIN_CATALOG_PANEL, 'status', (payload) => {
+      devicePlugins.applyStatus(payload as PluginRuntimeStatus)
+    }),
+    window.api.on('plugins', PLUGIN_CATALOG_PANEL, 'log', (payload) => {
+      devicePlugins.appendLog(payload as PluginLogEntry)
+    })
+  ]
   void devicePlugins.refresh()
   window.api.win.info().then((i) => (winInfo.value = i)).catch(() => {})
   window.api.win.onMaxChange((m) => (maximized.value = m))
@@ -79,13 +87,14 @@ onMounted(() => {
           <div class="about-row"><span>Chromium</span><span class="mono">{{ winInfo.chrome }}</span></div>
           <div class="about-row"><span>Node.js</span><span class="mono">{{ winInfo.node }}</span></div>
           <el-divider style="margin: 10px 0" />
-          <div class="about-copy">Windows only · 离线可用</div>
+          <div class="about-copy">{{ winInfo.platform }} · 离线可用</div>
         </div>
       </el-popover>
       <span class="header-divider" aria-hidden="true"></span>
       <TabBar />
       <button class="header-action" title="扩展中心" @click="tabs.openTool(extensions)">
         <el-icon><Box /></el-icon><span>扩展</span>
+
       </button>
       <SettingsDialog v-model="settingsOpen">
         <button class="header-action" title="外观与终端配色" :aria-expanded="settingsOpen">

@@ -19,6 +19,7 @@ import TerminalHistory from '@renderer/components/TerminalHistory.vue'
 import { useTerminalStream } from '../composables/useTerminalStream'
 import { ByteCounterThrottle } from '../../../shared/terminal-stream'
 import QuickCmdManager from '@renderer/components/QuickCmdManager.vue'
+import SerialDevicePlugins from '@renderer/components/SerialDevicePlugins.vue'
 import type { SshConfig, SshParams } from '../../../shared/ssh'
 
 import type { QuickCmdStep } from '../../../shared/term-macro'
@@ -496,6 +497,7 @@ async function pickKeyFile(): Promise<void> {
           </el-tooltip>
             </div>
           </el-popover>
+          <SerialDevicePlugins :panel-id="props.panelId" :connected="open" transport="ssh" />
           <span class="counters">
             RX <b>{{ rxBytes }}</b> TX <b>{{ txBytes }}</b>
           </span>

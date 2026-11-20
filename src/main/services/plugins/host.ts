@@ -1,6 +1,6 @@
-/** Separate, trusted-code extension host. Does not own or open serial ports. */
+/** Separate, trusted-code extension host (API v2). Does not own or open transport handles. */
 import { pathToFileURL } from 'node:url'
-import type { PluginContext, PluginModuleInstance, PluginSessionInfo } from '../../../shared/plugins'
+import type { PluginContext, PluginModuleInstance, StreamSessionInfo } from '../../../shared/plugins'
 
 type Message = Record<string, unknown>
 type ParentPort = { postMessage(value: unknown): void; on(event: 'message', listener: (event: { data: Message }) => void): void }
@@ -42,7 +42,7 @@ async function handle(message: Message): Promise<void> {
     let result: unknown
     if (message.method === 'activate') {
       if (instance) throw new Error('插件已激活')
-      const input = message.input as { entry: string; config: Record<string, unknown>; session: PluginSessionInfo; autoEnabled: boolean }
+      const input = message.input as { entry: string; config: Record<string, unknown>; session: StreamSessionInfo; autoEnabled: boolean }
       const imported = await import(pathToFileURL(input.entry).href)
       const activate = imported.activate ?? imported.default?.activate
       if (typeof activate !== 'function') throw new Error('插件入口须导出 activate(ctx)')
@@ -51,9 +51,9 @@ async function handle(message: Message): Promise<void> {
         session: input.session,
         autoEnabled: input.autoEnabled,
         signal: controller.signal,
-        serial: {
-          write: (data, options) => rpc('serial.write', [data, options ?? {}]) as ReturnType<PluginContext['serial']['write']>,
-          exchange: (data, options) => rpc('serial.exchange', [data, options]) as ReturnType<PluginContext['serial']['exchange']>
+        stream: {
+          write: (data, options) => rpc('stream.write', [data, options ?? {}]) as ReturnType<PluginContext['stream']['write']>,
+          exchange: (data, options) => rpc('stream.exchange', [data, options]) as ReturnType<PluginContext['stream']['exchange']>
         },
         log: (level, text) => send({ type: 'log', level, message: String(text).slice(0, 4096) }),
         state: (value) => send({ type: 'state', value })

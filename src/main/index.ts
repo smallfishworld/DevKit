@@ -1,20 +1,17 @@
 import { BrowserWindow, Menu, app, clipboard, ipcMain, powerMonitor, screen } from 'electron'
 import { join } from 'node:path'
 import { disposeAllPanels, registerService, registerToolIpc, setMainWindow } from './ipc'
-import { inputService, fullSelfTest } from './services/input'
 import { tftpService } from './services/tftp'
-import { macroService } from './services/macro'
+import { PluginService } from './services/plugins'
 import { serialService } from './services/serial'
 import { sshService } from './services/ssh'
 import { quickCmdsService } from './services/quickcmds'
 import { netService } from './services/net'
-import { colorService } from './services/color'
 import { diffService } from './services/diff'
 import { codecService } from './services/codec'
 import { bridgeService } from './services/bridge'
 import { settingsService } from './services/settings'
 import { localTerminalService } from './services/localTerminal'
-import { PluginService } from './services/plugins'
 
 let mainWindow: BrowserWindow | null = null
 
@@ -35,7 +32,8 @@ function registerWindowIpc(): void {
     version: app.getVersion(),
     electron: process.versions.electron,
     chrome: process.versions.chrome,
-    node: process.versions.node
+    node: process.versions.node,
+    platform: process.platform
   }))
   // 终端复制粘贴：选中复制 / 右键粘贴（渲染端 clipboard API 受限，走主进程）
   ipcMain.handle('win:clipboard-read', () => clipboard.readText())
@@ -66,13 +64,12 @@ function createWindow(): void {
   // 最大化状态推给渲染端，用于切换 最大化/还原 按钮图标
   mainWindow.on('maximize', () => {
     mainWindow?.webContents.send('win:maximized', true)
-    // 无边框窗口最大化时，Windows 可能把窗口铺到任务栏之上导致底部被遮挡；
-    // 显式把窗口限制到当前所在显示器的工作区（不含任务栏）边界。
-    // 用窗口中心点定位显示器，避免 getBounds 在最大化瞬间返回旧值而选错屏。
-    const b = mainWindow!.getBounds()
-    const center = { x: b.x + b.width / 2, y: b.y + b.height / 2 }
-    const wa = screen.getDisplayNearestPoint(center).workArea
-    mainWindow?.setBounds(wa)
+    if (process.platform === 'win32') {
+      const b = mainWindow!.getBounds()
+      const center = { x: b.x + b.width / 2, y: b.y + b.height / 2 }
+      const wa = screen.getDisplayNearestPoint(center).workArea
+      mainWindow?.setBounds(wa)
+    }
   })
   mainWindow.on('unmaximize', () => mainWindow?.webContents.send('win:maximized', false))
 
@@ -99,34 +96,45 @@ app.on('second-instance', () => {
   }
 })
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   Menu.setApplicationMenu(null)
-  registerService('input', inputService)
   registerService('tftp', tftpService)
-  registerService('macro', macroService)
   registerService('serial', serialService)
-  registerService('plugins', new PluginService(serialService.pluginBridge))
-  serialService.startLogRetention()
   registerService('ssh', sshService)
   registerService('local-terminal', localTerminalService)
-  registerService('quickcmds', quickCmdsService)
   registerService('net', netService)
-  registerService('color', colorService)
+  registerService('plugins', new PluginService({
+    serial: serialService.pluginBridge,
+    ssh: sshService.pluginBridge,
+    net: netService.pluginBridge
+  }))
+  serialService.startLogRetention()
+  registerService('quickcmds', quickCmdsService)
   registerService('codec', codecService)
   registerService('diff', diffService)
   registerService('bridge', bridgeService)
   registerService('settings', settingsService)
-  void macroService.init()
+
+  // Windows 专属服务按平台条件加载，避免 macOS / Linux 启动时触发 Windows API 依赖
+  if (process.platform === 'win32') {
+    const [{ inputService, fullSelfTest }, { macroService }, { colorService }] = await Promise.all([
+      import('./services/input'),
+      import('./services/macro'),
+      import('./services/color')
+    ])
+    registerService('input', inputService)
+    registerService('macro', macroService)
+    registerService('color', colorService)
+    void macroService.init()
+    console.log('[devkit] input selftest:', JSON.stringify(fullSelfTest()))
+  }
+
   registerToolIpc()
   registerWindowIpc()
 
-  // 休眠/唤醒：串口链路在长休眠后会失步（驱动缓冲一次性倾倒 + 设备原地重绘），
-  // 主进程记录系统休眠区间；唤醒后不丢弃已接收字节
+  // 休眠/唤醒：串口链路在长休眠后会失步，主进程记录系统休眠区间；唤醒后不丢弃已接收字节
   powerMonitor.on('suspend', () => serialService.onSystemSuspend())
   powerMonitor.on('resume', () => serialService.onSystemResume())
-
-  // 原生模块自检：结果同时打到 dev 控制台与面板
-  console.log('[devkit] input selftest:', JSON.stringify(fullSelfTest()))
 
   createWindow()
 
@@ -136,7 +144,7 @@ app.whenReady().then(() => {
 })
 
 app.on('window-all-closed', () => {
-  app.quit()
+  if (process.platform !== 'darwin') app.quit()
 })
 
 let shutdownComplete = false

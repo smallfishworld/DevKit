@@ -2,6 +2,7 @@
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Connection, Delete, Promotion } from '@element-plus/icons-vue'
+import SerialDevicePlugins from '@renderer/components/SerialDevicePlugins.vue'
 import type { NetConfig, NetMode, NetParams } from '../../../shared/net'
 import { DEFAULT_NET_PARAMS } from '../../../shared/net'
 import { useTabStore } from '@renderer/stores/tabs'
@@ -332,6 +333,7 @@ async function persistConfig(): Promise<void> {
       <el-checkbox v-model="showTimestamp" size="small">时间戳</el-checkbox>
       <el-checkbox v-model="paused" size="small">暂停滚动</el-checkbox>
       <el-button size="small" text @click="clearTerm">清空</el-button>
+      <SerialDevicePlugins :panel-id="props.panelId" :connected="running" transport="net" />
     </div>
     <div ref="termBox" class="term mono">
       <div v-for="(l, i) in lines" :key="i" class="term-line" :class="`is-${l.dir}`">
