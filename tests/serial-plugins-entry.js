@@ -161,6 +161,19 @@ async function serialBridge() {
     assert.match(bytesOf(raw.slice(transferEchoStart)), /REDACTED/)
     transferLease.release()
 
+    const holdLease = await service.pluginBridge.acquire(panel, 'hold-owner', new AbortController().signal)
+    service.pluginBridge.beginHold(panel, 'hold-owner', { maxBytes: 512, maxMs: 1000 })
+    assert.throws(() => service.pluginBridge.beginHold(panel, 'other-owner', { maxBytes: 512, maxMs: 1000 }), /其他插件/)
+    const sentBeforeHold = sent.length
+    assert.equal(service.invoke(panel, 'write', { mode: 'ascii', text: 'held', newline: 'cr' }).held, true)
+    assert.equal(sent.length, sentBeforeHold, 'held terminal bytes must not reach the driver')
+    const held = service.pluginBridge.endHold(panel, 'hold-owner')
+    assert.deepEqual(held.map(bytes => Buffer.from(bytes).toString()), ['held\r'])
+    for (const bytes of held) await holdLease.write(bytes)
+    holdLease.release()
+    assert.equal(Buffer.from(sent.at(-1)).toString(), 'held\r', 'held bytes replay inside the original transaction')
+    service.pluginBridge.beginHold(panel, 'close-owner', { maxBytes: 512, maxMs: 1000 })
+    service.invoke(panel, 'write', { mode: 'ascii', text: 'discard-close', newline: 'none' })
     const stale = await service.pluginBridge.acquire(panel, 'stale', new AbortController().signal)
     await service.invoke(panel, 'close')
     assert.equal(raw.at(-1).type, 'closed')
@@ -168,6 +181,7 @@ async function serialBridge() {
     port.emit('data', Buffer.from('old-device'))
     await assert.rejects(stale.write(Buffer.from('late')), /连接已变化/)
     const nextPort = await open()
+    assert.deepEqual(service.pluginBridge.endHold(panel, 'close-owner'), [], 'closed-session held input never crosses a reconnect')
     assert.notEqual(service.pluginBridge.describe(panel).connectionId, firstConnection)
     nextPort.emit('data', Buffer.from('new-device'))
     assert.equal(raw.length, oldCount, 'subscriptions must be removed with the old connection')
@@ -177,7 +191,10 @@ async function serialBridge() {
     const beforeSleep = service.pluginBridge.describe(panel).connectionId
     const sleeping = await service.pluginBridge.acquire(panel, 'sleeping', new AbortController().signal)
     const waitingSleep = assert.rejects(service.pluginBridge.acquire(panel, 'sleep-waiter', new AbortController().signal), /休眠/)
+    service.pluginBridge.beginHold(panel, 'sleeping', { maxBytes: 512, maxMs: 1000 })
+    service.invoke(panel, 'write', { mode: 'ascii', text: 'discard-sleep', newline: 'none' })
     service.onSystemSuspend()
+    assert.deepEqual(service.pluginBridge.endHold(panel, 'sleeping'), [], 'suspend discards held input even without a plugin runtime')
     await waitingSleep
     assert.equal(service.pluginBridge.describe(panel), undefined)
     assert.equal(resumedEvents.at(-1).reason, 'system-suspend')

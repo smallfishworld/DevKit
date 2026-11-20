@@ -34,7 +34,7 @@ exports.activate = async function activate(ctx) {
     if (closed) return
     await sleep(cfg.replyDelayMs || 0)
     if (closed) return
-    await ctx.serial.write(reply)
+    await ctx.stream.write(reply)
     replies++
     ctx.state({ replies })
   }

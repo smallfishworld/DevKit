@@ -7,7 +7,7 @@ export const PLUGIN_INSTANCE_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,95}$/
 export const SEMVER_PATTERN = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?$/
 
 const ALLOWED_TRANSPORTS: readonly StreamTransport[] = ['serial', 'ssh', 'net', 'pty']
-const ALLOWED_CAPABILITIES: readonly PluginCapability[] = ['stream.read', 'stream.write']
+const ALLOWED_CAPABILITIES: readonly PluginCapability[] = ['stream.read', 'stream.write', 'stream.exclusive', 'auth.session']
 
 function record(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('须为JSON对象')
@@ -111,7 +111,10 @@ export function parseManifest(value: unknown): PluginManifest {
   if (typeof m.autoRespond !== 'boolean') throw new Error('autoRespond须为boolean')
   if (!Array.isArray(m.capabilities) ||
     m.capabilities.some((item) => typeof item !== 'string' || !ALLOWED_CAPABILITIES.includes(item as PluginCapability))) {
-    throw new Error('不支持的capabilities；目前支持stream.read和stream.write')
+    throw new Error('不支持的capabilities；目前支持stream.read、stream.write、stream.exclusive和auth.session')
+  }
+  if (m.capabilities.includes('stream.exclusive') && !m.capabilities.includes('stream.write')) {
+    throw new Error('stream.exclusive 须同时声明 stream.write')
   }
   if (m.autoRespond && !m.capabilities.includes('stream.read')) {
     throw new Error('自动应答须声明stream.read')

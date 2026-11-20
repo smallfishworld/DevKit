@@ -4,7 +4,7 @@ exports.activate = async function activate(ctx) {
     async run(actionId) {
       if (actionId !== 'query') return { ok: false, error: '未知动作' }
       const command = String(ctx.config.command).replace(/\\r/g, '\r').replace(/\\n/g, '\n')
-      const result = await ctx.serial.exchange(command, {
+      const result = await ctx.stream.exchange(command, {
         match: String(ctx.config.expected),
         timeoutMs: Number(ctx.config.timeoutMs)
       })

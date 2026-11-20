@@ -2,7 +2,7 @@
 
 ## Purpose
 
-基于独立同构契约包 `@devkit/plugin-sdk`（API v2），为串口、SSH、网络调试及本地终端等流会话提供可信本地 JavaScript 插件、可视化条件/多规则配置实例、受控 `StreamSessionBridge` 会话租约、开发态热重载与可治理的 HTTPS 扩展源。
+基于独立同构契约包 `@devkit/plugin-sdk`（API v2），为串口、SSH、网络调试及本地终端等流会话提供可信本地 JavaScript 插件、可视化条件/多规则配置实例、受控 `StreamSessionBridge` 会话租约、开发态热重载与可治理的 HTTPS 扩展源。OA 解锁等业务由外部插件提供，宿主不内置业务插件。
 
 ## Requirements
 
@@ -56,3 +56,40 @@
 
 ### Requirement: 插件来源与当前绑定详情
 扩展中心 MUST 在插件详情呈现已记录的安装来源、支持的传输类型与运行状态。各会话面板的插件浮层 MUST 支持直接编辑、停止与重试绑定实例。
+
+#### Scenario: 查看来源并重试绑定
+- **WHEN** 用户在扩展中心查看已安装插件，或在会话浮层重试异常实例
+- **THEN** 展示已记录的来源与传输类型，重试只绑定当前有效会话，不复用旧连接的租约。
+
+### Requirement: 独立订阅与显式流会话租约
+宿主 SHALL 按 manifest 能力提供 `stream.subscribe` 与跨回调的 `stream.acquire`。订阅须声明 `stream.read`；显式租约须声明 `stream.exclusive` 与 `stream.write`。未声明的调用 MUST 被拒绝。
+#### Scenario: 动作等待期间持续接收
+- **WHEN** 插件在等待认证或网络请求期间保有独立订阅
+- **THEN** 订阅继续收到所属连接的数据，不依赖自动应答队列；取消订阅后不再回调。
+#### Scenario: 显式独占与释放
+- **WHEN** 插件取得显式租约并跨回调保持
+- **THEN** 其他发送来源按确定策略排队或拒绝；释放、停止、崩溃或断开后宿主回收租约，旧租约不得写入新连接。
+#### Scenario: 串口输入扣留
+- **WHEN** 具有 `stream.exclusive` 的串口插件扣住用户输入
+- **THEN** 仅在持有同一租约时允许按原顺序补发；失败、超时、停止或断开时丢弃，其他传输类型不接受扣留操作。
+
+### Requirement: 隔离的认证会话
+声明 `auth.session` 的插件 SHALL 通过宿主的隔离持久会话登录并访问同源 HTTPS 业务接口，Cookie MUST NOT 返回插件。
+#### Scenario: 登录与请求
+- **WHEN** 已声明能力的插件请求有效的登录检查或业务接口
+- **THEN** 宿主管理登录窗口与 Cookie，请求只返回状态码和有界响应文本。
+#### Scenario: 越界请求
+- **WHEN** 插件未声明 `auth.session`、业务接口与登录入口不同源，或试图覆盖 Cookie 等宿主管理的请求头
+- **THEN** 宿主拒绝调用，不暴露认证凭证。
+
+### Requirement: 按安装触发旧 OA 配置迁移
+宿主 SHALL 仅在安装稳定 ID 为 `devkit.oa-debug` 的外部插件后迁移旧 `device-actions.json`；迁移 MUST 保留源文件和既有实例，且不得自动开始设备动作。
+#### Scenario: 未安装业务插件
+- **WHEN** 用户目录存在旧配置但未安装 `devkit.oa-debug`
+- **THEN** 宿主不读取、迁移或删除该文件，也不注册内置 OA 业务插件。
+#### Scenario: 安装后迁移
+- **WHEN** 已安装外部 OA 插件且存在尚未迁移的有效 profile
+- **THEN** 生成稳定 `legacy-<profile ID>`、`configVersion: 2` 的实例，默认关闭自动监听，不自动绑定；已有同 ID 实例不覆盖。
+#### Scenario: 迁移失败
+- **WHEN** 旧文件或其中某项配置无效
+- **THEN** 迁移错误与其他插件隔离，源文件保留，并允许后续重试。

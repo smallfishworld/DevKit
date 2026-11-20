@@ -2,7 +2,7 @@
   "id": "company.device-example",
   "name": "设备查询插件模板",
   "version": "1.0.0",
-  "apiVersion": 1,
+  "apiVersion": 2,
   "entry": "index.cjs",
   "description": "主动发送查询并等待响应标记的最小模板。",
   "configSchema": {
@@ -43,7 +43,10 @@
   ],
   "autoRespond": false,
   "capabilities": [
-    "serial.read",
-    "serial.write"
+    "stream.read",
+    "stream.write"
+  ],
+  "transports": [
+    "serial"
   ]
 }

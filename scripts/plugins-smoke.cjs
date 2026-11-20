@@ -14,7 +14,8 @@ try {
     const source = resolve(external)
     if (!existsSync(source)) throw new Error('Plugin package not found: ' + source)
     const payload = JSON.parse(readFileSync(source, 'utf8'))
-    if (payload.manifest?.id !== 'devkit.text-hex-responder') throw new Error('Unexpected plugin package identity')
+    if (!['devkit.text-hex-responder', 'devkit.oa-debug'].includes(payload.manifest?.id)) throw new Error('Unexpected plugin package identity')
+    if (payload.manifest?.apiVersion !== 2) throw new Error('Smoke requires an API v2 plugin package')
     copyFileSync(source, join(dir, 'responder.json'))
   } else {
     pack(join(root, 'examples/plugins/text-hex-responder'), join(dir, 'responder.json'))

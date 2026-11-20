@@ -15,7 +15,7 @@ import { settingsService } from '../../src/main/services/settings'
 import { OFFICIAL_PLUGIN_SOURCE } from '../../src/shared/plugins'
 import { DEFAULT_SERIAL_CONFIG, DEFAULT_SERIAL_PARAMS } from '../../src/shared/serial'
 
-const root = process.argv[2]
+const root = process.env.DEVKIT_SMOKE_USER_DATA ?? process.argv[2]
 app.setPath('userData', root)
 
 const sourceUrl = 'https://devkit-ui.test/index.json'
@@ -33,14 +33,14 @@ const simulated = SerialPort as unknown as {
 function makeBundle(id: string, name: string): Buffer {
   return Buffer.from(JSON.stringify({
     manifest: {
-      id, name, version: '1.0.0', apiVersion: 1, entry: 'index.cjs',
+      id, name, version: '1.0.0', apiVersion: 2, transports: ['serial'], entry: 'index.cjs',
       configSchema: { type: 'object', properties: { response: { type: 'string', default: 'PONG' } } },
-      actions: [], autoRespond: true, capabilities: ['serial.read', 'serial.write']
+      actions: [], autoRespond: true, capabilities: ['stream.read', 'stream.write']
     },
     files: {
       'index.cjs': `exports.activate = ctx => ({
         async onData(event) {
-          if (event.text.trim() === 'PING') await ctx.serial.write(ctx.config.response)
+          if (event.text.trim() === 'PING') await ctx.stream.write(ctx.config.response)
         }
       })`
     }
@@ -65,13 +65,13 @@ async function main(): Promise<void> {
 
   const remoteBundle = makeBundle('devkit.smoke-source', '扩展源测试插件')
   const sourceIndex = Buffer.from(JSON.stringify({
-    version: 1, plugins: [{
-      id: 'devkit.smoke-source', name: '扩展源测试插件', version: '1.0.0',
+    version: 2, plugins: [{
+      id: 'devkit.smoke-source', name: '扩展源测试插件', version: '1.0.0', apiVersion: 2, transports: ['serial'],
       url: bundleUrl, sha256: createHash('sha256').update(remoteBundle).digest('hex')
     }]
   }))
   const serial = new SerialService()
-  const plugins = new PluginService(serial.pluginBridge, [], {
+  const plugins = new PluginService({ serial: serial.pluginBridge }, [], {
     userData: root,
     hostPath: join(process.cwd(), 'out/main/plugin-host.js'),
     download: liveOfficial ? undefined : async (url) => {
@@ -285,14 +285,14 @@ async function main(): Promise<void> {
     if (!await has('.bound-instance', configName)) {
       await until(() => click('[aria-label="设备插件"]'), '重新打开绑定详情')
     }
-    await until(() => has('.bound-instance', 'COM3 · 监听中'), '浮层显示绑定端口和状态')
+    await until(() => has('.bound-instance', configName), '浮层显示当前绑定配置')
     await screenshot('serial-plugin-binding.png')
-    await until(() => click('.bound-instance button', '配置'), '从当前绑定打开插件配置')
+    await until(() => click('[aria-label="设备插件"]'), '收起绑定浮层')
+    await until(() => click('.app-header button', '扩展'), '查看已绑定配置详情')
+    await until(() => has('.instance-row', '已绑定 COM3 · 监听中'), '显示绑定端口与监听状态')
+    await until(() => click('.instance-row button', '编辑配置'), '编辑已绑定插件配置')
     await until(() => has('.el-dialog__title', '编辑插件配置'), '打开已绑定实例编辑器')
     await closeDialog()
-    await until(() => click('[aria-label="设备插件"]'), '打开设备插件')
-    await until(() => click('.plugin-links button', '扩展中心'), '从串口查看已绑定实例详情')
-    await until(() => has('.instance-row', '已绑定 COM3 · 监听中'), '显示绑定端口与监听状态')
     await until(() => click('.instance-row button', '前往会话'), '返回绑定的串口会话')
     const port = simulated.ports.at(-1)!
     port.emit('data', Buffer.from('PING\r\n'))
@@ -330,6 +330,10 @@ async function main(): Promise<void> {
     assert.deepEqual(failures, [])
     if (liveOfficial) console.log('DevKit 官方 HTTPS 索引 → 安装包校验 → 官方插件默认 PING/PONG 用例通过')
     console.log('工作台 UI 通过：工具面板、补码、时区毫秒、换肤、连接草稿与重连、插件入口、传输取消、日志保留')
+  } catch (error) {
+    console.error(await win.webContents.executeJavaScript('document.body.innerText').catch(() => 'UI unavailable'))
+    await writeFile(join(process.cwd(), 'out/extensions-smoke-failure.png'), (await win.capturePage()).toPNG()).catch(() => {})
+    throw error
   } finally {
     await disposeAllPanels()
     win.destroy()

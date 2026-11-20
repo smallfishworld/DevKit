@@ -2,7 +2,7 @@
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue }
 
 export type StreamTransport = 'serial' | 'ssh' | 'net' | 'pty'
-export type PluginCapability = 'stream.read' | 'stream.write'
+export type PluginCapability = 'stream.read' | 'stream.write' | 'stream.exclusive' | 'auth.session'
 
 export interface VisibleWhenRule {
   field: string
@@ -117,6 +117,9 @@ export interface StreamSessionBridge {
   describe(panelId: string): StreamSessionInfo | undefined
   subscribe(panelId: string, listener: (event: StreamEvent) => void, owner?: string): () => void
   acquire(panelId: string, owner: string, signal: AbortSignal): Promise<StreamLease>
+  /** Optional terminal-input hold; currently implemented by serial sessions. */
+  beginHold?(panelId: string, owner: string, options: Required<PluginHoldOptions>): void
+  endHold?(panelId: string, owner: string): Uint8Array[]
 }
 
 export type PluginWriteData = string | number[]
@@ -135,6 +138,34 @@ export interface PluginExchangeResult {
   receivedAt: number
 }
 
+/** 独占流事务期间的写入句柄；必须显式 release，宿主在停止时也会释放。 */
+export interface PluginStreamLeaseHandle {
+  connectionId: string
+  write(data: PluginWriteData, options?: PluginWriteOptions): Promise<{ bytes: number }>
+  release(): Promise<void>
+}
+/** 自动应答期间扣住终端输入；只缓存用户发送，不再交给设备。 */
+export interface PluginHoldOptions { maxBytes?: number; maxMs?: number }
+export interface PluginAuthCheck { type: 'http-ok' | 'json'; url: string; field?: string }
+export interface PluginAuthScope {
+  /** 登录入口；业务接口必须与其同源。 */
+  loginUrl: string
+  /** 登录窗口允许跳转的额外来源。 */
+  authOrigins?: string[]
+}
+export interface PluginAuthLoginOptions extends PluginAuthScope {
+  check: PluginAuthCheck
+  title?: string
+  timeoutMs?: number
+}
+export interface PluginAuthRequestOptions extends PluginAuthScope {
+  url: string
+  method?: 'GET' | 'POST'
+  headers?: Record<string, string>
+  body?: string
+  timeoutMs?: number
+}
+export interface PluginAuthResponse { status: number; text: string }
 export interface PluginContext {
   config: Record<string, unknown>
   session: StreamSessionInfo
@@ -143,6 +174,17 @@ export interface PluginContext {
   stream: {
     write(data: PluginWriteData, options?: PluginWriteOptions): Promise<{ bytes: number }>
     exchange(data: PluginWriteData, options: PluginExchangeOptions): Promise<PluginExchangeResult>
+    /** Immediate RX subscription; install before sending a protocol request. */
+    subscribe(listener: (event: Extract<StreamEvent, { type: 'data' }>) => void): () => void
+    /** Explicit transaction may span callbacks; release it after the protocol completes. */
+    acquire(): Promise<PluginStreamLeaseHandle>
+    /** Serial sessions only: temporarily buffer terminal input. */
+    hold(options?: PluginHoldOptions): Promise<void>
+    releaseHold(replay: boolean): Promise<void>
+  }
+  auth?: {
+    login(options: PluginAuthLoginOptions): Promise<void>
+    request(options: PluginAuthRequestOptions): Promise<PluginAuthResponse>
   }
   log(level: PluginLogEntry['level'], message: string): void
   state(value: unknown): void

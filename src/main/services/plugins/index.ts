@@ -7,13 +7,14 @@ import { emitToolEvent } from '../../ipc'
 import type { ToolService } from '../../ipc'
 import type {
   BuiltinPluginDefinition, PluginContext, PluginDescriptor, PluginExchangeOptions, PluginExchangeResult,
-  PluginInstance, PluginLogEntry, PluginModuleInstance, PluginRuntimeStatus, PluginWriteData, PluginWriteOptions,
-  StreamEvent, StreamLease, StreamSessionBridge, StreamSessionInfo, StreamTransport
+  PluginInstallSource, PluginInstance, PluginLogEntry, PluginModuleInstance, PluginRuntimeStatus, PluginWriteData, PluginWriteOptions,
+  PluginCapability, PluginHoldOptions, StreamEvent, StreamLease, StreamSessionBridge, StreamSessionInfo, StreamTransport
 } from '../../../shared/plugins'
 import { satisfiesMinVersion } from '../../../../packages/plugin-sdk/src/manifest'
 import { applyDefaults } from './schema'
 import { MAX_PACKAGE_BYTES, PluginStore, parseJson, safePackagePath } from './store'
 import { PluginSources } from './sources'
+import { PluginAuthHost } from './auth'
 export type { BuiltinPluginDefinition } from '../../../shared/plugins'
 
 export interface PluginHostProcess {
@@ -22,6 +23,7 @@ export interface PluginHostProcess {
   kill(): unknown
 }
 export interface PluginServiceOptions {
+  auth?: Pick<PluginAuthHost, 'login' | 'request'>
   userData?: string
   hostVersion?: string
   hostPath?: string
@@ -52,6 +54,10 @@ interface Runtime {
   hasOnData: boolean
   lease?: StreamLease
   leasePromise?: Promise<StreamLease>
+  exclusiveId?: string
+  exclusive?: StreamLease
+  exclusivePromise?: Promise<StreamLease>
+  streams: Map<string, () => void>
   secrets: string[]
   stopping?: Promise<void>
 }
@@ -63,6 +69,9 @@ interface DevWatcher {
 }
 
 const AUTO_CALLBACK_TIMEOUT_MS = 30_000
+const AUTH_CALLBACK_TIMEOUT_MS = 600_000
+const MAX_HOLD_BYTES = 1_048_576
+const MAX_HOLD_MS = 300_000
 const MAX_EVENTS = 128
 const MAX_QUEUE_BYTES = 256 * 1024
 const MAX_LOGS = 300
@@ -80,6 +89,9 @@ function clone<T>(value: T): T { return JSON.parse(JSON.stringify(value)) as T }
 function errorMessage(error: unknown): string { return error instanceof Error ? error.message : String(error) }
 
 export class PluginService implements ToolService {
+  private readonly auth: Pick<PluginAuthHost, 'login' | 'request'>
+  private legacyImported = false
+  private legacyMigrationError = ''
   private readonly store: PluginStore
   private readonly sources: PluginSources
   private readonly hostVersion: string
@@ -102,6 +114,7 @@ export class PluginService implements ToolService {
     builtins: BuiltinPluginDefinition[] = [],
     options: PluginServiceOptions = {}
   ) {
+    this.auth = options.auth ?? new PluginAuthHost()
     const userData = options.userData ?? app.getPath('userData')
     this.hostVersion = options.hostVersion ?? (typeof app?.getVersion === 'function' ? app.getVersion() : '0.1.10')
     this.store = new PluginStore(userData)
@@ -125,6 +138,7 @@ export class PluginService implements ToolService {
   private async execute(panelId: string, action: string, payload: unknown): Promise<unknown> {
     try {
       await this.initialize()
+      if (!this.legacyImported && this.descriptors.has('devkit.oa-debug')) await this.mutate(() => this.importLegacy())
       const p = payload === undefined || payload === null ? {} : object(payload)
       switch (action) {
         case 'snapshot': return {
@@ -189,9 +203,51 @@ export class PluginService implements ToolService {
     return this.initialized ??= (async () => {
       const state = await this.store.readState()
       this.instances = state.instances
+      this.legacyImported = state.legacyImported
       for (const descriptor of await this.store.listInstalled()) this.descriptors.set(descriptor.id, descriptor)
       for (const builtin of this.builtins.values()) this.descriptors.set(builtin.manifest.id, { ...builtin.manifest, builtin: true })
     })()
+  }
+
+  private async importLegacy(): Promise<boolean> {
+    // OA 解锁现在由 DevKit-Plugins 中的外部插件提供；只有安装后才迁移旧配置。
+    if (this.legacyImported || !this.descriptors.has('devkit.oa-debug')) return true
+    try {
+      let legacy: Record<string, unknown> | undefined
+      try {
+        const raw = await fs.readFile(join(this.store.root, 'device-actions.json'), 'utf8')
+        if (Buffer.byteLength(raw) > MAX_QUEUE_BYTES) throw new Error('旧设备动作配置超过256KiB')
+        legacy = object(parseJson(raw))
+      } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error }
+      const next = [...this.instances]
+      if (legacy) {
+        if (!Array.isArray(legacy.profiles) || legacy.profiles.length > 32) throw new Error('旧设备动作profiles无效')
+        for (const rawProfile of legacy.profiles) {
+          const profile = object(rawProfile)
+          const profileId = string(profile.id, '旧profile.id')
+          const id = 'legacy-' + profileId
+          if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,95}$/.test(id)) throw new Error('旧profile.id无法迁移')
+          if (next.some((item) => item.id === id)) continue
+          next.push({
+            id, pluginId: 'devkit.oa-debug', label: (typeof profile.label === 'string' ? profile.label : profileId).slice(0,128),
+            config: { deviceActions: clone(legacy), profileId }, enabled: true, autoEnabled: false, configVersion: 2
+          })
+        }
+      }
+      if (next.length > 128) throw new Error('迁移后实例超过128个')
+      await this.store.writeState(next, true)
+      this.instances = next
+      this.legacyImported = true
+      this.legacyMigrationError = ''
+      return true
+    } catch (error) {
+      const message = '旧设备动作尚未迁移，其他插件仍可使用：' + errorMessage(error)
+      if (message !== this.legacyMigrationError) {
+        this.legacyMigrationError = message
+        this.logs.push({ timestamp: Date.now(), instanceId: 'legacy-migration', panelId: '*', level: 'warn', message })
+      }
+      return false
+    }
   }
 
   private resolveSession(panelId: string, preferred?: StreamTransport): { bridge: StreamSessionBridge; session: StreamSessionInfo } | undefined {
@@ -248,6 +304,11 @@ export class PluginService implements ToolService {
     }
   }
 
+  /** OA 登录窗口可能等待数分钟；普通插件继续使用较短的超时以尽早发现阻塞。 */
+  private callbackTimeout(runtime: Runtime): number {
+    return runtime.descriptor.capabilities.includes('auth.session') ? AUTH_CALLBACK_TIMEOUT_MS : AUTO_CALLBACK_TIMEOUT_MS
+  }
+
   private async saveInstance(panelId: string, raw: Record<string, unknown>): Promise<unknown> {
     const pluginId = string(raw.pluginId, 'pluginId')
     const descriptor = this.descriptors.get(pluginId)
@@ -271,7 +332,7 @@ export class PluginService implements ToolService {
     const next = this.instances.filter((item) => item.id !== id).concat(instance)
     if (next.length > 128) throw new Error('最多128个插件实例')
     if (runtime && stopping) await this.stopRuntime(runtime, 'stopped')
-    await this.store.writeState(next, true)
+    await this.store.writeState(next, this.legacyImported)
     this.instances = next
     if (runtime) {
       const boundPanel = runtime.session.panelId
@@ -289,7 +350,7 @@ export class PluginService implements ToolService {
     const runtime = this.runtimes.get(id)
     if (runtime) await this.stopRuntime(runtime, 'stopped')
     const next = this.instances.filter((item) => item.id !== id)
-    await this.store.writeState(next, true)
+    await this.store.writeState(next, this.legacyImported)
     this.instances = next
     this.statuses.delete(id)
     this.changed(panelId)
@@ -297,19 +358,22 @@ export class PluginService implements ToolService {
   }
 
   private async installFromSource(panelId: string, request: Record<string, unknown>): Promise<unknown> {
-    const bytes = await this.sources.package(string(request.sourceId, '扩展源'),
+    const sourceId = string(request.sourceId, '扩展源')
+    const source = (await this.sources.list()).find((entry) => entry.id === sourceId)
+    if (!source) throw new Error('扩展源不存在')
+    const bytes = await this.sources.package(sourceId,
       string(request.pluginId, '插件 ID'), string(request.sha256, 'SHA-256'), MAX_PACKAGE_BYTES)
     const directory = await fs.mkdtemp(join(tmpdir(), 'devkit-plugin-'))
     try {
       const path = join(directory, 'bundle.json')
       await fs.writeFile(path, bytes, { flag: 'wx' })
-      return await this.install(panelId, path)
+      return await this.install(panelId, path, false, { name: source.name, url: source.url })
     } finally {
       await fs.rm(directory, { recursive: true, force: true }).catch(() => {})
     }
   }
 
-  private async install(panelId: string, value: unknown, file = false): Promise<unknown> {
+  private async install(panelId: string, value: unknown, file = false, installSource?: PluginInstallSource): Promise<unknown> {
     let path: string
     if (value === undefined || value === '') {
       const result = await dialog.showOpenDialog(file
@@ -320,7 +384,7 @@ export class PluginService implements ToolService {
     } else path = string(value, 'path')
     const blocked = new Set(this.builtins.keys())
     for (const runtime of this.runtimes.values()) blocked.add(runtime.instance.pluginId)
-    const descriptor = await this.store.install(path, blocked)
+    const descriptor = await this.store.install(path, blocked, installSource)
     if (descriptor.minHostVersion && !satisfiesMinVersion(this.hostVersion, descriptor.minHostVersion)) {
       await this.store.remove(descriptor.id)
       throw new Error(`插件要求 DevKit 宿主版本 >= ${descriptor.minHostVersion}（当前 ${this.hostVersion}）`)
@@ -421,7 +485,7 @@ export class PluginService implements ToolService {
       instance: snapshot, descriptor, bridge, session: clone(session), controller: new AbortController(),
       status: { instanceId: id, panelId, transport: session.transport, connectionId: session.connectionId, state: 'starting', bound: true },
       unsubscribe: () => {}, builtin: this.builtins.get(descriptor.id), pending: new Map(), nextCall: 0,
-      queue: [], queueBytes: 0, operation: true, ioBusy: false, draining: false, hasOnData: false, secrets: []
+      queue: [], queueBytes: 0, operation: true, ioBusy: false, draining: false, hasOnData: false, streams: new Map(), secrets: []
     }
     this.runtimes.set(id, runtime)
     this.setStatus(runtime, 'starting')
@@ -456,13 +520,36 @@ export class PluginService implements ToolService {
 
   private context(runtime: Runtime): PluginContext {
     return {
-      config: runtime.instance.config,
-      session: runtime.session,
-      autoEnabled: runtime.instance.autoEnabled,
-      signal: runtime.controller.signal,
+      config: runtime.instance.config, session: runtime.session, autoEnabled: runtime.instance.autoEnabled, signal: runtime.controller.signal,
       stream: {
         write: (data, options) => this.streamWrite(runtime, data, options),
-        exchange: (data, options) => this.streamExchange(runtime, data, options)
+        exchange: (data, options) => this.streamExchange(runtime, data, options),
+        subscribe: (listener) => {
+          if (typeof listener !== 'function') throw new Error('stream.subscribe 需要函数')
+          this.requireCapability(runtime, 'stream.read')
+          const key = 'in-process-' + randomUUID()
+          const owner = 'plugin:' + runtime.instance.id
+          const unsubscribe = runtime.bridge.subscribe(runtime.session.panelId, (event) => {
+            if (event.type !== 'data' || event.connectionId !== runtime.session.connectionId || runtime.stopping) return
+            listener(event)
+          }, owner)
+          runtime.streams.set(key, unsubscribe)
+          return () => { runtime.streams.delete(key); unsubscribe() }
+        },
+        acquire: () => this.streamAcquire(runtime).then((lease) => ({
+          connectionId: lease.connectionId,
+          write: (data, options) => this.leaseWrite(runtime, lease, data, options),
+          release: async () => {
+            if (runtime.exclusive === lease) this.releaseExclusive(runtime)
+            else lease.release()
+          }
+        })),
+        hold: async (options) => { this.streamHold(runtime, options) },
+        releaseHold: (replay) => this.streamReleaseHold(runtime, replay === true)
+      },
+      auth: {
+        login: async (options) => { this.check(runtime); this.requireCapability(runtime, 'auth.session'); await this.auth.login(options, runtime.controller.signal) },
+        request: async (options) => { this.check(runtime); this.requireCapability(runtime, 'auth.session'); return this.auth.request(options, runtime.controller.signal) }
       },
       log: (level, message) => this.log(runtime, level, message),
       state: (value) => this.publishState(runtime, value)
@@ -516,20 +603,147 @@ export class PluginService implements ToolService {
     if (typeof message.id !== 'string' || !Array.isArray(message.args)) return
     try {
       this.check(runtime)
-      let result: unknown
-      if (message.method === 'stream.write') result = await this.streamWrite(runtime, message.args[0] as PluginWriteData, (message.args[1] ?? {}) as PluginWriteOptions)
-      else if (message.method === 'stream.exchange') result = await this.streamExchange(runtime, message.args[0] as PluginWriteData, message.args[1] as PluginExchangeOptions)
-      else throw new Error('不支持的宿主API')
+      let result: unknown = null
+      switch (message.method) {
+        case 'stream.write':
+          result = await this.streamWrite(runtime, message.args[0] as PluginWriteData, (message.args[1] ?? {}) as PluginWriteOptions)
+          break
+        case 'stream.exchange':
+          result = await this.streamExchange(runtime, message.args[0] as PluginWriteData, message.args[1] as PluginExchangeOptions)
+          break
+        case 'stream.lease.write': {
+          const lease = this.exclusive(runtime, message.args[0])
+          result = await this.leaseWrite(runtime, lease, message.args[1] as PluginWriteData, (message.args[2] ?? {}) as PluginWriteOptions)
+          break
+        }
+        case 'stream.lease.release':
+          this.exclusive(runtime, message.args[0])
+          this.releaseExclusive(runtime)
+          break
+        case 'stream.subscribe':
+          result = this.streamSubscribe(runtime, message.args[0])
+          break
+        case 'stream.unsubscribe':
+          this.streamUnsubscribe(runtime, message.args[0])
+          break
+        case 'stream.acquire': {
+          const lease = await this.streamAcquire(runtime)
+          result = { connectionId: lease.connectionId, leaseId: runtime.exclusiveId }
+          break
+        }
+        case 'stream.hold':
+          this.streamHold(runtime, message.args[0])
+          break
+        case 'stream.releaseHold':
+          await this.streamReleaseHold(runtime, message.args[0] === true)
+          break
+        case 'auth.login':
+          this.requireCapability(runtime, 'auth.session')
+          await this.auth.login(message.args[0], runtime.controller.signal)
+          break
+        case 'auth.request':
+          this.requireCapability(runtime, 'auth.session')
+          result = await this.auth.request(message.args[0], runtime.controller.signal)
+          break
+        default:
+          throw new Error('不支持的宿主API')
+      }
       runtime.host?.postMessage({ type: 'response', id: message.id, ok: true, result })
     } catch (error) {
       try { runtime.host?.postMessage({ type: 'response', id: message.id, ok: false, error: this.redact(runtime, errorMessage(error)) }) } catch {}
     }
   }
+  private requireCapability(runtime: Runtime, capability: PluginCapability): void {
+    this.check(runtime)
+    if (!runtime.descriptor.capabilities.includes(capability)) throw new Error('插件未声明 ' + capability)
+  }
+  private exclusive(runtime: Runtime, leaseId: unknown): StreamLease {
+    if (typeof leaseId !== 'string' || leaseId !== runtime.exclusiveId) throw new Error('流事务已结束')
+    if (!runtime.exclusive) throw new Error('插件尚未取得串口事务')
+    return runtime.exclusive
+  }
+  /** 取得跨回调的串口事务；同一实例重复调用返回同一租约。 */
+  private async streamAcquire(runtime: Runtime): Promise<StreamLease> {
+    this.requireCapability(runtime, 'stream.exclusive')
+    this.check(runtime)
+    if (runtime.exclusive) return runtime.exclusive
+    runtime.exclusivePromise ??= (async () => {
+      const lease = runtime.lease ?? await (runtime.leasePromise ?? runtime.bridge.acquire(
+        runtime.session.panelId, 'plugin:' + runtime.instance.id, runtime.controller.signal))
+      runtime.lease = undefined
+      runtime.leasePromise = undefined
+      try {
+        this.check(runtime)
+        if (lease.connectionId !== runtime.session.connectionId) throw new Error('会话租约连接已变化')
+      } catch (error) { lease.release(); throw error }
+      runtime.exclusive = lease
+      runtime.exclusiveId = randomUUID()
+      return lease
+    })()
+    try { return await runtime.exclusivePromise } finally { runtime.exclusivePromise = undefined }
+  }
+  private releaseExclusive(runtime: Runtime): void {
+    const lease = runtime.exclusive
+    runtime.exclusive = undefined
+    runtime.exclusiveId = undefined
+    // Discard any input held for this owner; a stopped plugin must not replay it later.
+    try { runtime.bridge.endHold?.(runtime.session.panelId, 'plugin:' + runtime.instance.id) } catch { /* the session may be closing */ }
+    lease?.release()
+  }
+  private streamSubscribe(runtime: Runtime, value: unknown): string {
+    this.requireCapability(runtime, 'stream.read')
+    if (typeof value !== 'string' || !/^stream-[0-9]{1,9}$/.test(value)) throw new Error('订阅标识无效')
+    if (runtime.streams.has(value)) return value
+    if (runtime.streams.size >= 32) throw new Error('实时订阅数量达到上限')
+    const owner = 'plugin:' + runtime.instance.id
+    const unsubscribe = runtime.bridge.subscribe(runtime.session.panelId, (event) => {
+      if (event.type !== 'data' || event.connectionId !== runtime.session.connectionId) return
+      if (runtime.stopping) return
+      try { runtime.host?.postMessage({ type: 'data', stream: value, event }) } catch { /* the process may be exiting */ }
+    }, owner)
+    runtime.streams.set(value, unsubscribe)
+    return value
+  }
+  private streamUnsubscribe(runtime: Runtime, value: unknown): void {
+    if (typeof value !== 'string') return
+    runtime.streams.get(value)?.()
+    runtime.streams.delete(value)
+  }
+  private streamHold(runtime: Runtime, value: unknown): void {
+    this.requireCapability(runtime, 'stream.exclusive')
+    if (!runtime.bridge.beginHold || !runtime.bridge.endHold) throw new Error('当前会话不支持输入保持')
+    const options = value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
+    const integer = (key: string, fallback: number, min: number, max: number): number => {
+      const item = options[key]
+      if (item === undefined) return fallback
+      if (!Number.isInteger(item) || (item as number) < min || (item as number) > max) {
+        throw new Error(`${key} 须为 ${min} 至 ${max} 的整数`)
+      }
+      return item as number
+    }
+    runtime.bridge.beginHold(runtime.session.panelId, 'plugin:' + runtime.instance.id, {
+      maxBytes: integer('maxBytes', 4096, 256, MAX_HOLD_BYTES),
+      maxMs: integer('maxMs', 15_000, 1000, MAX_HOLD_MS)
+    })
+  }
+  private async streamReleaseHold(runtime: Runtime, replay: boolean): Promise<void> {
+    this.requireCapability(runtime, 'stream.exclusive')
+    if (!runtime.bridge.endHold) throw new Error('当前会话不支持输入保持')
+    const chunks = runtime.bridge.endHold(runtime.session.panelId, 'plugin:' + runtime.instance.id)
+    if (!replay || !chunks.length) return
+    const lease = runtime.exclusive
+    if (!lease) return
+    for (const chunk of chunks) {
+      if (runtime.stopping) return
+      await lease.write(chunk)
+    }
+  }
 
   private async ensureLease(runtime: Runtime): Promise<StreamLease> {
     this.check(runtime)
-    if (!runtime.operation) throw new Error('流写入必须在run或onData回调内等待完成')
+    if (!runtime.operation && !runtime.exclusive) throw new Error('流写入必须在run/onData回调或显式租约内等待完成')
     if (!runtime.descriptor.capabilities.includes('stream.write')) throw new Error('插件未声明stream.write')
+    if (runtime.exclusive) return runtime.exclusive
     if (runtime.lease) return runtime.lease
     runtime.leasePromise ??= runtime.bridge.acquire(runtime.session.panelId, 'plugin:' + runtime.instance.id, runtime.controller.signal)
     const lease = await runtime.leasePromise
@@ -583,6 +797,22 @@ export class PluginService implements ToolService {
     } finally { runtime.ioBusy = false }
   }
 
+  /** 显式租约写入：不要求当前位于 run/onData 回调内，供订阅式协议流程使用。 */
+  private async leaseWrite(
+    runtime: Runtime, lease: StreamLease, data: PluginWriteData, options: PluginWriteOptions = {}
+  ): Promise<{ bytes: number }> {
+    this.check(runtime)
+    this.requireCapability(runtime, 'stream.write')
+    if (runtime.ioBusy) throw new Error('同一实例的串口事务须顺序await')
+    runtime.ioBusy = true
+    try {
+      const bytes = this.bytes(runtime, data, options)
+      await lease.write(bytes, { secret: options.secret })
+      this.check(runtime)
+      return { bytes: bytes.length }
+    } finally { runtime.ioBusy = false }
+  }
+
   private async streamExchange(runtime: Runtime, data: PluginWriteData, options: PluginExchangeOptions): Promise<PluginExchangeResult> {
     if (runtime.ioBusy) throw new Error('同一实例的流事务须顺序await')
     if (!options || typeof options.match !== 'string' || !options.match || options.match.length > 4096) throw new Error('exchange.match须为非空字符串')
@@ -627,6 +857,7 @@ export class PluginService implements ToolService {
   private receive(runtime: Runtime, event: StreamEvent): void {
     if (event.connectionId !== runtime.session.connectionId || runtime.stopping) return
     if (event.type === 'closed') { void this.stopRuntime(runtime, 'stopped', event.reason ?? '会话已断开'); return }
+    if (!runtime.hasOnData && runtime.status.state !== 'starting') return
     if (!runtime.instance.autoEnabled || !runtime.descriptor.autoRespond || !runtime.descriptor.capabilities.includes('stream.read')) return
     runtime.queue.push(event)
     runtime.queueBytes += event.bytes.length
@@ -648,13 +879,13 @@ export class PluginService implements ToolService {
         runtime.operation = true
         try {
           if (runtime.plugin) await runtime.plugin.onData?.(event)
-          else await this.callHost(runtime, 'onData', event, AUTO_CALLBACK_TIMEOUT_MS)
+          else await this.callHost(runtime, 'onData', event, this.callbackTimeout(runtime))
         } finally { runtime.operation = false; this.releaseLease(runtime) }
       }
     } catch (error) {
       const detail = errorMessage(error)
       await this.stopRuntime(runtime, 'error', detail.includes('调用超时')
-        ? '自动应答回调超时（30秒），实例已安全停止；请检查插件阻塞、设备响应和协议超时后手动重新绑定'
+        ? `自动应答回调超时（${Math.round(this.callbackTimeout(runtime) / 1000)}秒），实例已安全停止；请检查插件阻塞、设备响应和协议超时后手动重新绑定`
         : detail)
     } finally { runtime.draining = false }
   }
@@ -669,10 +900,10 @@ export class PluginService implements ToolService {
     runtime.operation = true
     this.setStatus(runtime, 'running')
     try {
-      if (!runtime.builtin?.managesStreamLease && runtime.descriptor.capabilities.includes('stream.write')) await this.ensureLease(runtime)
+      if (!runtime.builtin?.managesStreamLease && !runtime.descriptor.capabilities.includes('stream.exclusive') && runtime.descriptor.capabilities.includes('stream.write')) await this.ensureLease(runtime)
       const result = runtime.plugin
         ? await runtime.plugin.run?.(actionId, args)
-        : await this.callHost(runtime, 'run', { actionId, args }, 60_000)
+        : await this.callHost(runtime, 'run', { actionId, args }, runtime.descriptor.capabilities.includes('auth.session') ? AUTH_CALLBACK_TIMEOUT_MS : 60_000)
       this.check(runtime)
       this.setStatus(runtime, 'ready')
       return result
@@ -693,8 +924,11 @@ export class PluginService implements ToolService {
     if (this.runtimes.get(runtime.instance.id) === runtime) this.runtimes.delete(runtime.instance.id)
     runtime.controller.abort(new Error(error || '插件已停止'))
     runtime.unsubscribe()
+    for (const unsubscribe of runtime.streams.values()) unsubscribe()
+    runtime.streams.clear()
     runtime.queue = []; runtime.queueBytes = 0
     this.releaseLease(runtime)
+    this.releaseExclusive(runtime)
     for (const pending of runtime.pending.values()) { clearTimeout(pending.timer); pending.reject(new Error(error || '插件已停止')) }
     runtime.pending.clear()
     this.setStatus(runtime, state, error)

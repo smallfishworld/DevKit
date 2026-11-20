@@ -4,7 +4,7 @@
 
 DevKit 插件体系基于独立同构契约包 `packages/plugin-sdk`（`@devkit/plugin-sdk`），统一导出 API v2 类型、`validateSchema`/`validateConfig`/`applyDefaults`、`parseManifest`/`satisfiesMinVersion` 与官方单测夹具 `createMockPluginContext`。宿主通过通用流会话抽象 `StreamSessionBridge` 向插件开放 **串口（`serial`）、SSH（`ssh`）、网络调试（`net`）与本地终端（`pty`）** 四类传输能力。
 
-外部插件运行于独立 Electron `utilityProcess`，底层传输句柄仍由 DevKit 主进程持有。**该进程提供崩溃隔离而非安全沙箱**：插件仍能使用 Node.js 文件系统与网络；`capabilities` 仅约束 DevKit 提供的流 API。请仅安装经过核实的可信插件。
+外部插件运行于独立 Electron `utilityProcess`，底层传输句柄仍由 DevKit 主进程持有。**该进程提供崩溃隔离而非安全沙箱**：插件仍能使用 Node.js 文件系统与网络；`capabilities` 仅约束 DevKit 提供的流与认证 API。请仅安装经过核实的可信插件。
 
 ## 安装、开发热重载与运行
 
@@ -47,7 +47,7 @@ exports.activate = async ctx => ({
 | `configSchema` | 顶层为 `object` 的受控 Schema，支持 `x-visibleWhen` 条件显隐与对象数组规则编辑 |
 | `actions` | `id`、`label`、可选 `description` 的动作列表（最多 32 项） |
 | `autoRespond` | 是否提供自动监听能力 |
-| `capabilities` | API v2 仅接受 `stream.read`、`stream.write`（`autoRespond: true` 须声明 `stream.read`） |
+| `capabilities` | API v2 接受 `stream.read`、`stream.write`、`stream.exclusive`、`auth.session`；`autoRespond: true` 须声明 `stream.read`，`stream.exclusive` 须同时声明 `stream.write` |
 
 ### 条件显隐与多规则数组表单
 
@@ -62,7 +62,23 @@ exports.activate = async ctx => ({
 - `ctx.signal`：`AbortSignal`（内置与外部插件均可用），在停止、解绑、断开或热重载时触发中止。
 - `ctx.stream.write(data, options)`：发送字符串或字节数组（1 至 65536 字节），支持 `encoding: 'utf8' | 'hex'` 与 `secret: true`。
 - `ctx.stream.exchange(data, options)`：先订阅响应再写入，等待 `match` 子串，`timeoutMs`（10–30000ms）与 `maxBytes`（1–262144）。
+- `ctx.stream.subscribe(listener)`：独立接收订阅，返回取消订阅函数；需要 `stream.read`。订阅不占用自动应答队列，可在动作等待登录或网络请求时继续接收数据。
+- `ctx.stream.acquire()`：取得跨回调独占租约，返回 `{ connectionId, write, release }`；需要 `stream.exclusive`。在流程完成后 `await lease.release()`，停止、断开和进程退出时宿主兜底释放。
+- `ctx.stream.hold(options)` / `ctx.stream.releaseHold(replay)`：仅串口支持，且须声明 `stream.exclusive`。扣住用户输入后，成功时在仍持有租约期间调用 `releaseHold(true)` 按原顺序补发；失败时调用 `releaseHold(false)` 丢弃。`maxBytes` 默认 4096，范围 256–1048576；`maxMs` 默认 15000，范围 1000–300000。
+- `ctx.auth.login(options)` / `ctx.auth.request(options)`：须声明 `auth.session`；由宿主管理独立的持久登录会话。插件提供 HTTPS `loginUrl`、登录检查或业务请求；业务请求与登录检查必须与登录地址同源，Cookie 不返回插件。`request` 返回 `{ status, text }`，响应体最多 64 KiB；Cookie、Host 等由宿主管理的请求头不能由插件覆盖。
 - `ctx.log(level, message)` / `ctx.state(value)`：增量上报诊断日志（全局保留最近 300 条）与运行态指标（≤ 16 KiB）。
 - `run(actionId, args)`：失败时须直接 `throw Error` 以中止宿主宏后续步骤。
 
-所有 `ctx.stream` 调用必须在 `run` 或 `onData` 回调内顺序 `await`，禁止对同一实例并发调用 `write`/`exchange`；若存在延时发送，插件内部须维护串行写队列并在 `dispose` / `reset` / `ctx.signal` 中止时取消待发定时器。
+所有异步流写入与租约调用须顺序 `await`，禁止对同一实例并发调用 `write`/`exchange`。订阅返回的取消函数须在实例清理时调用；延时发送须维护串行写队列，并在 `dispose` / `reset` / `ctx.signal` 中止时取消待发定时器。使用 `stream.exclusive` 的插件自行取得与释放显式租约，宿主不会为其预先占用会话；其他发送来源在租约期间按会话仲裁规则等待或拒绝。旧 `connectionId` 的租约不能写入重连后的会话。
+
+
+## OA 外部插件与旧配置迁移
+
+OA 设备解锁由 [DevKit-Plugins 的 `plugins/oa-unlock`](https://github.com/smallfishworld/DevKit-Plugins/tree/main/plugins/oa-unlock) 提供，稳定 ID 为 `devkit.oa-debug`，支持串口。宿主只提供通用流租约、输入扣留、秘密值保护与认证会话；触发词、挑战码识别、取码请求和结果判定由插件实现。
+
+1. 按插件仓库说明打包并在全局「扩展中心」安装本地 JSON 包；从 HTTPS 扩展源安装须等待相应版本正式发布。
+2. 安装该插件后，宿主才读取旧 `device-actions.json`，把有效 profile 转成 `legacy-<profile ID>` 的 API v2 配置实例。既有同 ID 实例不覆盖，旧文件不删除；迁移失败与其他插件隔离，可重试。
+3. 迁移实例默认不启用自动监听，也不会自动绑定串口。检查配置后从「当前串口插件」绑定，按需启用自动监听。
+4. 旧 `device-action` 宏步骤仍按现行导入规则丢弃；需要继续使用时，在宏中选择迁移实例及其插件动作。迁移不恢复已移除的设备动作编辑器。
+
+自动解锁成功后，插件在同一独占租约内补发暂存输入；失败、超时、停止或断开时丢弃。发送口令须使用 `secret: true`，插件自身日志与状态也不得包含口令。秘密值的即时、跨批及延迟回显由宿主统一处理，不能广播给无关订阅者。

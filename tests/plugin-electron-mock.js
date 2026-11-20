@@ -3,3 +3,4 @@ export const dialog = { showOpenDialog: async () => ({ canceled: true, filePaths
 export const utilityProcess = { fork: () => { throw new Error('hostFactory must be injected in tests') } }
 export const ipcMain = { handle: () => {} }
 export const BrowserWindow = class {}
+export const session = { fromPartition: () => { throw new Error('auth.session is not available in plugin unit tests') } }

@@ -1,7 +1,7 @@
 import { promises as fs } from 'node:fs'
 import { join, relative, resolve, isAbsolute, dirname, extname } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import type { PluginDescriptor, PluginInstance } from '../../../shared/plugins'
+import type { PluginDescriptor, PluginInstallSource, PluginInstance } from '../../../shared/plugins'
 import {
   PLUGIN_ID_PATTERN,
   PLUGIN_INSTANCE_ID_PATTERN,
@@ -12,6 +12,7 @@ import {
 
 export { parseJson, parseManifest, safePackagePath }
 export const MAX_PACKAGE_BYTES = 4 * 1024 * 1024
+const INSTALL_METADATA = '.devkit-install-source.json'
 
 function record(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('须为JSON对象')
@@ -22,6 +23,14 @@ function short(value: unknown, label: string, max = 256): string {
     throw new Error(label + '无效')
   }
   return value
+}
+
+function parseInstallSource(value: unknown): PluginInstallSource {
+  const source = record(value)
+  const name = short(source.name, '安装来源名称', 128)
+  const url = new URL(short(source.url, '安装来源地址', 2048))
+  if (url.protocol !== 'https:' || url.username || url.password || url.hash) throw new Error('安装来源地址无效')
+  return { name, url: url.href }
 }
 
 interface StoreState { version: 2; instances: PluginInstance[]; legacyImported: boolean }
@@ -88,13 +97,21 @@ export class PluginStore {
       if (manifest.id !== entry.name) throw new Error('插件目录ID与manifest不一致：' + entry.name)
       const stat = await fs.lstat(safePackagePath(path, manifest.entry))
       if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('插件入口不存在或不是普通文件')
-      output.push({ ...manifest, builtin: false, path })
+      let installSource: PluginInstallSource | undefined
+      try {
+        const metadataPath = join(path, INSTALL_METADATA)
+        const metadataStat = await fs.lstat(metadataPath)
+        if (!metadataStat.isFile() || metadataStat.isSymbolicLink() || metadataStat.size > 4096) throw new Error('安装来源元数据无效')
+        installSource = parseInstallSource(parseJson(await fs.readFile(metadataPath, 'utf8')))
+      } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error }
+      output.push({ ...manifest, builtin: false, path, ...(installSource ? { installSource } : {}) })
     }
     return output
   }
 
   /** Import a self-contained directory or JSON bundle; packages are trusted local code. */
-  async install(source: string, blockedIds: Set<string>): Promise<PluginDescriptor> {
+  async install(source: string, blockedIds: Set<string>, provenance?: PluginInstallSource): Promise<PluginDescriptor> {
+    const installSource = provenance ? parseInstallSource(provenance) : undefined
     await fs.mkdir(this.directory, { recursive: true })
     const stage = join(this.directory, '.install-' + randomUUID())
     await fs.mkdir(stage)
@@ -108,6 +125,7 @@ export class PluginStore {
         for (const item of await fs.readdir(from, { withFileTypes: true })) {
           if (['.git', 'node_modules'].includes(item.name)) continue
           const name = sub ? sub + '/' + item.name : item.name
+          if (name.toLowerCase() === INSTALL_METADATA) throw new Error('插件包包含宿主保留文件')
           const to = safePackagePath(stage, name)
           if (item.isSymbolicLink()) throw new Error('插件包不能含符号链接')
           if (item.isDirectory()) {
@@ -137,6 +155,7 @@ export class PluginStore {
         const paths = new Set(['manifest.json'])
         for (const [name, contents] of Object.entries(files)) {
           const key = name.toLowerCase()
+          if (key === INSTALL_METADATA) throw new Error('插件包包含宿主保留文件')
           if (paths.has(key)) throw new Error('插件包包含重复文件路径')
           paths.add(key)
           if (typeof contents !== 'string') throw new Error('JSON包的files值须为文本')
@@ -153,6 +172,7 @@ export class PluginStore {
       if (blockedIds.has(manifest.id)) throw new Error('内置插件或正在使用的插件不能覆盖；请先解除实例绑定')
       const entry = await fs.lstat(safePackagePath(stage, manifest.entry))
       if (!entry.isFile()) throw new Error('插件入口不存在')
+      if (installSource) await fs.writeFile(join(stage, INSTALL_METADATA), JSON.stringify(installSource) + '\n', { flag: 'wx' })
       const target = join(this.directory, manifest.id)
       const backup = join(this.directory, '.backup-' + randomUUID())
       let backed = false
@@ -164,7 +184,7 @@ export class PluginStore {
         throw error
       }
       if (backed) await fs.rm(backup, { recursive: true, force: true })
-      return { ...manifest, builtin: false, path: target }
+      return { ...manifest, builtin: false, path: target, ...(installSource ? { installSource } : {}) }
     } finally { await fs.rm(stage, { recursive: true, force: true }).catch(() => {}) }
   }
 

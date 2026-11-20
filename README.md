@@ -91,14 +91,16 @@ npm run dist
 
 ## 设备插件
 
-串口面板的「插件」入口支持本地安装可信 JavaScript 插件、创建配置实例、绑定串口和运行手动/自动动作。插件可提供独立的配置表单和动作，快捷命令可引用插件动作；旧宏继续兼容（已移除的「设备动作」步骤在导入时丢弃）。
+全局「扩展中心」支持安装可信 JavaScript 插件、管理 HTTPS 扩展源和创建配置实例；串口、SSH 与网络面板可按插件声明的传输类型绑定实例，运行手动动作或自动应答。插件使用共享的 `@devkit/plugin-sdk`（API v2），提供独立配置表单和可被快捷命令引用的动作；已移除的旧「设备动作」步骤在导入宏时丢弃。
+
+OA 设备解锁作为外部插件维护在 [DevKit-Plugins/plugins/oa-unlock](https://github.com/smallfishworld/DevKit-Plugins/tree/main/plugins/oa-unlock)，不随宿主内置发行。可按插件仓库说明构建 JSON 包后从扩展中心本地安装；只有发布到扩展源的版本才能从源安装。安装 `devkit.oa-debug` 后，旧 `device-actions.json` 中的配置才迁移为插件实例，自动监听默认关闭，旧文件保留。未安装时宿主不读取该旧文件。旧「设备动作」宏需改用迁移后实例的「插件动作」引用。
 
 - 独立文本/HEX 应答示例：`examples/plugins/text-hex-responder/`。
 - 开发模板：`examples/plugins/template/`。
 - 打包为单文件 JSON 插件包：`npm run plugin:pack -- examples/plugins/text-hex-responder /tmp/text-responder.json`（Windows 请替换输出路径）。
-- 使用与 API v1 说明：[设备插件开发与使用](docs/device-plugins.md)。
+- 使用与 API v2 说明：[设备插件开发与使用](docs/device-plugins.md)。
 
-外部插件在独立进程中运行，串口由宿主统一管理；第一版面向可信插件，独立进程不等同于文件和网络权限沙箱。插件安装后需要显式配置和绑定才会运行。
+外部插件在独立进程中运行，底层流会话由宿主统一管理；插件面向可信代码，独立进程不等同于文件和网络权限沙箱。插件安装后需要显式配置和绑定才会运行。
 
 ## 串口助手要点
 

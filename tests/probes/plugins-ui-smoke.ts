@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
-import { writeFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
-import { app, BrowserWindow, ipcMain, utilityProcess } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, utilityProcess } from 'electron'
 import { SerialPort } from 'serialport'
 import { registerService, registerToolIpc, setMainWindow, disposeAllPanels } from '../../src/main/ipc'
 import { SerialService } from '../../src/main/services/serial'
@@ -18,6 +18,36 @@ const sentBytes: Buffer[] = []
 const children: Array<{ kill(): unknown }> = []
 let panelId = ''
 let win: BrowserWindow | undefined
+let diagnostics: (() => Promise<unknown>) | undefined
+
+// Synthetic OA fixture: only the auth boundary is mocked; serial, IPC and the
+// external plugin's utilityProcess execute the same code as the application.
+const oaToken = 'TOKEN_UI_SMOKE_1'
+const oaConfig = {
+  loginUrl: 'https://oa.example.invalid/login', authOrigins: [],
+  authCheck: { type: 'json', url: 'https://oa.example.invalid/api/session', field: 'authenticated' },
+  issue: {
+    url: 'https://oa.example.invalid/api/device/token', body: { challenge: '$challenge' },
+    responsePath: 'response', loginExpiredHttp: [401, 403], loginExpiredCodes: [], retryLoginOnce: true
+  },
+  profiles: [
+    {
+      id: 'manual', label: '手动解锁', actionLabel: '解锁 Debug', kind: 'challenge-response', trigger: 'manual',
+      detect: { type: 'prefix', prefix: 'Challenge:' },
+      result: { type: 'line', successLine: 'Debug unlocked', failureLine: 'Debug denied' },
+      command: 'debug', newline: 'cr', challengeTimeoutMs: 2000, challengeTtlMs: 30000,
+      resultTimeoutMs: 2000, holdInput: false
+    },
+    {
+      id: 'auto', label: '自动解锁', actionLabel: '自动解锁 Debug', kind: 'challenge-response', trigger: 'auto',
+      triggerWords: ['debug'],
+      detect: { type: 'base64-line', shortMin: 20, shortMax: 21, longMin: 300, longMinDecoded: 260 },
+      result: { type: 'line', successLine: 'Debug unlocked', failureLine: 'Debug denied' },
+      newline: 'cr', challengeTimeoutMs: 2000, challengeTtlMs: 30000,
+      resultTimeoutMs: 2000, holdInput: { maxBytes: 4096, maxMs: 15000 }
+    }
+  ]
+}
 
 async function until<T>(check: () => T | Promise<T>, label: string): Promise<NonNullable<T>> {
   for (let i = 0; i < 120; i++) {
@@ -32,6 +62,14 @@ async function main(): Promise<void> {
   const userData = process.env.DEVKIT_SMOKE_USER_DATA ?? process.argv[2]
   app.setPath('userData', userData)
   await app.whenReady()
+  const packagePath = join(userData, 'responder.json')
+  const { manifest } = JSON.parse(await readFile(packagePath, 'utf8'))
+  const isOa = manifest.id === 'devkit.oa-debug'
+  const configName = isOa ? 'OA 插件集成测试' : '插件集成测试'
+  let issueDelayMs = 0
+  let loginCalls = 0
+  let issueCalls = 0
+  Object.assign(dialog, { showOpenDialog: async () => ({ canceled: false, filePaths: [packagePath] }) })
   const simulated = SerialPort as unknown as {
     ports: Array<{ emit(type: string, bytes: Buffer): void }>
     list(): Promise<unknown[]>
@@ -42,6 +80,11 @@ async function main(): Promise<void> {
     sentBytes.push(Buffer.from(data))
     sent.push(Buffer.from(data).toString('utf8'))
     done?.()
+    if (isOa) {
+      const value = Buffer.from(data).toString('utf8')
+      if (value === 'debug\r') setImmediate(() => simulated.ports.at(-1)?.emit('data', Buffer.from('Challenge: CHALLENGE_UI_SMOKE\r\n')))
+      if (value === oaToken + '\r') setImmediate(() => simulated.ports.at(-1)?.emit('data', Buffer.from(oaToken + '\r\nDebug unlocked\r\n')))
+    }
   }
   const serial = new SerialService()
   const invoke = serial.invoke.bind(serial)
@@ -49,14 +92,31 @@ async function main(): Promise<void> {
     if (action === 'open') panelId = id
     return invoke(id, action, payload)
   }
-  const plugins = new PluginService(serial.pluginBridge, [], {
+  const plugins = new PluginService({ serial: serial.pluginBridge }, [], {
     userData, hostPath: join(process.cwd(), 'out/main/plugin-host.js'),
+    auth: {
+      async login(options, signal) {
+        assert.equal((options as { loginUrl: string }).loginUrl, oaConfig.loginUrl)
+        signal.throwIfAborted()
+        loginCalls++
+      },
+      async request(options, signal) {
+        const request = options as { url: string; body: string }
+        assert.equal(request.url, oaConfig.issue.url)
+        assert.ok(JSON.parse(request.body).challenge)
+        issueCalls++
+        if (issueDelayMs) await delay(issueDelayMs, undefined, { signal })
+        signal.throwIfAborted()
+        return { status: 200, text: JSON.stringify({ response: oaToken }) }
+      }
+    },
     hostFactory: (path) => {
       const child = utilityProcess.fork(path, [], { stdio: 'ignore', serviceName: 'DevKit Device Extension' })
       children.push(child)
       return child
     }
   })
+  diagnostics = async () => ({ sent, loginCalls, issueCalls, status: await plugins.invoke(panelId, 'status', {}) })
   await setSection('serial', { ...DEFAULT_SERIAL_CONFIG, last: { ...DEFAULT_SERIAL_PARAMS, path: portName } })
   registerService('serial', serial)
   registerService('plugins', plugins)
@@ -85,34 +145,117 @@ async function main(): Promise<void> {
   await until(() => text('.conn-bar', portName), '模拟设备参数')
   await until(() => click('.conn-bar button', '连接'), '连接模拟串口')
   await until(() => text('.port-status.online', '已连接'), '串口已连接')
-  await until(() => click('.conn-bar [aria-label=设备插件]'), '打开插件入口')
-  await until(() => click('.el-popper button', '插件管理'), '打开插件管理')
-  await until(() => click('.el-tabs__item', '已安装插件'), '插件安装页')
-  await until(() => fill('input[placeholder="插件目录或 JSON 插件包路径"]', join(userData, 'responder.json')), '插件包路径')
-  await until(() => click('.install-row button', '安装'), '安装独立JSON插件包')
-  await until(() => click('.el-message-box__btns button', '信任来源并安装'), '确认可信插件代码执行')
-  await until(() => text('.package-card', 'devkit.text-hex-responder'), '插件注册成功')
-  await until(() => js<boolean>('(() => {const card=[...document.querySelectorAll(".package-card")].find(x=>x.textContent.includes("devkit.text-hex-responder"));const b=card&&[...card.querySelectorAll("button")].find(x=>x.textContent.includes("新建配置"));if(!b)return false;b.click();return true;})()'), '新建插件配置')
-  await until(() => fill('input[placeholder="如：COM3 调试设备"]', '插件集成测试'), '实例名称')
-  await until(() => click('.editor-toggles .el-switch', '绑定后自动监听'), '打开自动监听设置')
-  await until(() => click('.el-dialog__footer button', '保存配置'), '保存schema配置')
-  await until(() => click('.el-tabs__item', '配置与当前串口'), '会话绑定页')
-  await until(() => text('.instance-card', '插件集成测试'), '新实例')
-  await until(() => click('.instance-controls button', '绑定到本串口'), '绑定插件')
-  await until(() => text('.instance-card', '已就绪'), '独立utilityProcess启动')
+  await until(() => click('.app-header button', '扩展'), '打开全局扩展中心')
+  await until(() => click('.extension-center button', '从文件安装…'), '打开插件包安装')
+  await until(() => click('.el-message-box button', '选择文件'), '确认可信插件并选择 JSON 包')
+  await until(() => text('.extension-layout article', manifest.name), '插件注册成功')
+  await until(() => click('.extension-layout article button', '新建配置'), '新建插件配置')
+  const editor = '.el-dialog:has(.plugin-config-form)'
+  await until(() => fill(editor + ' .el-form > .el-form-item input', configName), '实例名称')
+  await until(() => click(editor + ' .el-checkbox input:not(:checked)'), '打开自动监听设置')
+  if (isOa) {
+    await until(() => fill(editor + ' .plugin-config-form textarea', JSON.stringify(oaConfig, null, 2)), '填写模拟 OA 设备配置')
+  }
+  await until(() => click(editor + ' .el-dialog__footer button', '保存配置'), '保存schema配置')
+  await until(() => text('.instance-row', configName), '新实例')
+  const returnToSerial = () => js<boolean>(`(() => {
+    const tab = [...document.querySelectorAll('.tab-select')].find(el => el.textContent.includes(${JSON.stringify(portName)}));
+    if (!tab) return false; tab.click(); return true;
+  })()`)
+  await until(returnToSerial, '返回已连接串口')
+  await until(() => click('.conn-bar [aria-label=设备插件]'), '打开当前串口插件')
+  await until(() => text('.plugin-title', '当前串口插件'), '当前会话插件浮层')
+  await until(() => click('.plugin-actions .el-select__wrapper'), '选择实例')
+  await until(() => click('.el-select-dropdown__item', configName), '选择新实例')
+  await until(() => click('.plugin-actions button', '绑定到当前串口'), '绑定插件')
+  await until(() => text('.conn-bar', '监听中'), '独立utilityProcess启动')
   assert.ok(panelId)
 
   const port = simulated.ports.at(-1)!
+  if (isOa) {
+    const actionLabel = manifest.actions.find((action: { id: string }) => action.id === 'run')?.label
+    assert.ok(actionLabel, 'OA manifest exposes the stable run action')
+    const state = async () => {
+      const result = await plugins.invoke(panelId, 'status', {}) as {
+        statuses: Array<{ bound: boolean; state: string; value?: { running?: boolean } }>; logs: unknown[]
+      }
+      return result
+    }
+    const settled = (automatic = false) => until(async () => (await state()).statuses.some(status =>
+      status.bound && status.state === 'ready' && (!automatic || status.value?.running === false)), 'OA 动作完成并释放事务')
+    const openPopover = async () => {
+      if (!await text('.plugin-title', '当前串口插件')) await until(() => click('.conn-bar [aria-label=设备插件]'), '打开当前串口插件')
+    }
+    const sendFromUi = async (value: string) => {
+      await until(() => fill('input[aria-label="发送内容"]', value), '填写用户发送内容')
+      await until(() => click('.send-bar button', '发送'), '从会话发送用户内容')
+    }
+    await until(() => click('.bound-instance button', actionLabel), '执行外置 OA 手动动作')
+    await until(() => sent.includes(oaToken + '\r'), '真实插件收到挑战并写入临时口令')
+    await settled()
+    assert.equal(loginCalls, 1)
+    assert.equal(issueCalls, 1)
+    assert.deepEqual(sent.slice(0, 2), ['debug\r', oaToken + '\r'])
+
+    // Cross-callback exclusive lease plus user-input hold/replay, through the UI.
+    issueDelayMs = 350
+    port.emit('data', Buffer.from('debug\r\nQ0hBTExFTkdFX0FCQ0Q=\r\n'))
+    await until(() => issueCalls === 2, '自动订阅跨回调取得挑战和事务')
+    const heldStart = sent.length
+    await sendFromUi('HELD')
+    assert.equal(sent.length, heldStart, '授权期间用户输入由宿主扣住')
+    await until(() => sent.includes('HELD\r\n'), '成功后按原序补发扣住的用户输入')
+    assert.deepEqual(sent.slice(heldStart), [oaToken + '\r', 'HELD\r\n'])
+    await settled(true)
+    assert.equal(JSON.stringify(await state()).includes(oaToken), false, '口令不进入状态和诊断日志')
+
+    // Stop while a real plugin RPC is waiting; the stop button must stay usable.
+    issueDelayMs = 1000
+    await openPopover()
+    await until(() => click('.bound-instance button', actionLabel), '启动待取消 OA 动作')
+    await until(() => issueCalls === 3, 'OA 取码请求在途')
+    const beforeCancel = sent.length
+    await until(() => click('.bound-instance button', '停止插件'), 'UI 停止在途 OA 动作')
+    await until(async () => !(await state()).statuses.some(status => status.bound), '停止并回收绑定')
+    await delay(1200)
+    assert.equal(sent.length, beforeCancel, '取消后不得发送迟到口令')
+    await sendFromUi('USER')
+    await until(() => sent.includes('USER\r\n'), '取消后回收串口控制权')
+
+    await openPopover()
+    await until(() => click('.plugin-actions .el-select__wrapper'), '重新选择 OA 实例')
+    await until(() => click('.el-select-dropdown__item', configName), '选择 OA 配置')
+    await until(() => click('.plugin-actions button', '绑定到当前串口'), '重新绑定 OA 插件')
+    await until(() => text('.conn-bar', '监听中'), 'OA 插件重新就绪')
+    await until(() => click('.bound-instance button', actionLabel), '启动待异常退出 OA 动作')
+    await until(() => issueCalls === 4, '异常退出时持有事务')
+    const beforeCrash = sent.length
+    assert.ok(children.at(-1), 'OA runs in a real utilityProcess')
+    children.at(-1)!.kill()
+    await until(async () => (await state()).statuses.some(status => status.state === 'error'), 'OA 进程退出诊断')
+    await delay(1200)
+    assert.equal(sent.length, beforeCrash, '退出进程不得继续写入口令')
+    await sendFromUi('RECOVER')
+    await until(() => sent.includes('RECOVER\r\n'), '异常退出后回收独占事务与扣键')
+    await openPopover()
+    await until(() => click('.error-row button', '一键重试绑定'), 'UI 重试异常退出的 OA 插件')
+    await until(() => text('.conn-bar', '监听中'), 'OA 重试成功')
+    await until(() => click('.bound-instance button', '停止插件'), '结束 OA 插件回归')
+    await writeFile(join(process.cwd(), 'out/plugins-oa-smoke.png'), (await win.capturePage()).toPNG())
+    console.log('PASS Electron OA plugin UI: API v2 JSON install, schema config, manual/automatic challenge, secret write, input hold/replay, in-flight stop, process-exit cleanup and retry')
+    return
+  }
+
   port.emit('data', Buffer.from('PI'))
   await delay(100)
   assert.equal(sent.length, 0, '半行不触发')
   port.emit('data', Buffer.from('NG\r\nPING\n'))
   await until(() => sent.length === 2, '跨批次与连续帧应答')
   assert.deepEqual(sent, ['PONG\r\n', 'PONG\r\n'])
-  await until(() => click('.action-row button', '发送配置的回复'), '手动插件动作')
+  await until(() => click('.bound-instance button', '发送配置的回复'), '手动插件动作')
   await until(() => sent.length === 3, '手动动作完成')
 
-  await until(() => click('.el-dialog__footer button', '关闭'), '关闭插件管理')
+  await until(() => click('.conn-bar [aria-label=设备插件]'), '收起当前串口插件')
   await until(() => click('[aria-label="新建快捷命令"]'), '新建宏')
   await until(() => fill('input[placeholder="如：上电自检流程"]', '插件应答宏'), '宏名称')
   await until(() => click('.steps-head button', '插件动作'), '宏插入插件动作')
@@ -125,8 +268,7 @@ async function main(): Promise<void> {
   assert.deepEqual(sent.slice(-2), ['PONG\r\n', 'AFTER\r\n'])
 
   await until(() => click('.conn-bar [aria-label=设备插件]'), '重新打开插件入口')
-  await until(() => click('.el-popper button', '插件管理'), '重新打开插件管理')
-  await until(() => click('.instance-controls button', '停止'), '停止插件并回收资源')
+  await until(() => click('.bound-instance button', '停止插件'), '停止插件并回收资源')
   await delay(300)
   const before = sent.length
   port.emit('data', Buffer.from('PING\n'))
@@ -139,13 +281,14 @@ async function main(): Promise<void> {
   const instanceId = instances.instances.find(x => x.pluginId === 'devkit.text-hex-responder')?.id
   assert.ok(instanceId)
   const hexConfig = { mode: 'hex', match: 'AA 55', response: '00 FF', newline: 'none',
-    ignoreCase: false, replyDelayMs: 0, maxBufferBytes: 8192 }
+    ignoreCase: false, replyDelayMs: 0, maxBufferBytes: 8192,
+    ...(manifest.configSchema.properties.rules ? { rules: [] } : {}) }
   const saved = await plugins.invoke(panelId, 'instance:save', { instance: {
     id: instanceId, pluginId: 'devkit.text-hex-responder', label: 'HEX regression',
     enabled: true, autoEnabled: true, config: hexConfig
   } }) as { ok: boolean; error?: string }
   assert.equal(saved.ok, true, saved.error)
-  const bound = await plugins.invoke(panelId, 'bind', { instanceId }) as { ok: boolean; error?: string }
+  const bound = await plugins.invoke(panelId, 'bind', { instanceId, transport: 'serial' }) as { ok: boolean; error?: string }
   assert.equal(bound.ok, true, bound.error)
   const hexStart = sentBytes.length
   port.emit('data', Buffer.from([0xaa]))
@@ -172,7 +315,7 @@ async function main(): Promise<void> {
   await delay(1200)
   assert.equal(sentBytes.length, beforeCancel, 'stop cancels delayed response')
 
-  const rebound = await plugins.invoke(panelId, 'bind', { instanceId }) as { ok: boolean; error?: string }
+  const rebound = await plugins.invoke(panelId, 'bind', { instanceId, transport: 'serial' }) as { ok: boolean; error?: string }
   assert.equal(rebound.ok, true, rebound.error)
   const child = children.at(-1)
   assert.ok(child, 'real utilityProcess was forked')
@@ -187,12 +330,12 @@ async function main(): Promise<void> {
   assert.equal(sentBytes.length, afterCrash, 'dead process must not write')
   const userWrite = await serial.invoke(panelId, 'write', { text: 'RECOVER', mode: 'ascii', newline: 'none' }) as { ok?: boolean }
   assert.equal(userWrite.ok, true, 'serial lease released after process exit')
-  const restart = await plugins.invoke(panelId, 'bind', { instanceId }) as { ok: boolean; error?: string }
+  const restart = await plugins.invoke(panelId, 'bind', { instanceId, transport: 'serial' }) as { ok: boolean; error?: string }
   assert.equal(restart.ok, true, restart.error)
   const finalStop = await plugins.invoke(panelId, 'stop', { instanceId }) as { ok: boolean }
   assert.equal(finalStop.ok, true)
   await writeFile(join(process.cwd(), 'out/plugins-smoke.png'), (await win.capturePage()).toPNG())
-  console.log('PASS Electron plugin UI: JSON install, schema config, binding, utilityProcess, split RX, manual action, macro ordering, stop and lock release')
+  console.log('PASS Electron plugin UI: extension-center JSON install, schema config, current-session binding, utilityProcess, split text/HEX, manual action, macro ordering, delayed cancellation, process exit and lock release')
   if (process.env.DEVKIT_PLUGIN_SMOKE_HOLD === '1') {
     console.log('HOLD: fixture window is available for interactive inspection')
     await new Promise<void>(() => {})
@@ -200,6 +343,7 @@ async function main(): Promise<void> {
 }
 void main().then(() => 0, async(error: unknown) => {
   console.error(error)
+  if (diagnostics) console.error('PLUGIN DIAGNOSTICS', JSON.stringify(await diagnostics().catch(() => 'Unavailable')))
   if (win) {
     console.error(await win.webContents.executeJavaScript('document.body.innerText').catch(() => 'UI unavailable'))
     await writeFile(join(process.cwd(), 'out/plugins-smoke-failure.png'), (await win.capturePage()).toPNG()).catch(() => {})

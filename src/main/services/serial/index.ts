@@ -85,6 +85,14 @@ interface SerialSession {
   wakeBurstNotePending: boolean
   wakeBurstNoted: boolean
   /** 本连接登记的口令（插件 secret 写入）：回显在显示与日志中遮蔽 */
+  /** 自动应答期间的输入保持：判定接受才回放，拒绝/超时丢弃 */
+  hold?: {
+    owner: string
+    chunks: { buf: Buffer; audit: string }[]
+    bytes: number
+    maxBytes: number
+    timer: NodeJS.Timeout
+  }
   secrets?: SerialSecretRedactor
 }
 
@@ -127,7 +135,16 @@ export class SerialService implements ToolService {
         if (!listeners!.size && this.pluginListeners.get(panelId) === listeners) this.pluginListeners.delete(panelId)
       }
     },
-    acquire: (panelId, owner, signal) => this.acquirePluginLease(panelId, owner, signal)
+    acquire: (panelId, owner, signal) => this.acquirePluginLease(panelId, owner, signal),
+    beginHold: (panelId, owner, options) => {
+      const session = sessions.get(panelId)
+      if (!session?.port.isOpen || session.suspendedAt !== null) throw new Error('串口未打开')
+      this.beginHold(session, options, owner)
+    },
+    endHold: (panelId, owner) => {
+      const session = sessions.get(panelId)
+      return session ? this.endHold(session, owner) : []
+    }
   }
 
   private notifyPlugins(panelId: string, event: StreamEvent): void {
@@ -495,6 +512,7 @@ export class SerialService implements ToolService {
     const now = Date.now()
     for (const [panelId, s] of sessions) {
       this.fileCancel(panelId)
+      this.discardHold(s)
       s.broker.close(new Error('系统进入休眠，串口事务已终止'))
       this.finishPluginData(panelId, s)
       this.notifyPlugins(panelId, { type: 'closed', connectionId: s.connectionId, reason: 'system-suspend' })
@@ -676,6 +694,7 @@ export class SerialService implements ToolService {
     const s = sessions.get(panelId)
     if (!s) return { ok: true }
     this.fileCancel(panelId)
+    this.discardHold(s)
     s.broker.close(new Error('串口已断开'))
     this.finishPluginData(panelId, s)
     this.notifyPlugins(panelId, { type: 'closed', connectionId: s.connectionId, reason: 'disconnected' })
@@ -725,6 +744,7 @@ export class SerialService implements ToolService {
     // ASCII 发送记录解码前文本（buf 可能是 GBK 编码，toString('utf8') 会乱码；hex 模式不存在多字节问题）；
     // txAuditLine 把控制字符转成可见字面量：一次发送 = 一行日志（否则正文里的 \r 会被换行归一拆成幻影空行）
     const auditText = p.mode === 'hex' ? buf.toString('hex').replace(/../g, '$& ').trim() : txAuditLine(p.text + nl)
+    if (s.hold) return this.holdWrite(s, buf, auditText)
     try {
       s.broker.writeNow(buf, (error) => { if (error) this.emit(panelId, 'error', { message: `串口写入失败：${error.message}` }) })
     } catch (error) { return { ok: false, error: error instanceof Error ? error.message : '串口写入失败' } }
@@ -742,6 +762,45 @@ export class SerialService implements ToolService {
       rxBytes: s.rxBytes,
       txBytes: s.txBytes
     })
+  }
+
+  /** 自动应答开始前扣住用户输入；超时兜底丢弃，绝不把未知内容送进口令提示。 */
+  private beginHold(s: SerialSession, options: { maxBytes: number; maxMs: number }, owner: string): void {
+    if (s.hold) {
+      if (s.hold.owner !== owner) throw new Error('输入已被其他插件保持')
+      return
+    }
+    const hold: NonNullable<SerialSession['hold']> = {
+      owner, chunks: [], bytes: 0, maxBytes: options.maxBytes,
+      timer: setTimeout(() => { if (s.hold === hold) s.hold = undefined }, options.maxMs)
+    }
+    s.hold = hold
+  }
+
+  private holdWrite(s: SerialSession, buf: Buffer, audit: string): { ok: true; bytes: number; held: true } {
+    const hold = s.hold!
+    hold.chunks.push({ buf, audit })
+    hold.bytes += buf.length
+    while (hold.bytes > hold.maxBytes && hold.chunks.length) {
+      hold.bytes -= hold.chunks.shift()!.buf.length
+    }
+    return { ok: true, bytes: buf.length, held: true }
+  }
+
+  private discardHold(s: SerialSession): void {
+    if (!s.hold) return
+    clearTimeout(s.hold.timer)
+    s.hold = undefined
+  }
+
+  /** 结束保持并交出扣住的发送，由插件在自己的串口事务内决定回放或丢弃。 */
+  private endHold(s: SerialSession, owner: string): Uint8Array[] {
+    const hold = s.hold
+    if (!hold || hold.owner !== owner) return []
+    clearTimeout(hold.timer)
+    s.hold = undefined
+    if (!s.port.isOpen) return []
+    return hold.chunks.map(({ buf }) => buf)
   }
 
   /** 热切换收发编码：只影响之后的线上字节；切换前已按旧编码解码的显示/日志不回溯。

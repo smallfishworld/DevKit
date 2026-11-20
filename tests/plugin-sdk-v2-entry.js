@@ -15,6 +15,7 @@ const {
 } = require('../packages/plugin-sdk/src/index')
 const { PluginSources } = require('../src/main/services/plugins/sources')
 const { PluginService } = require('../src/main/services/plugins/index')
+const { PluginStore } = require('../src/main/services/plugins/store')
 const { configFields, visibleConfigFields } = require('../src/renderer/src/components/plugin-config-form')
 
 function makeMemoryBridge(transport, target) {
@@ -124,6 +125,31 @@ async function test() {
   await assert.rejects(harness.ctx.stream.write('AFTER'), /stopped/)
   console.log('  PASS SDK createMockPluginContext 夹具与 AbortSignal 中止')
 
+  const protocol = createMockPluginContext({
+    onWrite(data) { protocol.emitData(String(data) === 'CHALLENGE' ? 'DEVICE-CHALLENGE' : 'OK') },
+    onAuthLogin: async () => {},
+    onAuthRequest: async () => ({ status: 200, text: 'TOKEN' })
+  })
+  const received = []
+  const stopListening = protocol.ctx.stream.subscribe(event => received.push(event.text))
+  const protocolLease = await protocol.ctx.stream.acquire()
+  await protocol.ctx.stream.hold({ maxBytes: 512, maxMs: 1000 })
+  await protocolLease.write('CHALLENGE')
+  assert.deepEqual(received, ['DEVICE-CHALLENGE'], 'subscribe is active before immediate protocol replies')
+  await protocol.ctx.auth.login({ loginUrl: 'https://test.invalid/login', check: { type: 'http-ok', url: 'https://test.invalid/session' } })
+  const token = await protocol.ctx.auth.request({ loginUrl: 'https://test.invalid/login', url: 'https://test.invalid/token' })
+  await protocolLease.write(token.text, { secret: true })
+  assert.equal(protocol.writes.at(-1).options.secret, true)
+  await protocol.ctx.stream.releaseHold(true)
+  await protocolLease.release()
+  assert.deepEqual(protocol.leases, { active: false, acquired: 1, released: 1 })
+  assert.deepEqual(protocol.holds.releases, [true])
+  stopListening()
+  protocol.emitData('unsubscribed')
+  assert.deepEqual(received, ['DEVICE-CHALLENGE', 'OK'])
+  await assert.rejects(protocolLease.write('stale'), /事务已结束/)
+  console.log('  PASS SDK v2 explicit lease, input hold, immediate subscription and auth protocol fixtures')
+
   // 4. Sources v2 governance (minHostVersion + yanked + deprecated)
   const root = await fs.mkdtemp(join(tmpdir(), 'devkit-sdk-v2-'))
   try {
@@ -142,6 +168,23 @@ async function test() {
     await assert.rejects(sources.package(added.id, futureEntry.id, sha256, 4096), /DevKit >= 9\.0\.0/)
     assert.deepEqual(await sources.package(added.id, okEntry.id, sha256, 4096), pkgBytes)
     console.log('  PASS 扩展源 v2 版本兼容、yanked 拦截与 deprecated 透传')
+
+    const sourceService = new PluginService({}, [], {
+      userData: root, hostVersion: '0.1.10', emit() {},
+      download: async (url) => url === indexUrl ? idxBuf : pkgBytes
+    })
+    const sourced = await sourceService.invoke('plugin-catalog', 'sources:install', { sourceId: added.id, pluginId: okEntry.id, sha256 })
+    assert.equal(sourced.ok, true, sourced.error)
+    assert.deepEqual(sourced.plugin.installSource, { name: 'V2 Source', url: indexUrl })
+    assert.deepEqual((await new PluginStore(root).listInstalled())[0].installSource, sourced.plugin.installSource, 'source provenance survives host restart')
+    const localBundle = join(root, 'local.json')
+    await fs.writeFile(localBundle, pkgBytes)
+    assert.equal((await new PluginStore(root).install(localBundle, new Set())).installSource, undefined, 'local replacement clears previous source provenance')
+    assert.equal((await new PluginStore(root).listInstalled())[0].installSource, undefined)
+    await fs.writeFile(localBundle, JSON.stringify({ manifest, files: { 'src/index.cjs': 'exports.activate=()=>({})', '.devkit-install-source.json': '{}' } }))
+    await assert.rejects(new PluginStore(root).install(localBundle, new Set()), /宿主保留文件/, 'packages cannot forge source provenance')
+    await sourceService.dispose('*')
+    console.log('  PASS v2 source install provenance persists across restart and rejects forged package metadata')
 
     // 5. PluginService multi-transport (SSH + Net + Serial)
     const serial = makeMemoryBridge('serial', 'COM3')

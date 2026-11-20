@@ -1,4 +1,4 @@
-/** Separate, trusted-code extension host (API v2). Does not own or open transport handles. */
+/** Separate, trusted-code extension host (API v2). Does not own transport handles. */
 import { pathToFileURL } from 'node:url'
 import type { PluginContext, PluginModuleInstance, StreamSessionInfo } from '../../../shared/plugins'
 
@@ -13,6 +13,8 @@ let counter = 0
 const pending = new Map<string, { resolve(value: unknown): void; reject(error: Error): void }>()
 let instance: PluginModuleInstance | undefined
 const controller = new AbortController()
+const streams = new Map<string, (event: unknown) => void>()
+function errorMessage(error: unknown): string { return error instanceof Error ? error.message : String(error) }
 
 function rpc(method: string, args: unknown[]): Promise<unknown> {
   if (controller.signal.aborted) return Promise.reject(new Error('插件已停止'))
@@ -33,8 +35,14 @@ async function handle(message: Message): Promise<void> {
   }
   if (message.type === 'cancel') {
     controller.abort(new Error('插件已停止'))
+    streams.clear()
     for (const request of pending.values()) request.reject(controller.signal.reason as Error)
     pending.clear()
+    return
+  }
+  if (message.type === 'data' && typeof message.stream === 'string') {
+    const handler = streams.get(message.stream)
+    if (handler) handler(message.event)
     return
   }
   if (message.type !== 'call' || typeof message.id !== 'string') return
@@ -53,7 +61,46 @@ async function handle(message: Message): Promise<void> {
         signal: controller.signal,
         stream: {
           write: (data, options) => rpc('stream.write', [data, options ?? {}]) as ReturnType<PluginContext['stream']['write']>,
-          exchange: (data, options) => rpc('stream.exchange', [data, options]) as ReturnType<PluginContext['stream']['exchange']>
+          exchange: (data, options) => rpc('stream.exchange', [data, options]) as ReturnType<PluginContext['stream']['exchange']>,
+          subscribe: (listener) => {
+            if (typeof listener !== 'function') throw new Error('stream.subscribe 需要函数')
+            const stream = 'stream-' + (++counter)
+            const handler = (value: unknown): void => {
+              if (controller.signal.aborted) return
+              try { listener(value as Parameters<typeof listener>[0]) }
+              catch (error) { send({ type: 'log', level: 'error', message: 'data 监听回调异常：' + errorMessage(error) }) }
+            }
+            streams.set(stream, handler)
+            void rpc('stream.subscribe', [stream]).catch((error: Error) => {
+              streams.delete(stream)
+              send({ type: 'log', level: 'error', message: error.message })
+            })
+            return () => {
+              if (!streams.delete(stream)) return
+              void rpc('stream.unsubscribe', [stream]).catch(() => {})
+            }
+          },
+          acquire: async () => {
+            const reply = await rpc('stream.acquire', []) as { connectionId: string; leaseId: string }
+            let released = false
+            return {
+              connectionId: reply.connectionId,
+              write: (data, options) => released
+                  ? Promise.reject(new Error('流事务已结束'))
+                  : rpc('stream.lease.write', [reply.leaseId, data, options ?? {}]) as ReturnType<PluginContext['stream']['write']>,
+              release: async () => {
+                if (released) return
+                released = true
+                await rpc('stream.lease.release', [reply.leaseId])
+              }
+            }
+          },
+          hold: (options) => rpc('stream.hold', [options ?? {}]) as ReturnType<PluginContext['stream']['hold']>,
+          releaseHold: (replay) => rpc('stream.releaseHold', [replay === true]) as ReturnType<PluginContext['stream']['releaseHold']>
+        },
+        auth: {
+          login: (options) => rpc('auth.login', [options]) as ReturnType<NonNullable<PluginContext['auth']>['login']>,
+          request: (options) => rpc('auth.request', [options]) as ReturnType<NonNullable<PluginContext['auth']>['request']>
         },
         log: (level, text) => send({ type: 'log', level, message: String(text).slice(0, 4096) }),
         state: (value) => send({ type: 'state', value })
