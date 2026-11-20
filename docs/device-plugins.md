@@ -1,92 +1,68 @@
-# 设备插件（API v1）
+# 设备插件（API v2）
 
-## 安装与运行
+## 架构概览与契约包
 
-串口面板提供插件管理入口，用于安装与运行用户安装的可信 JavaScript 插件。外部插件运行于独立 Electron utilityProcess，串口仍由 DevKit 主进程持有。**该进程不是安全沙箱**：插件仍能使用 Node.js 文件系统、网络和环境变量；manifest 的 capabilities 仅约束 DevKit 提供的串口 API。只安装经过核实的可信插件，安装前 UI 会再次确认。
+DevKit 插件体系基于独立同构契约包 `packages/plugin-sdk`（`@devkit/plugin-sdk`），统一导出 API v2 类型、`validateSchema`/`validateConfig`/`applyDefaults`、`parseManifest`/`satisfiesMinVersion` 与官方单测夹具 `createMockPluginContext`。宿主通过通用流会话抽象 `StreamSessionBridge` 向插件开放 **串口（`serial`）、SSH（`ssh`）、网络调试（`net`）与本地终端（`pty`）** 四类传输能力。
 
-1. 导入包含 manifest.json 和入口文件的本地插件目录，或自包含 JSON 插件包；API v1 不支持直接导入 ZIP。
-2. 选择插件并创建配置实例。实例保存配置，不等于已经连接设备。
-3. 打开串口，将配置实例绑定到该会话；自动监听需要明确启用。
-4. 从管理器运行手动动作，或在快捷命令中插入插件动作。
-5. 停止/解绑会取消任务并清理实例资源；串口断开、系统休眠后也会解除绑定，恢复后需要重新绑定。
+外部插件运行于独立 Electron `utilityProcess`，底层传输句柄仍由 DevKit 主进程持有。**该进程提供崩溃隔离而非安全沙箱**：插件仍能使用 Node.js 文件系统与网络；`capabilities` 仅约束 DevKit 提供的流 API。请仅安装经过核实的可信插件。
 
-安装插件不自动获得已连接串口的控制权。一个配置实例同一时间只绑定一个会话；要同时使用多个串口，创建多个实例。
+## 安装、开发热重载与运行
 
-## 插件目录
+1. 从扩展中心安装本地插件目录、自包含 JSON 插件包或 HTTPS 扩展源（v2 索引）；不直接导入 ZIP。
+2. 开发者可在开发态调用 `watch:start` / `watch:stop` 监听本地插件目录，源码或清单改动时自动防抖重装并安全重绑活跃实例。
+3. 选择插件并创建配置实例（`configVersion: 2`）；在已连接的串口、SSH 或网络面板中按 `transports` 过滤并手动绑定。
+4. 插件运行态的高频 `status` 与 `log` 事件通过增量通道直接同步到前端 Store，异常停止时浮层提供「一键重试绑定」。
 
-最小插件包含 manifest.json 与 index.cjs。示例入口导出 CommonJS activate(ctx)，返回手动动作所需的 run、自动监听所需的 onData，以及可选的 dispose：
+## 插件入口与 Manifest（API v2）
+
+最小插件包含 `manifest.json` 与 `src/index.cjs`（在 `DevKit-Plugins` 中也支持直接编写 `src/index.ts` 由内置 `esbuild` 管线自动预打包）：
 
 ```js
 exports.activate = async ctx => ({
   async run(actionId, args) {
-    const result = await ctx.serial.exchange('AT\r\n', {
+    ctx.signal.throwIfAborted()
+    const result = await ctx.stream.exchange('AT\r\n', {
       match: 'OK', timeoutMs: 3000
     })
     return { ok: true, response: result.text }
   },
   async onData(event) {
     // event.bytes 为 number[]；event.text 是流式解码文本。
-    // 一次回调不保证是完整协议帧，需在实例中维护协议缓存。
   },
   async dispose() {
     // 清理插件自己的定时器和缓存。
   }
 })
-
 ```
 
-manifest 字段：
+### manifest 字段
 
 | 字段 | 含义 |
 |---|---|
-| id / name / version | 稳定插件 ID、显示名、插件版本 |
-| apiVersion | 当前为 1，不兼容版本拒绝安装 |
-| entry | 插件目录内的预编译 JavaScript 入口（.js、.cjs 或 .mjs）；示例使用 CommonJS |
-| configSchema | 配置结构及默认值 |
-| actions | id、label、可选 description 的动作列表 |
-| autoRespond | 是否提供自动监听能力 |
-| capabilities | API v1 仅接受 serial.read、serial.write；其他能力名会拒绝安装 |
+| `id` / `name` / `version` | 稳定命名空间 ID、显示名、SemVer 版本 |
+| `apiVersion` | 固定为 `2` |
+| `minHostVersion`（可选） | 最低兼容 DevKit 宿主版本，低于该值时拒绝安装与绑定 |
+| `transports` | 必填非空数组，声明支持的传输类型：`serial`、`ssh`、`net`、`pty` |
+| `entry` | 插件目录内的预编译 JS 入口（`.js`、`.cjs` 或 `.mjs`） |
+| `configSchema` | 顶层为 `object` 的受控 Schema，支持 `x-visibleWhen` 条件显隐与对象数组规则编辑 |
+| `actions` | `id`、`label`、可选 `description` 的动作列表（最多 32 项） |
+| `autoRespond` | 是否提供自动监听能力 |
+| `capabilities` | API v2 仅接受 `stream.read`、`stream.write`（`autoRespond: true` 须声明 `stream.read`） |
 
-配置表单支持 object/string/number/integer/boolean/array、enum、required、默认值、长度与数值范围等常用 schema 子集。复杂数组/对象可在 JSON 编辑器填写；主进程再次校验。该 schema 不是完整 JSON Schema 实现；不支持的关键字会拒绝安装，不能使用 oneOf、$ref 等未实现的约束。
+### 条件显隐与多规则数组表单
 
-## SDK
+- `x-visibleWhen`：支持 `{ field, equals?, notEquals?, in? }`，根据同级字段值动态显隐表单项；隐藏字段在保存校验时自动跳过 `required` 检查。
+- 对象数组控件：当字段声明 `type: "array"` 且 `items.type === "object"` 时，表单自动渲染规则卡片列表，支持新增、删除及嵌套子字段的 `x-visibleWhen`。
 
-- ctx.config：本次实例配置快照。
-- ctx.autoEnabled：本次绑定是否启用自动监听；onData 还要求 manifest.autoRespond 为 true。
-- ctx.session：panelId、connectionId、串口路径和编码信息。
-- ctx.serial.write(data, options)：发送字符串或字节数组，单次 1 至 65536 字节。字符串默认 UTF-8，可指定 encoding 为 hex；不会自动按会话编码转为 GBK，需要其他编码时传字节数组。secret 标记接入宿主敏感值处理。
-- ctx.serial.exchange(data, options)：先注册新响应等待器再发送，累计新接收数据并等待 match 子串。encoding 为 hex 时按十六进制字节匹配（忽略 match 中空格和大小写），其余情况匹配文本。timeoutMs 默认 5000、范围 10 至 30000 毫秒；maxBytes 默认 65536、最大 262144。返回 text、bytes、receivedAt；超时、超限或取消会抛错。响应等待计时在取得串口租约之后开始，不包含租约排队时间。
-- ctx.log(level, message)：level 为 debug、info、warn 或 error；诊断日志在内存中全局保留最近 300 条，每条最多 4096 字符。勿写入口令或 Cookie。
-- ctx.state(value)：上报可 JSON 序列化的插件状态，序列化后最多 16384 字符；不合法或超限的状态被忽略并记警告。旧绑定实例迟到的状态和日志会被丢弃。
-- run(actionId, args)：手动动作；返回 {ok:false,error} 可使宏停止，成功返回 {ok:true,...}。
-- onData(event)：自动监听事件；按顺序处理，队列最多 128 个事件或 256 KiB 接收字节。任一上限被超过时会停止实例并报错，不会静默丢帧后继续应答。外部插件每次 onData 回调最长等待 30 秒，超时后停止实例并提示手动排查、重新绑定；为避免设备命令重复执行，不自动重启。
-- dispose()：停止、更新、断开或销毁时清理自有资源。
+## SDK 运行时上下文（`PluginContext`）
 
-所有 serial 调用必须在 run 或 onData 回调中顺序 await，确保回调返回前已完成。不支持对同一实例并发执行多个 write/exchange，也不要从脱离回调生命周期的定时器发起串口请求。插件应在 dispose 中清理自己的定时器；宿主会取消在途请求，并在清理超时后结束外部进程。
+- `ctx.config`：本次实例配置快照（已按 Schema 填充默认值）。
+- `ctx.autoEnabled`：本次绑定是否启用自动监听。
+- `ctx.session`：`{ panelId, connectionId, transport, target, encoding }`。
+- `ctx.signal`：`AbortSignal`（内置与外部插件均可用），在停止、解绑、断开或热重载时触发中止。
+- `ctx.stream.write(data, options)`：发送字符串或字节数组（1 至 65536 字节），支持 `encoding: 'utf8' | 'hex'` 与 `secret: true`。
+- `ctx.stream.exchange(data, options)`：先订阅响应再写入，等待 `match` 子串，`timeoutMs`（10–30000ms）与 `maxBytes`（1–262144）。
+- `ctx.log(level, message)` / `ctx.state(value)`：增量上报诊断日志（全局保留最近 300 条）与运行态指标（≤ 16 KiB）。
+- `run(actionId, args)`：失败时须直接 `throw Error` 以中止宿主宏后续步骤。
 
-宿主统一仲裁动作与其他发送来源。有写权限的手动动作取得租约后持有至动作结束；自动回调在首次需要发送时申请租约，持有至该回调结束。取消正在进行的底层串口写入时，逻辑任务会立即收到取消错误，但租约要等驱动的写入完成回调后才能交给下一个事务；如果驱动永不回调，需要断开/重连端口来恢复。插件租约按 FIFO 等待（最多 64 项），可通过停止实例取消等待；队列已满、取消或连接变化会明确失败。终端直接输入等同步发送在串口被占用时立即拒绝。插件不应通过导入 serialport 自行打开端口。重连后的连接身份不同，旧实例不能继续写入新连接。
-
-## 例子
-
-- examples/plugins/text-hex-responder：完整的文本/HEX 自动应答插件，支持分批、多次命中、延时与停用清理。
-- examples/plugins/template：主动查询和等待响应的起始模板。
-
-## 配置与版本
-
-插件包、用户配置实例、运行中会话绑定分别管理。配置实例有独立 ID 和 configVersion。卸载插件包会停止相关实例并保留其配置与 ID，重新安装后可以恢复使用；明确删除配置实例才会删除该实例，引用它的快捷命令需要重新选择。停用实例不会删除配置。运行中修改普通参数需先停止或等待动作完成；禁用和关闭自动监听会取消在途工作。空闲绑定实例更新配置时重建并使用新快照，不会把旧 busy 状态复制给新的监听对象。
-已绑定的插件不能直接覆盖安装，需先解除相关绑定。更新包校验通过后再切换，失败保留已安装版本；已有实例下次绑定时按新 schema 校验。当前仅支持 apiVersion: 1 和 configVersion: 1，没有任意版本之间的自动配置迁移。
-
-## 信任与运行边界
-
-API v1 外部包是用户信任的本地代码。utilityProcess 隔离卡死/崩溃并便于终止，但仍具有 Node API；能力清单不构成文件和网络的操作系统沙箱。不要安装来源不可信的代码。
-串口端口由宿主统一管理。插件自动布防与安装分开，敏感串口事务不应向无关监听者广播秘密。
-
-## 验证
-
-独立协议测试：node examples/plugins/text-hex-responder/test.cjs。
-宿主单元与集成测试挂入 npm test；Electron 插件冒烟验证实际构建后的独立 worker、安装、绑定和动作。
-Box 的模拟串口与 Linux Electron 测试不替代 Windows CI 和真实设备联调。实际通过项见[三阶段验收记录](../openspec/changes/archive/2026-11-16-add-device-plugin-system/tasks.md)和 PR。
-
-## 插件包生成
-
-在仓库执行 `npm run plugin:pack -- examples/plugins/text-hex-responder <输出路径>.json` 生成自包含 JSON 包，包含 manifest 和文本文件映射。目录和 JSON 包均可安装；API v1 不直接解压 ZIP，不运行安装脚本。包上限 4 MiB、128 个文件，不含 node_modules；运行依赖请预先打包到 JS。
+所有 `ctx.stream` 调用必须在 `run` 或 `onData` 回调内顺序 `await`，禁止对同一实例并发调用 `write`/`exchange`；若存在延时发送，插件内部须维护串行写队列并在 `dispose` / `reset` / `ctx.signal` 中止时取消待发定时器。

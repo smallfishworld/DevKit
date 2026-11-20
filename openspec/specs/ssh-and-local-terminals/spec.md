@@ -78,3 +78,12 @@ SSH 和本地终端 MUST 在输出工具栏中提供可点击的显示设置入�
 
 - **WHEN** 用户在 SSH 或本地终端打开显示设置并调整字号
 - **THEN** 当前终端应用新字号，连接或 Shell 进程仍可继续运行。
+
+### Requirement: SSH 会话接入设备插件
+
+SSH 服务 MUST 实现 `StreamSessionBridge`（`transport: 'ssh'`），SSH 面板工具栏 MUST 提供设备插件入口，支持将声明 `ssh` 传输能力的插件实例绑定到当前已连接会话，并在断开连接时自动解除绑定与释放写入租约。
+
+#### Scenario: 在 SSH 会话运行插件动作
+
+- **WHEN** 用户连接 SSH 后在工具栏绑定支持 `ssh` 的插件并触发动作或自动应答
+- **THEN** 插件通过受控 `ctx.stream` 读写当前 SSH 通道，断开 SSH 后插件自动停止且不再写入。

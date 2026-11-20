@@ -2,119 +2,57 @@
 
 ## Purpose
 
-为串口设备扩展提供可信本地 JavaScript 插件、配置实例、受控串口会话和可诊断的独立运行时。
+基于独立同构契约包 `@devkit/plugin-sdk`（API v2），为串口、SSH、网络调试及本地终端等流会话提供可信本地 JavaScript 插件、可视化条件/多规则配置实例、受控 `StreamSessionBridge` 会话租约、开发态热重载与可治理的 HTTPS 扩展源。
 
 ## Requirements
 
-### Requirement: 插件安装与兼容性
-宿主 SHALL 支持安装可信本地设备插件，校验插件 ID、版本、API 版本和入口范围。
+### Requirement: 独立契约包与插件安装兼容性
+宿主与插件仓库 SHALL 共享独立的同构契约包 `packages/plugin-sdk`（`@devkit/plugin-sdk`），统一提供 API v2 类型、Manifest/Schema 校验器、语义版本比较与官方单测夹具 `createMockPluginContext`。宿主 SHALL 校验插件 ID、版本、`apiVersion: 2`、`minHostVersion`、`transports` 与入口范围。
 #### Scenario: 安装兼容插件
-- WHEN 用户选择有效的本地插件包或目录
-- THEN 插件出现在列表中，安装本身不触发串口写入。
-#### Scenario: 安装无效或越界插件
-- WHEN manifest 无效、API 不兼容或入口越出插件目录
-- THEN 安装失败并说明原因，既有插件和用户配置不被覆盖。
+- **WHEN** 用户选择有效的本地插件包或目录，且满足 `apiVersion: 2` 与 `minHostVersion`
+- **THEN** 插件出现在列表中，安装本身不触发任何流会话写入。
+#### Scenario: 安装无效、越界或不满足宿主最低版本的插件
+- **WHEN** manifest 无效、`apiVersion` 不为 2、当前宿主版本低于 `minHostVersion` 或入口越出插件目录
+- **THEN** 安装失败并说明原因，既有插件和用户配置不被覆盖。
 
-### Requirement: 插件配置实例
-宿主 SHALL 将插件包、配置实例和会话绑定分开管理，保存前执行服务端校验。
+### Requirement: 插件配置实例与条件/多规则表单
+宿主 SHALL 将插件包、配置实例（`configVersion: 2`）和会话绑定分开管理，保存前执行服务端 Schema 校验。配置 Schema SHALL 支持 `x-visibleWhen` 条件显隐与对象数组（`type: "array"` + `items.type: "object"`）规则编辑；隐藏字段在保存校验时跳过 `required` 检查。
+#### Scenario: 条件显隐与多规则编辑
+- **WHEN** 插件 Schema 声明 `x-visibleWhen`（如 HEX 模式下隐藏文本换行/大小写项）或对象数组规则字段
+- **THEN** 配置表单按当前字段值实时切换可见项，并提供规则的增删与子字段编辑。
 #### Scenario: 配置实例独立
-- WHEN 同一个插件创建两个不同配置实例并绑定不同串口
-- THEN 参数与运行状态互不影响。
-#### Scenario: 配置失效
-- WHEN 用户保存不符合 schema 的配置
-- THEN 显示字段错误且保留原有效配置。
+- **WHEN** 同一个插件创建两个不同配置实例并绑定不同会话面板
+- **THEN** 参数与运行状态互不影响。
 
-### Requirement: 可视化配置与动作发现
-插件 SHALL 可贡献配置结构和动作元数据；宿主 SHALL 显示表单、动作和诊断。
-#### Scenario: 普通应答插件
-- WHEN 安装普通应答插件
-- THEN 无需填写额外业务字段即可配置、绑定和运行。
+### Requirement: 通用流会话桥接与多协议动作发现
+宿主 SHALL 通过 `StreamSessionBridge`（支持 `serial`、`ssh`、`net`、`pty`）向插件提供受控 `ctx.stream.write` / `ctx.stream.exchange` 与 `ctx.signal`，并按 `manifest.transports` 过滤可绑定会话。
+#### Scenario: 多协议绑定
+- **WHEN** 插件声明 `transports: ["serial", "ssh", "net"]`
+- **THEN** 用户可在已连接的串口、SSH 或网络调试面板中绑定同一插件配置并执行手动动作或自动应答。
 #### Scenario: 快捷命令调用插件
-- WHEN 宏包含已安装插件的有效动作引用
-- THEN 宿主等待动作结果后再继续，失败或取消时按现有宏语义停止。
-#### Scenario: 插件缺失
-- WHEN 引用的插件不存在或不兼容
-- THEN 宏保留引用并报告缺失，不静默跳过执行。
+- **WHEN** 宏包含已安装插件的有效动作引用
+- **THEN** 宿主等待动作结果后再继续，插件失败抛出异常或被取消时按宏语义中止后续步骤。
 
-### Requirement: 隔离的扩展运行时
-外部 JavaScript 插件 SHALL 在独立进程中运行，宿主保有串口并验证绑定会话。
-#### Scenario: 插件进程退出
-- WHEN 插件崩溃、超时或被禁用
-- THEN 在途任务被取消，监听和事务被释放，其他串口继续可用。
+### Requirement: 隔离的扩展运行时、增量同步与一键恢复
+外部 JavaScript 插件 SHALL 在独立 `utilityProcess` 中运行，宿主保有底层会话并验证 `connectionId` 租约。前端状态管理 SHALL 对高频 `status` 与 `log` 事件采用增量写入而非全量 `snapshot` 刷新，并在实例异常停止时提供一键重试绑定入口。
+#### Scenario: 插件进程退出或异常
+- **WHEN** 插件崩溃、超时或被禁用
+- **THEN** `ctx.signal` 触发中止，在途任务与租约被释放，其他会话继续可用；插件浮层展示错误并提供一键重试绑定按钮。
 #### Scenario: 连接已变化
-- WHEN 旧动作在串口重连后返回
-- THEN 旧动作不得写入新的连接。
-#### Scenario: 插件停止
-- WHEN 用户停用已运行插件
-- THEN 停止新的触发并取消在途工作，不留下定时器、订阅或端口租约。
+- **WHEN** 旧动作在会话重连后返回
+- **THEN** 旧动作不得写入新的连接。
 
-### Requirement: 数据与事务
-插件 SHALL 可处理原始字节，宿主 SHALL 协调插件与其他发送来源。
-#### Scenario: 分批协议输入
-- WHEN 一个帧被拆为多次接收或一次接收包含多帧
-- THEN 插件按协议缓存与消费数据，不假设一次 data 回调就是一帧。
-#### Scenario: 发送者冲突
-- WHEN 插件持有设备事务而其他来源申请发送
-- THEN 宿主按确定策略排队或拒绝，协议交互不被插入破坏。
+### Requirement: 开发态本地目录热重载
+宿主 SHALL 支持对本地插件开发目录开启 `watch:start` / `watch:stop` 文件监听。
+#### Scenario: 修改本地插件源码
+- **WHEN** 开发者修改被监听目录中的插件代码或清单
+- **THEN** 宿主防抖重装并安全停止再重新绑定受影响的活跃实例。
 
-### Requirement: 配置升级与诊断
-宿主 SHALL 保留配置版本与可理解的状态诊断。
-#### Scenario: 忙碌时修改普通配置
-- WHEN 配置实例仍有在途动作且用户修改普通参数
-- THEN 明确要求等待或停止任务，原任务保持启动时快照，未通过的修改不覆盖有效配置。
-#### Scenario: 关闭自动监听或禁用
-- WHEN 用户关闭已绑定实例的自动监听或禁用实例
-- THEN 在途任务被取消，空闲状态可再次明确绑定，旧 busy 不传递给新运行实例。
-#### Scenario: 日志
-- WHEN 插件报告状态或错误
-- THEN 用户可见插件与实例身份，敏感口令不出现在普通诊断中。
-
-### Requirement: 安装与浏览设备插件
-
-扩展中心 MUST 通过文件选择器安装 API v1 的 JSON 包，显示已安装模块，并允许用户为插件保存独立配置实例。插件代码 MUST 在显式绑定后由独立宿主进程加载。
-
-#### Scenario: 文件安装
-
-- **WHEN** 用户确认插件来源并选择有效的 JSON 插件包
-- **THEN** 扩展中心显示插件详情，并支持按清单创建配置。
-
-### Requirement: HTTPS 扩展源
-
-扩展中心 MUST 持久化已添加的 HTTPS 安装索引，支持手动刷新、停用、重新启用和移除。在线安装 MUST 校验索引中记录的 SHA-256、包标识及版本。
-
-#### Scenario: 变更扩展源
-
-- **WHEN** 用户刷新已启用的索引并选择安装，随后移除扩展源
-- **THEN** 匹配校验的包完成安装，已装插件和已有配置在移除源后继续可用。
-
-### Requirement: 绑定当前连接
-
-串口连接栏 MUST 能将启用的插件配置绑定到当前打开的连接。停止实例、连接断开或被其他独立设备事务接管 MUST 解除绑定。包安装 MUST NOT 自动绑定或启动代码。
-
-#### Scenario: 自动监听
-
-- **WHEN** 用户显式绑定一个启用了自动监听的配置，设备发来该插件支持的输入
-- **THEN** 插件通过当前连接的受控串口接口应答，停止或断开后该实例不再发送。
-
-### Requirement: 默认官方扩展源
-
-扩展源管理 MUST 预置 DevKit-Plugins 的官方安装索引并默认启用。用户可停用该源，停用状态在重启后保留。已添加相同地址的配置 MUST 合并到预置源并保留原有启用状态。
-
-#### Scenario: 首次刷新官方源
-
-- **WHEN** 用户首次打开扩展源管理并刷新预置官方源
-- **THEN** 工作台从固定的 HTTPS 安装索引展示正式发布的插件，使用原有校验和安装流程。
+### Requirement: HTTPS 扩展源 v2 版本治理
+扩展中心 MUST 持久化已添加的 HTTPS 安装索引（`version: 2`），预置官方扩展源并支持手动刷新、停用、启用和移除。索引条目 MUST 校验 SHA-256、包标识、版本、`apiVersion: 2`，并支持 `minHostVersion`、`transports`、`deprecated` 与 `yanked` 治理字段。
+#### Scenario: 拦截已撤回或不兼容版本
+- **WHEN** 扩展源条目被标记为 `yanked: true` 或其 `minHostVersion` 高于当前宿主版本
+- **THEN** 扩展源界面明确标示状态并禁用安装按钮，宿主安装接口同步拒绝安装；已废弃（`deprecated`）条目展示提醒标签。
 
 ### Requirement: 插件来源与当前绑定详情
-
-扩展中心 MUST 在插件详情呈现已记录的安装来源、实例绑定端口和运行状态。当前串口的插件浮层 MUST 支持直接编辑绑定实例。
-
-#### Scenario: 查看扩展源安装的插件
-
-- **WHEN** 用户从扩展源安装插件，再打开插件详情
-- **THEN** 详情呈现安装时记录的来源，并可展开进程隔离与安装说明。
-
-#### Scenario: 编辑当前绑定实例
-
-- **WHEN** 用户从已连接串口打开设备插件浮层，并选择已就绪实例的「配置」
-- **THEN** 编辑器打开该实例，不需要先浏览扩展列表。
+扩展中心 MUST 在插件详情呈现已记录的安装来源、支持的传输类型与运行状态。各会话面板的插件浮层 MUST 支持直接编辑、停止与重试绑定实例。

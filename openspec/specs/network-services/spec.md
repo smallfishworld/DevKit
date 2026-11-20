@@ -68,3 +68,12 @@ TFTP 工具 MUST 支持配置监听地址、端口、根目录及多个独立传
 
 - **WHEN** 网络连接或文件传输出错
 - **THEN** 用户能够在界面或日志中定位发生时间与结果。
+
+### Requirement: 网络调试会话接入设备插件
+
+网络调试服务 MUST 实现 `StreamSessionBridge`（`transport: 'net'`），网络面板工具栏 MUST 提供设备插件入口，支持将声明 `net` 传输能力的插件实例绑定到运行中的 TCP/UDP 会话，并在停止会话时自动解绑与释放租约。
+
+#### Scenario: 在 TCP/UDP 会话运行插件
+
+- **WHEN** 用户启动 TCP 或 UDP 调试后在工具栏绑定支持 `net` 的插件
+- **THEN** 插件通过受控 `ctx.stream` 收发网络数据，停止会话后插件自动停止。

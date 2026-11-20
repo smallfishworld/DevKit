@@ -2,27 +2,37 @@
 
 ## Purpose
 
-DevKit 的 Windows 本地多工具工作台，统一管理工具面板、状态和持久化配置。 它覆盖离线启动、会话隔离、用户设置恢复和本地数据保护，是其他工具共享的基础交互契约。
+DevKit 的跨平台本地多工具工作台，统一管理工具面板、按需懒加载、平台能力裁剪、状态和持久化配置。它覆盖离线启动、会话隔离、用户设置恢复和本地数据保护，是其他工具共享的基础交互契约。
 
 ## Requirements
 
-### Requirement: Windows 离线工作台
+### Requirement: 跨平台离线工作台与平台能力解耦
 
-应用 MUST 在受支持的 Windows x64 环境本地运行，核心工具 MUST 无需云端账户或外网服务。
+应用 MUST 支持在 Windows、macOS 与 Linux 本地离线运行核心通信与调试工具（串口、SSH、本地终端、网络调试、TFTP、桥接、数据转换与文本对比、设备插件），无需云端账户或外网服务。依赖 Windows 原生 API 的工具（键鼠输入测试、键鼠宏、取色器）MUST 按 `process.platform === 'win32'` 在主进程与渲染进程工具注册表条件加载，并将 `koffi` 与 `uiohook-napi` 声明为 `optionalDependencies`。
+
+#### Scenario: 非 Windows 平台启动
+
+- **WHEN** 用户在 macOS 或 Linux 上启动 DevKit
+- **THEN** 主进程跳过 Windows 专属原生服务加载，工具箱仅展示当前平台支持的核心工具，且不因缺失 Windows API 报错。
 
 #### Scenario: 离线启动
 
 - **WHEN** 设备没有互联网连接，用户启动 DevKit
 - **THEN** 工作台及本地工具仍可打开和使用。
 
-### Requirement: 多面板会话
+### Requirement: 多面板会话与按需懒加载
 
-工作台 MUST 支持以标签承载独立工具面板，并按工具声明允许多开或复用单例。
+工作台 MUST 支持以标签承载独立工具面板，按工具声明允许多开或复用单例；渲染进程工具注册表 MUST 使用 `defineAsyncComponent` 对各工具面板按需拆包懒加载，避免首屏全量加载所有面板代码。
 
 #### Scenario: 并行调试
 
 - **WHEN** 用户分别打开两个串口工具面板并切换标签
 - **THEN** 两个面板的连接配置和状态彼此隔离，切换不会主动销毁会话。
+
+#### Scenario: 生产构建拆包
+
+- **WHEN** 执行 `electron-vite build`
+- **THEN** 各工具面板被拆分为独立的异步 JS/CSS chunk，仅在用户首次打开对应工具时加载。
 
 ### Requirement: 配置持久化
 
@@ -42,14 +52,14 @@ DevKit 的 Windows 本地多工具工作台，统一管理工具面板、状态�
 - **WHEN** 用户录制本地输入宏或串口日志
 - **THEN** 本地数据不会被自动发送至外部服务。
 
-### Requirement: 可携带分发
+### Requirement: 多平台分发构建
 
-发布构建 MUST 提供适合 Windows 的便携运行方式，并明确未签名可触发 SmartScreen 提示。
+发布构建 MUST 为 Windows（便携版/ZIP）、macOS（DMG/ZIP）与 Linux（AppImage/tar.gz）提供对应 `electron-builder` 构建配置。
 
 #### Scenario: 首次运行
 
-- **WHEN** 用户启动便携版
-- **THEN** 工具可不依赖系统安装流程运行，安全提示的处理说明可找到。
+- **WHEN** 用户启动便携版或打包产物
+- **THEN** 工具可不依赖云端环境本地运行。
 
 ### Requirement: 工作台导航与内置模块目录
 
