@@ -1,6 +1,6 @@
 ## Why
 
-用户反馈 Windows 任务栏仍显示旧图标，要求核对所有应用品牌入口。当前标题栏、favicon 与打包资源已统一为 DK Monogram，但主窗口在 Windows 仍直接使用 PNG，插件登录子窗口没有显式设置应用图标，也没有逐窗口的 Windows 重启图标与应用身份信息。既有验证只检查目录版 EXE 和 ASAR 内 PNG，尚未验证实际窗口和发布下载包。
+用户反馈 Windows 任务栏仍显示旧图标，要求核对所有应用品牌入口。变更前，标题栏、favicon 与打包资源已统一为 DK Monogram，但主窗口在 Windows 仍直接使用 PNG，插件登录子窗口没有显式设置应用图标，也没有逐窗口的 Windows 重启图标与应用身份信息。当时的验证只检查目录版 EXE 和 ASAR 内 PNG，尚未验证实际窗口和发布下载包。
 
 ## What Changes
 
@@ -14,6 +14,6 @@
 
 修改 workbench 的统一应用标识要求及对应验收场景。不修改 DK 设计、主题、插件协议、业务功能、用户设置或现有任务栏固定项；不创建托盘入口或额外的 About 窗口。
 
-## Current State and Validation
+## 变更前状态与验收依据
 
 标题栏与 favicon 已共享 DK SVG，macOS/Linux 打包配置已指定 DK 派生资源；自定义版本浮层没有残留旧图标。普通插件登录窗口是本次审计确认的显式图标覆盖缺口。Windows 任务栏的最终效果须以本次构建产物和真实原生窗口检查为准，不能把 Linux 界面验证或资源存在检查当作 Windows 实测。
