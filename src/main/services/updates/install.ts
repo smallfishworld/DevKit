@@ -55,6 +55,7 @@ export async function prepareUpdate(target: InstallTarget, path: string, update:
   const helper = join(handoff, HELPER)
   try {
     await copyFile(target.helper, helper)
+    await copyFile(target.helper + '.config', helper + '.config')
     const child = spawn(helper, [
       target.format, target.executable, await realpath(path), update.hash, update.version,
       String(process.pid), String(target.format === 'portable' ? process.ppid : 0), handoff, app.getPath('userData')

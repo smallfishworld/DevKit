@@ -173,6 +173,7 @@ async function main() {
   assert.notEqual(next, current)
   const asar = require('@electron/asar')
   assert.equal(JSON.parse(asar.extractFile(join(nextRoot, 'win-unpacked', 'resources', 'app.asar'), 'package.json')).version, next)
+  const hosted = process.env.RUNNER_ENVIRONMENT === 'github-hosted'
   const root = await mkdtemp(join(tmpdir(), 'dk-update-'))
   try {
     await exercise(root, 'portable', 'upgrade')
@@ -180,31 +181,36 @@ async function main() {
     await exercise(root, 'zip', 'refuse')
     await exercise(root, 'portable', 'rollback')
   } finally {
-    // Close only disposable fixtures created under this test's unique path.
-    console.log('Cleaning up Windows update fixtures')
-    const cleanup = spawn('pwsh.exe', ['-NoProfile', '-NonInteractive', '-Command', [
-      '$root = $env:DEVKIT_FIXTURE_ROOT',
-      'Get-CimInstance Win32_Process | Where-Object {',
-      '  ($_.Name -like "DevKit*.exe") -and (',
-      '  ($_.ExecutablePath -and $_.ExecutablePath.StartsWith($root + "\\", [StringComparison]::OrdinalIgnoreCase)) -or',
-      '  ($_.CommandLine -and $_.CommandLine.Contains($root + "\\")))',
-      '} | ForEach-Object { Stop-Process -Id $_.ProcessId -ErrorAction SilentlyContinue }'
-    ].join('\n')], { env: { ...process.env, DEVKIT_FIXTURE_ROOT: root }, stdio: 'inherit' })
-    cleanup.unref()
-    await new Promise((done, reject) => {
-      const timer = setTimeout(() => {
-        cleanup.kill()
-        reject(new Error('Windows update fixture cleanup timed out: ' + root))
-      }, 30_000)
-      cleanup.once('error', (error) => { clearTimeout(timer); reject(error) })
-      cleanup.once('exit', (code) => {
-        clearTimeout(timer)
-        if (code === 0) done()
-        else reject(new Error('Windows update fixture cleanup failed (exit ' + code + '): ' + root))
-      })
-    })
-    await rm(root, { recursive: true, force: true, maxRetries: 8, retryDelay: 300 })
+    // The hosted VM disposes its own processes and temporary files after this job.
+    if (!hosted) await cleanLocalFixtures(root)
   }
+}
+
+async function cleanLocalFixtures(root) {
+  // Close only disposable fixtures created under this test's unique path.
+  console.log('Cleaning up Windows update fixtures')
+  const cleanup = spawn('pwsh.exe', ['-NoProfile', '-NonInteractive', '-Command', [
+    '$root = $env:DEVKIT_FIXTURE_ROOT',
+    'Get-CimInstance Win32_Process | Where-Object {',
+    '  ($_.Name -like "DevKit*.exe") -and (',
+    '  ($_.ExecutablePath -and $_.ExecutablePath.StartsWith($root + "\\", [StringComparison]::OrdinalIgnoreCase)) -or',
+    '  ($_.CommandLine -and $_.CommandLine.Contains($root + "\\")))',
+    '} | ForEach-Object { Stop-Process -Id $_.ProcessId -ErrorAction SilentlyContinue }'
+  ].join('\n')], { env: { ...process.env, DEVKIT_FIXTURE_ROOT: root }, stdio: 'inherit' })
+  cleanup.unref()
+  await new Promise((done, reject) => {
+    const timer = setTimeout(() => {
+      cleanup.kill()
+      reject(new Error('Windows update fixture cleanup timed out: ' + root))
+    }, 30_000)
+    cleanup.once('error', (error) => { clearTimeout(timer); reject(error) })
+    cleanup.once('exit', (code) => {
+      clearTimeout(timer)
+      if (code === 0) done()
+      else reject(new Error('Windows update fixture cleanup failed (exit ' + code + '): ' + root))
+    })
+  })
+  await rm(root, { recursive: true, force: true, maxRetries: 8, retryDelay: 300 })
 }
 
 main().catch((error) => { console.error(error); process.exitCode = 1 })

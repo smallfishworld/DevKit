@@ -1,5 +1,5 @@
 const { execFileSync } = require('node:child_process')
-const { readdirSync, writeFileSync } = require('node:fs')
+const { copyFileSync, readdirSync, writeFileSync } = require('node:fs')
 const { join } = require('node:path')
 
 function inventory(root, subdir = '') {
@@ -17,11 +17,13 @@ module.exports = ({ electronPlatformName, appOutDir }) => {
   if (electronPlatformName !== 'win32' || process.platform !== 'win32') return
   const framework = join(process.env.SystemRoot, 'Microsoft.NET', 'Framework64', 'v4.0.30319')
   const resources = join(appOutDir, 'resources')
+  const source = join(__dirname, '..', 'resources', 'updater')
   execFileSync(join(framework, 'csc.exe'), [
     '/nologo', '/target:winexe', '/platform:x64', '/optimize+', '/warnaserror+',
     '/reference:' + join(framework, 'System.IO.Compression.dll'),
     '/out:' + join(resources, 'DevKitUpdater.exe'),
-    join(__dirname, '..', 'resources', 'updater', 'DevKitUpdater.cs')
+    join(source, 'DevKitUpdater.cs')
   ], { stdio: 'inherit' })
+  copyFileSync(join(source, 'DevKitUpdater.exe.config'), join(resources, 'DevKitUpdater.exe.config'))
   writeFileSync(join(resources, 'devkit-update-files.txt'), inventory(appOutDir).sort().join('\n') + '\n')
 }
