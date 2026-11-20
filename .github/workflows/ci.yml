@@ -69,6 +69,7 @@ jobs:
           npm run test:pty-smoke
 
       - name: Verify portable and ZIP restart updates on Windows
+        timeout-minutes: 7
         shell: pwsh
         run: |
           $current = [version](Get-Content package.json | ConvertFrom-Json).version

@@ -6,7 +6,6 @@ const { copyFile, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } = req
 const { tmpdir } = require('node:os')
 const { join, resolve } = require('node:path')
 const { setTimeout: delay } = require('node:timers/promises')
-const unzipper = require('unzipper')
 
 const current = require('../../package.json').version
 const next = process.argv[2]
@@ -41,11 +40,16 @@ async function connect(profile) {
   })
   const socket = new WebSocket(page.webSocketDebuggerUrl)
   await new Promise((done, reject) => {
-    socket.addEventListener('open', done, { once: true })
-    socket.addEventListener('error', reject, { once: true })
+    const timer = setTimeout(() => {
+      socket.close()
+      reject(new Error('Workbench debugger WebSocket did not open'))
+    }, 10_000)
+    socket.addEventListener('open', () => { clearTimeout(timer); done() }, { once: true })
+    socket.addEventListener('error', (event) => { clearTimeout(timer); reject(event) }, { once: true })
   })
   let id = 0
   async function evaluate(expression) {
+    if (socket.readyState !== WebSocket.OPEN) throw new Error('Workbench debugger disconnected')
     return new Promise((done, reject) => {
       const request = ++id
       const onMessage = ({ data }) => {
@@ -58,12 +62,18 @@ async function connect(profile) {
       const cleanup = () => {
         clearTimeout(timer)
         socket.removeEventListener('message', onMessage)
+        socket.removeEventListener('close', onClose)
+      }
+      const onClose = () => {
+        cleanup()
+        reject(new Error('Workbench debugger disconnected before evaluation completed'))
       }
       const timer = setTimeout(() => {
         cleanup()
         reject(new Error('Workbench debugger did not respond: ' + expression))
       }, 5000)
       socket.addEventListener('message', onMessage)
+      socket.addEventListener('close', onClose, { once: true })
       socket.send(JSON.stringify({ id: request, method: 'Runtime.evaluate', params: { expression, returnByValue: true } }))
     })
   }
@@ -80,7 +90,7 @@ async function exercise(root, format, outcome) {
   const exe = join(install, format === 'portable' ? 'DevKit renamed.exe' : 'DevKit.exe')
   const originalPackage = join(currentRoot, name(current, format))
   if (format === 'portable') await copyFile(originalPackage, exe)
-  else await (await unzipper.Open.file(originalPackage)).extract({ path: install })
+  else execFileSync('tar.exe', ['-xf', originalPackage, '-C', install], { stdio: 'inherit', timeout: 90_000 })
   const oldHash = await digest(exe)
 
   const cache = join(profile, 'updates', createHash('sha256').update(exe.toLowerCase()).digest('hex').slice(0, 24))
@@ -100,6 +110,7 @@ async function exercise(root, format, outcome) {
     cwd: install, stdio: 'ignore'
   })
   child.on('error', (error) => console.error(error))
+  child.unref()
   const { evaluate, close } = await connect(profile)
   try {
     await until('download-ready state', () =>
@@ -118,7 +129,7 @@ async function exercise(root, format, outcome) {
       await until('rollback result', async () =>
         (await readFile(join(cache, 'apply-error'), 'utf8').catch(() => '')).length > 0)
       assert.equal(await digest(exe), oldHash)
-      assert.notEqual(child.exitCode, null)
+      await until('old portable launcher exits', () => child.exitCode !== null, 5000)
     } else {
       await until('new version starts', async () => {
         const failure = await readFile(join(cache, 'apply-error'), 'utf8').catch(() => '')
@@ -134,7 +145,7 @@ async function exercise(root, format, outcome) {
         }
         return false
       }, 165_000)
-      assert.notEqual(child.exitCode, null)
+      await until('old application exits', () => child.exitCode !== null, 5000)
       if (format === 'portable') assert.equal(await digest(exe), candidate.hash)
       await until('old backup removed after new window opens', async () =>
         (await readdir(format === 'portable' ? install : testRoot)).every((entry) => !entry.startsWith('.devkit-backup-')))
