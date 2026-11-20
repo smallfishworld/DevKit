@@ -95,9 +95,12 @@ export async function confirmUpdatedLaunch(): Promise<void> {
   delete process.env.DEVKIT_UPDATE_HANDOFF
   delete process.env.DEVKIT_UPDATE_VERSION
   if (!path || !/^apply-[a-z0-9]{6}$/i.test(basename(path))) return
-  const cache = join(app.getPath('userData'), 'updates')
-  if (dirname(dirname(path)).toLowerCase() !== cache.toLowerCase() ||
-      !/^[a-f\d]{24}$/.test(basename(dirname(path)))) return
+  if (!/^[a-f\d]{24}$/.test(basename(dirname(path)))) return
+  const [handoffRoot, profileRoot] = await Promise.all([
+    realpath(dirname(dirname(path))).catch(() => undefined),
+    realpath(join(app.getPath('userData'), 'updates')).catch(() => undefined)
+  ])
+  if (!handoffRoot || handoffRoot.toLowerCase() !== profileRoot?.toLowerCase()) return
   const version = app.getVersion()
   if (version !== expectedVersion) {
     if ((await stat(join(path, 'apply')).catch(() => undefined))?.isFile()) app.quit()

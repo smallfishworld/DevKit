@@ -123,7 +123,8 @@ internal static class DevKitUpdater
                 int length = image.Capacity;
                 if (!QueryFullProcessImageName(handle, 0, image, ref length))
                     throw new IOException("Unable to identify the application process. Windows error: " + Marshal.GetLastWin32Error());
-                if (!PathComparer.Equals(image.ToString(), expectedPath))
+                // Windows may report an executable using 8.3 names even when it was launched by its long path.
+                if (!PathComparer.Equals(LongPath(image.ToString()), LongPath(expectedPath)))
                     throw new IOException("Unexpected application process path: " + image);
             }
             return process;
@@ -138,6 +139,18 @@ internal static class DevKitUpdater
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool QueryFullProcessImageName(IntPtr process, int flags, StringBuilder path, ref int length);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern uint GetLongPathName(string path, StringBuilder longPath, uint capacity);
+
+    private static string LongPath(string path)
+    {
+        var expanded = new StringBuilder(32768);
+        uint length = GetLongPathName(path, expanded, (uint)expanded.Capacity);
+        if (length == 0 || length >= expanded.Capacity)
+            throw new IOException("Unable to resolve the application path. Windows error: " + Marshal.GetLastWin32Error());
+        return expanded.ToString();
+    }
 
     private static void AssertLocalPath(string target)
     {
