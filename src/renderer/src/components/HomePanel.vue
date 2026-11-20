@@ -74,11 +74,12 @@ function open(tool: ToolDef): void {
           <h2>{{ group.label }}</h2>
           <span class="group-count">{{ group.tools.length }}</span>
         </header>
-        <button v-for="tool in group.tools" :key="tool.id" class="tool-row" type="button" @click="open(tool)">
-          <!-- 图标与标题同一行：用两行栅格让图标对齐标题，而不是对齐「标题 + 两行描述」整块 -->
-          <el-icon class="tool-icon" :size="16"><component :is="tool.icon" /></el-icon>
-          <strong class="tool-name">{{ tool.name }}</strong>
-          <span class="tool-desc">{{ tool.description }}</span>
+        <button v-for="tool in group.tools" :key="tool.id" class="tool-row" type="button" :title="tool.description" @click="open(tool)">
+          <span class="tool-icon"><el-icon :size="17"><component :is="tool.icon" /></el-icon></span>
+          <span class="tool-text">
+            <strong class="tool-name">{{ tool.name }}</strong>
+            <span class="tool-desc">{{ tool.description }}</span>
+          </span>
         </button>
       </template>
     </div>
@@ -87,9 +88,9 @@ function open(tool: ToolDef): void {
 </template>
 
 <style scoped>
-/* 铺满可用宽度：原先 max-width:1120px 在 1440/1920 屏上两侧留下大片空白。
-   宽度足够时每组内部再分栏，工具按容器自适应排列，不再固定两列。 */
-.toolbox { padding:clamp(18px, 2.6vw, 30px); container-type:inline-size; }
+/* 内容限宽居中：宽屏下整页铺满会让卡片拉得过长、阅读跨度大。
+   上限 1180px，窗口更宽时两侧留白均分，栅格不再继续拉伸。 */
+.toolbox { max-width:1180px; margin:0 auto; padding:clamp(18px, 2.6vw, 30px); container-type:inline-size; }
 .page-head { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; margin-bottom:16px; }
 .page-head p { margin:4px 0 0; }
 kbd { font-size:11px; white-space:nowrap; }
@@ -104,23 +105,25 @@ kbd { font-size:11px; white-space:nowrap; }
 .recent-sessions h2 { margin:0 4px 0 0; font-size:12px; color:var(--el-text-color-secondary); }
 /* 整页一个栅格：所有分类共用同一组列宽，卡片永远等宽等高；
    分类标题横跨整行（grid-column:1/-1）充当分组分隔，不再每类各套一个框 */
-.tool-lists { display:grid; gap:8px; grid-template-columns:repeat(4, minmax(0, 1fr)); }
-.group-head { grid-column:1/-1; display:flex; align-items:center; gap:8px; margin-top:10px; padding-bottom:1px; }
+.tool-lists { display:grid; gap:10px; grid-template-columns:repeat(4, minmax(0, 1fr)); }
+.group-head { grid-column:1/-1; display:flex; align-items:center; gap:8px; margin-top:16px; padding-bottom:1px; }
 .group-head:first-child { margin-top:0; }
 /* 分类色条：替代原先每个分类的卡片外框 */
 .group-head::before { content:''; width:3px; height:13px; border-radius:2px; background:var(--el-color-primary); }
 .group-count { padding:0 6px; border-radius:999px; font-size:11px; line-height:17px; color:var(--el-text-color-secondary); background:var(--el-fill-color); }
-/* 卡片是两行栅格：图标横跨两行并居中于标题行，标题与描述各占一行。
-   原先整块文字与图标各自居中，图标落在「标题+描述」的中点、标题在其上方，看着没对齐 */
-.tool-row { display:grid; grid-template-columns:32px minmax(0, 1fr); grid-template-rows:auto auto; align-items:start; column-gap:12px; row-gap:3px; width:100%; min-width:0; padding:11px 13px; border:1px solid var(--el-border-color-lighter); border-radius:9px; background:var(--el-bg-color-overlay); text-align:start; color:inherit; cursor:pointer; transition:border-color .15s ease, background .15s ease, transform .15s ease; }
-.tool-row:hover { border-color:var(--el-color-primary-light-7); background:var(--el-fill-color-light); }
+/* 卡片：图标方块 + 文字块整体垂直居中。不再给描述固定两行高度——
+   同一行卡片由栅格 stretch 自然等高，内容短的也不会在下方留出空白。 */
+.tool-row { display:flex; align-items:center; gap:13px; width:100%; min-width:0; padding:14px 16px; border:1px solid var(--el-border-color-lighter); border-radius:10px; background:var(--el-bg-color-overlay); text-align:start; color:inherit; cursor:pointer; transition:border-color .15s ease, background .15s ease, box-shadow .15s ease; }
+.tool-row:hover { border-color:var(--el-color-primary-light-7); background:var(--el-fill-color-light); box-shadow:0 1px 0 rgb(255 255 255 / 3%); }
 .tool-row:focus-visible { outline:2px solid var(--el-color-primary); outline-offset:1px; }
-/* 图标与标题首行同高（19px），不再用固定 32px 方块去对齐整段文字 */
-.tool-icon { grid-column:1; grid-row:1; width:19px; height:19px; border-radius:5px; color:var(--el-color-primary); background:var(--el-color-primary-light-9); font-size:12px; }
-.tool-name { grid-column:2; grid-row:1; min-width:0; overflow:hidden; font-size:13px; line-height:19px; text-overflow:ellipsis; white-space:nowrap; }
+/* 图标用带底色的方块承载，与文字块同轴居中，视觉重心不再偏上 */
+.tool-icon { flex:none; display:grid; place-items:center; width:34px; height:34px; border-radius:9px; color:var(--el-color-primary); background:var(--el-color-primary-light-9); }
+/* 标题与描述之间留 3px，两行文字不贴在一起 */
+.tool-text { display:flex; flex-direction:column; gap:3px; min-width:0; }
+.tool-name { overflow:hidden; font-size:13px; line-height:19px; text-overflow:ellipsis; white-space:nowrap; }
 .muted, .tool-desc { font-size:12px; color:var(--el-text-color-secondary); }
-/* 描述固定占两行高度：一两行描述都撑成同一张卡片，栅格里不再出现高矮不齐 */
-.tool-desc { grid-column:2; grid-row:2; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; min-height:3em; line-height:1.5; }
+/* 描述只显示一行，超出省略；完整说明在 title 提示里 */
+.tool-desc { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; line-height:17px; }
 @container (max-width:1100px) { .tool-lists { grid-template-columns:repeat(3, minmax(0, 1fr)); } }
 @container (max-width:760px) { .tool-lists { grid-template-columns:repeat(2, minmax(0, 1fr)); } }
 @container (max-width:560px) { .tool-lists { grid-template-columns:minmax(0,1fr); } }
