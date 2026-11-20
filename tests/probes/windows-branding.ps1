@@ -10,6 +10,19 @@ Add-Type -Path (Join-Path $Root 'tests/probes/windows-branding.cs')
 $temp = Join-Path ([IO.Path]::GetTempPath()) ('devkit-branding-' + [Guid]::NewGuid().ToString('N'))
 [IO.Directory]::CreateDirectory($temp) | Out-Null
 
+function Stop-OwnedProcess {
+    param([Diagnostics.Process]$OwnedProcess, [int]$GraceMilliseconds)
+    if ($OwnedProcess.WaitForExit($GraceMilliseconds)) { return }
+    try {
+        # Identity/Handle is already held. Do not enumerate another process tree during shutdown.
+        $OwnedProcess.Kill()
+    } catch {
+        # Windows can report access denied while an already-exiting child is completing shutdown.
+        if (-not $OwnedProcess.WaitForExit(2000)) { throw }
+    }
+    if (-not $OwnedProcess.WaitForExit(5000)) { throw 'An owned fixture process did not exit.' }
+}
+
 function Test-ApplicationBranding {
     param(
         [string]$Name,
@@ -86,23 +99,25 @@ function Test-ApplicationBranding {
         Write-Host "PASS Windows branding [$Name]: actual HWND AppID, icon resource, relaunch command/name; DK icon pixels ($sizes)"
     }
     finally {
-        # Only close/terminate the fixture tree this invocation started.
+        # Only close/terminate process identities this invocation actually started/discovered.
+        # Chromium children may outlive the browser for a short time; allow orderly shutdown.
+        $cleanupErrors = [Collections.Generic.List[string]]::new()
         if ($started) {
-            if ($window -ne [IntPtr]::Zero) { [DevKitBrandingProbe]::CloseWindow($window) }
-            if (-not $process.WaitForExit(10000)) {
-                $process.Kill($true)
-                $process.WaitForExit(5000) | Out-Null
-            }
+            try {
+                if ($window -ne [IntPtr]::Zero) { [DevKitBrandingProbe]::CloseWindow($window) }
+                Stop-OwnedProcess -OwnedProcess $process -GraceMilliseconds 10000
+            } catch { $cleanupErrors.Add($_.Exception.Message) }
         }
         foreach ($child in $children) {
             try {
-                if (-not $child.HasExited) {
-                    $child.Kill($true)
-                    $child.WaitForExit(5000) | Out-Null
-                }
-            } finally { $child.Dispose() }
+                Stop-OwnedProcess -OwnedProcess $child -GraceMilliseconds 5000
+            } catch { $cleanupErrors.Add($_.Exception.Message) }
+            finally { $child.Dispose() }
         }
         $process.Dispose()
+        if ($cleanupErrors.Count -gt 0) {
+            throw ('Fixture cleanup failed: ' + ($cleanupErrors -join '; '))
+        }
     }
 }
 
