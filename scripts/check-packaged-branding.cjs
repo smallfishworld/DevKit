@@ -44,7 +44,8 @@ try {
       'Packaged DevKit.exe icon frames differ from resources/branding/devkit.ico')
   }
 
-  const packagedPng = asar.extractFile(archivePath, 'resources/branding/app-256.png')
+  // asar 3.x traverses archive paths using the host separator, including on Windows.
+  const packagedPng = asar.extractFile(archivePath, path.join('resources', 'branding', 'app-256.png'))
   assert.ok(Buffer.from(packagedPng).equals(fs.readFileSync(pngPath)),
     'app.asar runtime icon differs from resources/branding/app-256.png')
   const sizes = groups[0].icons.map((item) => (item.width || 256) + 'x' + (item.height || 256)).join(', ')
