@@ -50,6 +50,12 @@ jobs:
       - name: Build portable and ZIP packages
         run: npm run dist
 
+      - name: Verify packaged application branding
+        run: node scripts/check-packaged-branding.cjs --release
+
+      - name: Verify real Windows taskbar icons and relaunch properties
+        run: npm run test:branding-smoke -- --release
+
       - name: Resolve package names
         id: package_info
         shell: pwsh
