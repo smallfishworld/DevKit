@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="24 24 208 208">
+  <title>DevKit Module Core</title>
+  <defs>
+    <path id="module" d="M56 32H172Q176 32 176 36V84Q176 88 172 88H92V152Q92 156 88 156H68Q64 156 64 160V192H36Q32 192 32 188V56Q32 32 56 32Z"/>
+  </defs>
+  <use href="#module" fill="currentColor"/>
+  <use href="#module" fill="currentColor" transform="rotate(180 128 128)"/>
+</svg>

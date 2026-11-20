@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from 'vue'
 import { Brush } from '@element-plus/icons-vue'
+import brandMark from '../../../resources/branding/mark.svg'
 import { PLUGIN_CATALOG_PANEL, useDevicePlugins } from '@renderer/stores/devicePlugins'
 import type { PluginLogEntry, PluginRuntimeStatus } from '../../shared/plugins'
 import { useTabStore } from '@renderer/stores/tabs'
@@ -52,6 +53,8 @@ const winToggleMax = (): void => window.api.win.toggleMaximize()
 const winClose = (): void => window.api.win.close()
 
 onMounted(() => {
+  const favicon = document.querySelector<HTMLLinkElement>('link[rel="icon"]')
+  if (favicon) favicon.href = brandMark
   void appearance.init()
   pluginSubscriptions = [
     window.api.on('plugins', PLUGIN_CATALOG_PANEL, 'changed', schedulePluginRefresh),
@@ -75,7 +78,7 @@ onMounted(() => {
       <el-popover placement="bottom-start" :width="264" trigger="click">
         <template #reference>
           <button class="app-logo" title="版本信息">
-            <el-icon :size="19" color="var(--el-color-primary)"><Cpu /></el-icon>
+            <img :src="brandMark" class="app-brand-mark" width="20" height="20" alt="" aria-hidden="true" draggable="false" />
             <span>DevKit</span>
           </button>
         </template>
@@ -168,6 +171,7 @@ onMounted(() => {
 /* 图标与文字统一对齐到标签行的光学中心（8px 顶留白 + 38px 标签行 = 27px），
    不再靠 margin-bottom 把 DevKit 字样顶高 4px、和标签页错开 */
 .app-logo { align-self:center; width:auto; height:30px; gap:7px; padding:5px 10px; color:inherit; font-size:13px; font-weight:700; }
+.app-brand-mark { display:block; width:20px; height:20px; flex:none; object-fit:contain; }
 .header-divider { align-self:center; width:1px; height:18px; margin:0 6px 0 2px; background:var(--el-border-color); }
 :deep(.tab-bar) { flex:1; min-width:0; height:auto; padding:0; gap:5px; border:0; background:transparent; }
 :deep(.tab-item) { height:38px; border-radius:9px 9px 0 0; }

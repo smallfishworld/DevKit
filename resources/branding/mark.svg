@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="24 24 208 208">
+  <title>DevKit Module Core</title>
+  <defs>
+    <linearGradient id="module-green" x1="32" y1="32" x2="176" y2="208" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#18D09A"/>
+      <stop offset="1" stop-color="#06B782"/>
+    </linearGradient>
+    <linearGradient id="module-teal" x1="32" y1="32" x2="176" y2="208" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#08B5B2"/>
+      <stop offset="1" stop-color="#08C8C2"/>
+    </linearGradient>
+    <path id="module" d="M56 32H172Q176 32 176 36V84Q176 88 172 88H92V152Q92 156 88 156H68Q64 156 64 160V192H36Q32 192 32 188V56Q32 32 56 32Z"/>
+  </defs>
+  <use href="#module" fill="url(#module-green)"/>
+  <use href="#module" fill="url(#module-teal)" transform="rotate(180 128 128)"/>
+</svg>

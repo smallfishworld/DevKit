@@ -1,5 +1,6 @@
 import { BrowserWindow, Menu, app, clipboard, ipcMain, powerMonitor, screen } from 'electron'
 import { join } from 'node:path'
+import appIcon from '../../resources/branding/app-256.png?asset'
 import { disposeAllPanels, registerService, registerToolIpc, setMainWindow } from './ipc'
 import { tftpService } from './services/tftp'
 import { PluginService } from './services/plugins'
@@ -50,6 +51,7 @@ function createWindow(): void {
     minWidth: 960,
     minHeight: 600,
     title: 'DevKit 嵌入式开发套件',
+    icon: appIcon,
     backgroundColor: '#141414',
     show: false,
     frame: false, // VS Code 风格：无边框，标题栏由渲染端自绘
@@ -97,6 +99,8 @@ app.on('second-instance', () => {
 })
 
 app.whenReady().then(async () => {
+  if (process.platform === 'win32') app.setAppUserModelId('com.embedded.devkit')
+  if (process.platform === 'darwin' && !app.isPackaged) app.dock?.setIcon(appIcon)
   Menu.setApplicationMenu(null)
   registerService('tftp', tftpService)
   registerService('serial', serialService)
