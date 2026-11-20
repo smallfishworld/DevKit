@@ -30,6 +30,12 @@ async function until(label, read, timeout = 120_000) {
   throw new Error('Timed out during Windows update smoke: ' + label)
 }
 
+async function handoffs(cache) {
+  const entries = await readdir(cache, { withFileTypes: true })
+  return entries.filter((entry) => entry.isDirectory() && /^apply-[a-z0-9]{6}$/i.test(entry.name))
+    .map((entry) => join(cache, entry.name))
+}
+
 async function connect(profile) {
   const page = await until('packaged workbench debugger', async () => {
     try {
@@ -129,20 +135,19 @@ async function exercise(root, format, outcome) {
     } else if (outcome === 'rollback') {
       await until('rollback result', async () =>
         (await readFile(join(cache, 'apply-error'), 'utf8').catch(() => '')).length > 0)
-      assert.equal(await digest(exe), oldHash)
+      await until('old executable restored', async () => await digest(exe).catch(() => '') === oldHash, 5000)
       await until('old portable launcher exits', () => child.exitCode !== null, 5000)
     } else {
       await until('new version starts', async () => {
         const failure = await readFile(join(cache, 'apply-error'), 'utf8').catch(() => '')
         if (failure) throw new Error(failure)
-        for (const entry of await readdir(cache)) {
-          if (!entry.startsWith('apply-')) continue
-          const preflight = await readFile(join(cache, entry, 'ready'), 'utf8').catch(() => '')
+        for (const handoff of await handoffs(cache)) {
+          const preflight = await readFile(join(handoff, 'ready'), 'utf8').catch(() => '')
           if (preflight === 'failed' || preflight === 'directory') {
-            const details = await readFile(join(cache, entry, 'error'), 'utf8').catch(() => preflight)
+            const details = await readFile(join(handoff, 'error'), 'utf8').catch(() => preflight)
             throw new Error('Update preparation failed: ' + details)
           }
-          if (await readFile(join(cache, entry, 'started'), 'utf8').catch(() => '') === next) return true
+          if (await readFile(join(handoff, 'started'), 'utf8').catch(() => '') === next) return true
         }
         return false
       }, 165_000)
@@ -154,12 +159,13 @@ async function exercise(root, format, outcome) {
     assert.equal(await readFile(dataMarker, 'utf8'), 'keep user data')
     console.log('PASS Windows packaged ' + format + ' ' + outcome)
   } catch (error) {
-    for (const entry of await readdir(cache)) {
-      if (!entry.startsWith('apply-')) continue
-      const files = await readdir(join(cache, entry))
-      const failure = await readFile(join(cache, entry, 'error'), 'utf8').catch(() => '')
+    for (const handoff of await handoffs(cache).catch(() => [])) {
+      const files = await readdir(handoff).catch(() => [])
+      const failure = await readFile(join(handoff, 'error'), 'utf8').catch(() => '')
       console.error('Update handoff: ' + files.join(', ') + (failure ? '\n' + failure : ''))
     }
+    const result = await readFile(join(cache, 'apply-error'), 'utf8').catch(() => '')
+    if (result) console.error(result)
     console.error('Original launcher exit status: ' + child.exitCode)
     throw error
   } finally {
