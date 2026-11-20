@@ -58,9 +58,15 @@ jobs:
 
       - name: Resolve package names
         id: package_info
+        env:
+          RELEASE_TAG: ${{ steps.build_ref.outputs.tag }}
         shell: pwsh
         run: |
           $version = (Get-Content package.json | ConvertFrom-Json).version
+          $tag = $env:RELEASE_TAG
+          if ($tag -ne "v$version" -and $tag -ne $version) {
+            throw "Release tag $tag does not match package version $version"
+          }
           $portable = Join-Path "release" "DevKit-$version-portable.exe"
           $zip = Join-Path "release" "DevKit-$version-win-x64.zip"
 

@@ -35,7 +35,8 @@ function isFullyQualifiedWindowsPath(value: string): boolean {
   return !/[\0\r\n"]/.test(value) && win32.isAbsolute(value) && win32.parse(value).root.length > 1
 }
 
-function portableLauncher(input: WindowsAppDetailsInput): string | undefined {
+export function portableLauncher(input: Pick<WindowsAppDetailsInput,
+  'isPackaged' | 'portableExecutableFile' | 'portableExecutableDir' | 'isFile'>): string | undefined {
   const file = input.portableExecutableFile
   const directory = input.portableExecutableDir
   if (!input.isPackaged || !file || !directory || !input.isFile) return undefined

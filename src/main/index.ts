@@ -13,6 +13,9 @@ import { codecService } from './services/codec'
 import { bridgeService } from './services/bridge'
 import { settingsService } from './services/settings'
 import { localTerminalService } from './services/localTerminal'
+import { AppUpdateService } from './services/updates'
+import { confirmUpdatedLaunch } from './services/updates/install'
+import { APP_UPDATES } from '../shared/app-updates'
 
 let mainWindow: BrowserWindow | null = null
 
@@ -77,7 +80,10 @@ function createWindow(): void {
   })
   mainWindow.on('unmaximize', () => mainWindow?.webContents.send('win:maximized', false))
 
-  mainWindow.on('ready-to-show', () => mainWindow?.show())
+  mainWindow.on('ready-to-show', () => {
+    mainWindow?.show()
+    void confirmUpdatedLaunch()
+  })
   mainWindow.on('closed', () => {
     mainWindow = null
     setMainWindow(null)
@@ -120,6 +126,8 @@ app.whenReady().then(async () => {
   registerService('diff', diffService)
   registerService('bridge', bridgeService)
   registerService('settings', settingsService)
+  const updater = new AppUpdateService()
+  registerService(APP_UPDATES, updater)
 
   // Windows 专属服务按平台条件加载，避免 macOS / Linux 启动时触发 Windows API 依赖。
   // 这些原生包是 optionalDependencies，加载失败（预编译缺失/损坏）不应拦截主窗口启动。
@@ -148,6 +156,7 @@ app.whenReady().then(async () => {
   powerMonitor.on('resume', () => serialService.onSystemResume())
 
   createWindow()
+  updater.start()
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
