@@ -121,18 +121,23 @@ app.whenReady().then(async () => {
   registerService('bridge', bridgeService)
   registerService('settings', settingsService)
 
-  // Windows 专属服务按平台条件加载，避免 macOS / Linux 启动时触发 Windows API 依赖
+  // Windows 专属服务按平台条件加载，避免 macOS / Linux 启动时触发 Windows API 依赖。
+  // 这些原生包是 optionalDependencies，加载失败（预编译缺失/损坏）不应拦截主窗口启动。
   if (process.platform === 'win32') {
-    const [{ inputService, fullSelfTest }, { macroService }, { colorService }] = await Promise.all([
-      import('./services/input'),
-      import('./services/macro'),
-      import('./services/color')
-    ])
-    registerService('input', inputService)
-    registerService('macro', macroService)
-    registerService('color', colorService)
-    void macroService.init()
-    console.log('[devkit] input selftest:', JSON.stringify(fullSelfTest()))
+    try {
+      const [{ inputService, fullSelfTest }, { macroService }, { colorService }] = await Promise.all([
+        import('./services/input'),
+        import('./services/macro'),
+        import('./services/color')
+      ])
+      registerService('input', inputService)
+      registerService('macro', macroService)
+      registerService('color', colorService)
+      void macroService.init()
+      console.log('[devkit] input selftest:', JSON.stringify(fullSelfTest()))
+    } catch (error) {
+      console.error('[devkit] Windows 键鼠/宏服务加载失败，相关面板将不可用:', error)
+    }
   }
 
   registerToolIpc()

@@ -25,8 +25,7 @@ function short(value: unknown, label: string, max = 256): string {
   return value
 }
 
-function parseInstallSource(value: unknown): PluginInstallSource {
-  const source = record(value)
+function parseInstallSource(value: unknown): PluginInstallSource {  const source = record(value)
   const name = short(source.name, '安装来源名称', 128)
   const url = new URL(short(source.url, '安装来源地址', 2048))
   if (url.protocol !== 'https:' || url.username || url.password || url.hash) throw new Error('安装来源地址无效')
@@ -34,6 +33,20 @@ function parseInstallSource(value: unknown): PluginInstallSource {
 }
 
 interface StoreState { version: 2; instances: PluginInstance[]; legacyImported: boolean }
+
+/** Windows 上刚写完的目录可能仍被杀毒软件占用，rename 会偶发 EPERM/EBUSY；短暂退避后重试。 */
+async function renameWithRetry(from: string, to: string, attempts = 5): Promise<void> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await fs.rename(from, to)
+      return
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code
+      if (attempt >= attempts - 1 || (code !== 'EPERM' && code !== 'EBUSY' && code !== 'EACCES')) throw error
+      await new Promise((resolve) => setTimeout(resolve, 20 * (attempt + 1)))
+    }
+  }
+}
 
 export class PluginStore {
   readonly directory: string
@@ -177,8 +190,8 @@ export class PluginStore {
       const backup = join(this.directory, '.backup-' + randomUUID())
       let backed = false
       try {
-        try { await fs.rename(target, backup); backed = true } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error }
-        await fs.rename(stage, target)
+        try { await renameWithRetry(target, backup); backed = true } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error }
+        await renameWithRetry(stage, target)
       } catch (error) {
         if (backed) await fs.rename(backup, target)
         throw error
