@@ -1,4 +1,5 @@
 import { BrowserWindow, ipcMain } from 'electron'
+import { APP_UPDATES } from '../shared/app-updates'
 import type { ToolEvent, ToolInvoke } from '../shared/types'
 
 export interface ToolService {
@@ -38,9 +39,9 @@ export function emitToolEvent(tool: string, panelId: string, type: string, paylo
 export function registerToolIpc(): void {
   ipcMain.handle('tool:invoke', async (event, req: ToolInvoke) => {
     const { tool, panelId, action, payload } = req
-    if (tool === 'plugins' || (tool === 'serial' && typeof action === 'string' && action.startsWith('action:'))) {
+    if (tool === APP_UPDATES || tool === 'plugins' || (tool === 'serial' && typeof action === 'string' && action.startsWith('action:'))) {
       if (!mainWindow || event.sender !== mainWindow.webContents ||
-        event.senderFrame !== mainWindow.webContents.mainFrame) throw new Error('无权调用设备扩展')
+        event.senderFrame !== mainWindow.webContents.mainFrame) throw new Error(tool === APP_UPDATES ? '无权调用应用更新' : '无权调用设备扩展')
     }
     const service = services.get(tool)
     if (!service) {
@@ -49,6 +50,7 @@ export function registerToolIpc(): void {
       throw new Error(`未知工具服务: ${tool}`)
     }
     if (action === 'dispose') {
+      if (tool === APP_UPDATES) throw new Error('无法从面板关闭应用更新服务')
       await service.dispose?.(panelId)
       return true
     }

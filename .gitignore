@@ -2,6 +2,7 @@ node_modules/
 out/
 release/
 release2/
+release-update-next/
 *.log
 .DS_Store
 

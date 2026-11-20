@@ -11,6 +11,7 @@ import TabBar from './components/TabBar.vue'
 import HomePanel from './components/HomePanel.vue'
 import ExtensionCenter from './components/ExtensionCenter.vue'
 import SettingsDialog from './components/SettingsDialog.vue'
+import AppUpdateDialog from './components/AppUpdateDialog.vue'
 import type { WinInfo } from '../../shared/types'
 
 const tabs = useTabStore()
@@ -93,6 +94,7 @@ onMounted(() => {
           <div class="about-copy">{{ winInfo.platform }} · 离线可用</div>
         </div>
       </el-popover>
+      <AppUpdateDialog :current-version="winInfo.version" />
       <span class="header-divider" aria-hidden="true"></span>
       <TabBar />
       <button class="header-action" title="扩展中心" @click="tabs.openTool(extensions)">

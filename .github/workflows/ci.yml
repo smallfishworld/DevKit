@@ -39,6 +39,9 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: App update flow in the workbench
+        run: npm run test:updates-smoke
+
       - name: Device plugin Electron integration smoke
         run: npm run test:plugins-smoke
 
@@ -64,6 +67,16 @@ jobs:
         run: |
           $env:DEVKIT_CHECK_PACKAGED = '1'
           npm run test:pty-smoke
+
+      - name: Verify portable and ZIP restart updates on Windows
+        timeout-minutes: 7
+        shell: pwsh
+        run: |
+          $current = [version](Get-Content package.json | ConvertFrom-Json).version
+          $next = "$($current.Major).$($current.Minor).$($current.Build + 1)"
+          npm exec -- electron-builder --win --config.compression=store --config.extraMetadata.version=$next --config.directories.output=release-update-next
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node tests/probes/windows-updates.cjs "$next" release-update-next
 
       - name: Upload verified Windows packages
         uses: actions/upload-artifact@v4
