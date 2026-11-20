@@ -90,7 +90,8 @@ async function exercise(root, format, outcome) {
   const exe = join(install, format === 'portable' ? 'DevKit renamed.exe' : 'DevKit.exe')
   const originalPackage = join(currentRoot, name(current, format))
   if (format === 'portable') await copyFile(originalPackage, exe)
-  else execFileSync('tar.exe', ['-xf', originalPackage, '-C', install], { stdio: 'inherit', timeout: 90_000 })
+  // CreateProcess accepts a Unicode working directory even if tar's argument decoder uses a legacy code page.
+  else execFileSync('tar.exe', ['-xf', originalPackage], { cwd: install, stdio: 'inherit', timeout: 90_000 })
   const oldHash = await digest(exe)
 
   const cache = join(profile, 'updates', createHash('sha256').update(exe.toLowerCase()).digest('hex').slice(0, 24))
@@ -180,14 +181,28 @@ async function main() {
     await exercise(root, 'portable', 'rollback')
   } finally {
     // Close only disposable fixtures created under this test's unique path.
-    execFileSync('pwsh.exe', ['-NoProfile', '-NonInteractive', '-Command', [
+    console.log('Cleaning up Windows update fixtures')
+    const cleanup = spawn('pwsh.exe', ['-NoProfile', '-NonInteractive', '-Command', [
       '$root = $env:DEVKIT_FIXTURE_ROOT',
       'Get-CimInstance Win32_Process | Where-Object {',
       '  ($_.Name -like "DevKit*.exe") -and (',
       '  ($_.ExecutablePath -and $_.ExecutablePath.StartsWith($root + "\\", [StringComparison]::OrdinalIgnoreCase)) -or',
       '  ($_.CommandLine -and $_.CommandLine.Contains($root + "\\")))',
       '} | ForEach-Object { Stop-Process -Id $_.ProcessId -ErrorAction SilentlyContinue }'
-    ].join('\n')], { env: { ...process.env, DEVKIT_FIXTURE_ROOT: root }, timeout: 30_000, stdio: 'inherit' })
+    ].join('\n')], { env: { ...process.env, DEVKIT_FIXTURE_ROOT: root }, stdio: 'inherit' })
+    cleanup.unref()
+    await new Promise((done, reject) => {
+      const timer = setTimeout(() => {
+        cleanup.kill()
+        reject(new Error('Windows update fixture cleanup timed out: ' + root))
+      }, 30_000)
+      cleanup.once('error', (error) => { clearTimeout(timer); reject(error) })
+      cleanup.once('exit', (code) => {
+        clearTimeout(timer)
+        if (code === 0) done()
+        else reject(new Error('Windows update fixture cleanup failed (exit ' + code + '): ' + root))
+      })
+    })
     await rm(root, { recursive: true, force: true, maxRetries: 8, retryDelay: 300 })
   }
 }
