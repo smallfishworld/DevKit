@@ -1,109 +1,84 @@
-# 设备插件（API v1）
+# 设备插件（API v2）
 
-## 安装与运行
+## 架构概览与契约包
 
-串口面板提供插件管理入口。DevKit 不再内置 OA 设备动作；OA 解锁与普通应答都以用户安装的可信 JavaScript 插件提供（OA 解锁见 `smallfishworld/DevKit-Plugins` 的 `plugins/oa-unlock`）。外部插件运行于独立 Electron utilityProcess，串口仍由 DevKit 主进程持有。**该进程不是安全沙箱**：插件仍能使用 Node.js 文件系统、网络和环境变量；manifest 的 capabilities 仅约束 DevKit 提供的串口与认证 API。只安装经过核实的可信插件，安装前 UI 会再次确认。
+DevKit 插件体系基于独立同构契约包 `packages/plugin-sdk`（`@devkit/plugin-sdk`），统一导出 API v2 类型、`validateSchema`/`validateConfig`/`applyDefaults`、`parseManifest`/`satisfiesMinVersion` 与官方单测夹具 `createMockPluginContext`。宿主通过通用流会话抽象 `StreamSessionBridge` 向插件开放 **串口（`serial`）、SSH（`ssh`）、网络调试（`net`）与本地终端（`pty`）** 四类传输能力。
 
-1. 导入包含 manifest.json 和入口文件的本地插件目录，或自包含 JSON 插件包；API v1 不支持直接导入 ZIP。
-2. 选择插件并创建配置实例。实例保存配置，不等于已经连接设备。
-3. 打开串口，将配置实例绑定到该会话；自动监听需要明确启用。
-4. 从管理器运行手动动作，或在快捷命令中插入插件动作。
-5. 停止/解绑会取消任务并清理实例资源；串口断开、系统休眠后也会解除绑定，恢复后需要重新绑定。
+外部插件运行于独立 Electron `utilityProcess`，底层传输句柄仍由 DevKit 主进程持有。**该进程提供崩溃隔离而非安全沙箱**：插件仍能使用 Node.js 文件系统与网络；`capabilities` 仅约束 DevKit 提供的流与认证 API。请仅安装经过核实的可信插件。
 
-安装插件不自动获得已连接串口的控制权。一个配置实例同一时间只绑定一个会话；要同时使用多个串口，创建多个实例。
+## 安装、开发热重载与运行
 
-## 插件源（GitHub 仓库）
+1. 从扩展中心安装本地插件目录、自包含 JSON 插件包或 HTTPS 扩展源（v2 索引）；不直接导入 ZIP。
+2. 开发者可在开发态调用 `watch:start` / `watch:stop` 监听本地插件目录，源码或清单改动时自动防抖重装并安全重绑活跃实例。
+3. 选择插件并创建配置实例（`configVersion: 2`）；在已连接的串口、SSH 或网络面板中按 `transports` 过滤并手动绑定。
+4. 插件运行态的高频 `status` 与 `log` 事件通过增量通道直接同步到前端 Store，异常停止时浮层提供「一键重试绑定」。
 
-插件管理器的「插件源」页可以绑定插件仓库，自动读取版本列表并安装或更新：
+## 插件入口与 Manifest（API v2）
 
-1. 输入 `smallfishworld/DevKit-Plugins` 这样的 `owner/repo`、GitHub 仓库链接，或 `catalog.json` 的 HTTPS 地址。GitHub 链接会自动转换为 raw 地址。
-2. 宿主读取仓库根目录的 `catalog.json`（`schemaVersion: 1`），按其中的插件 ID、版本和描述显示安装/更新状态；检查更新不会自动安装。
-3. 安装包优先取同版本 GitHub Release 资产，标签约定为 `<slug>/v<version>`，资产名为 `<manifest.id>-<version>.devkit-plugin.json` 和 `SHA256SUMS`。没有 Release 时回退到 `packagePath`（相对 `catalog.json` 地址解析，适合已提交 `dist/` 或通过 GitHub Pages 发布的仓库）。
-4. 下载后必须匹配 `SHA256SUMS`（或 catalog 条目提供的 `sha256`）；校验失败立即取消，不影响已安装版本。每次安装/更新仍会要求确认外部插件是可信代码。
-
-绑定地址保存在用户数据目录的 `plugins/source.json`；解绑只停止检查更新，已安装插件和配置保留。当前 DevKit-Plugins 仓库的 `dist/` 不提交，若尚未发布单插件 Release，列表可以显示但安装会提示「插件包尚未发布（HTTP 404）」。
-
-## 插件目录
-
-最小插件包含 manifest.json 与 index.cjs。示例入口导出 CommonJS activate(ctx)，返回手动动作所需的 run、自动监听所需的 onData，以及可选的 dispose：
+最小插件包含 `manifest.json` 与 `src/index.cjs`（在 `DevKit-Plugins` 中也支持直接编写 `src/index.ts` 由内置 `esbuild` 管线自动预打包）：
 
 ```js
 exports.activate = async ctx => ({
   async run(actionId, args) {
-    const result = await ctx.serial.exchange('AT\r\n', {
+    ctx.signal.throwIfAborted()
+    const result = await ctx.stream.exchange('AT\r\n', {
       match: 'OK', timeoutMs: 3000
     })
     return { ok: true, response: result.text }
   },
   async onData(event) {
     // event.bytes 为 number[]；event.text 是流式解码文本。
-    // 一次回调不保证是完整协议帧，需在实例中维护协议缓存。
   },
   async dispose() {
     // 清理插件自己的定时器和缓存。
   }
 })
-
 ```
 
-manifest 字段：
+### manifest 字段
 
 | 字段 | 含义 |
 |---|---|
-| id / name / version | 稳定插件 ID、显示名、插件版本 |
-| apiVersion | 当前为 1，不兼容版本拒绝安装 |
-| entry | 插件目录内的预编译 JavaScript 入口（.js、.cjs 或 .mjs）；示例使用 CommonJS |
-| configSchema | 配置结构及默认值 |
-| actions | id、label、可选 description 的动作列表 |
-| autoRespond | 是否提供自动监听能力 |
-| capabilities | API v1 接受 `serial.read`、`serial.write`、`serial.exclusive`、`auth.session`；其他能力名会拒绝安装。`autoRespond` 须声明 `serial.read`；`serial.exclusive` 须同时声明 `serial.read` 和 `serial.write` |
+| `id` / `name` / `version` | 稳定命名空间 ID、显示名、SemVer 版本 |
+| `apiVersion` | 固定为 `2` |
+| `minHostVersion`（可选） | 最低兼容 DevKit 宿主版本，低于该值时拒绝安装与绑定 |
+| `transports` | 必填非空数组，声明支持的传输类型：`serial`、`ssh`、`net`、`pty` |
+| `entry` | 插件目录内的预编译 JS 入口（`.js`、`.cjs` 或 `.mjs`） |
+| `configSchema` | 顶层为 `object` 的受控 Schema，支持 `x-visibleWhen` 条件显隐与对象数组规则编辑 |
+| `actions` | `id`、`label`、可选 `description` 的动作列表（最多 32 项） |
+| `autoRespond` | 是否提供自动监听能力 |
+| `capabilities` | API v2 接受 `stream.read`、`stream.write`、`stream.exclusive`、`auth.session`；`autoRespond: true` 须声明 `stream.read`，`stream.exclusive` 须同时声明 `stream.write` |
 
-配置表单支持 object/string/number/integer/boolean/array、enum、required、默认值、长度与数值范围等常用 schema 子集。复杂数组/对象可在 JSON 编辑器填写；主进程再次校验。该 schema 不是完整 JSON Schema 实现；不支持的关键字会拒绝安装，不能使用 oneOf、$ref 等未实现的约束。
+### 条件显隐与多规则数组表单
 
-## SDK
+- `x-visibleWhen`：支持 `{ field, equals?, notEquals?, in? }`，根据同级字段值动态显隐表单项；隐藏字段在保存校验时自动跳过 `required` 检查。
+- 对象数组控件：当字段声明 `type: "array"` 且 `items.type === "object"` 时，表单自动渲染规则卡片列表，支持新增、删除及嵌套子字段的 `x-visibleWhen`。
 
-- ctx.config：本次实例配置快照。
-- ctx.autoEnabled：本次绑定是否启用自动监听；onData 还要求 manifest.autoRespond 为 true。
-- ctx.session：panelId、connectionId、串口路径和编码信息。
-- ctx.serial.write(data, options)：发送字符串或字节数组，单次 1 至 65536 字节。字符串默认 UTF-8，可指定 encoding 为 hex；不会自动按会话编码转为 GBK，需要其他编码时传字节数组。secret 标记接入宿主敏感值处理。
-- ctx.serial.exchange(data, options)：先注册新响应等待器再发送，累计新接收数据并等待 match 子串。encoding 为 hex 时按十六进制字节匹配（忽略 match 中空格和大小写），其余情况匹配文本。timeoutMs 默认 5000、范围 10 至 30000 毫秒；maxBytes 默认 65536、最大 262144。返回 text、bytes、receivedAt；超时、超限或取消会抛错。响应等待计时在取得串口租约之后开始，不包含租约排队时间。
-- ctx.serial.subscribe(listener)：建立独立接收流，回调收到与 onData 相同结构的数据事件；返回取消订阅函数。订阅数据不会进入自动应答队列。需要 `serial.read`。
-- ctx.serial.acquire()：取得跨回调的串口独占租约，返回 `{ connectionId, write, release }`。同一实例重复调用返回同一租约；其他发送来源在租约期间等待或拒绝。释放租约时丢弃该实例扣住的输入。需要 `serial.exclusive`。
-- ctx.serial.hold(options) / releaseHold(replay)：扣住用户输入（`maxBytes` 默认 4096、256 至 1048576；`maxMs` 默认 15000、1000 至 300000），`releaseHold(true)` 在仍持有租约时按原顺序补发，`false` 丢弃。需要 `serial.exclusive`。
-- ctx.auth.login(options) / ctx.auth.request(options)：在独立 Chromium 持久分区中完成登录并发送带 Cookie 的同源 HTTPS 请求；登录检查与业务接口必须与 `loginUrl` 同源，Cookie 不返回插件。需要 `auth.session`。回调最长等待 600 秒。
-- ctx.auth.request 返回 `{ status, text }`（响应体上限 64 KiB）；`auth.login` 的 `timeoutMs` 默认 180 秒。插件只能拿到状态码与响应文本，不能读取或写入 Cookie。请求头会拒绝 Cookie、Host、Content-Length 等由宿主接管的字段。
-- ctx.log(level, message)：level 为 debug、info、warn 或 error；诊断日志在内存中全局保留最近 300 条，每条最多 4096 字符。勿写入口令或 Cookie。
-- ctx.state(value)：上报可 JSON 序列化的插件状态，序列化后最多 16384 字符；不合法或超限的状态被忽略并记警告。旧绑定实例迟到的状态和日志会被丢弃。
-- run(actionId, args)：手动动作；返回 {ok:false,error} 可使宏停止，成功返回 {ok:true,...}。
-- onData(event)：自动监听事件；按顺序处理，队列最多 128 个事件或 256 KiB 接收字节。任一上限被超过时会停止实例并报错，不会静默丢帧后继续应答。外部插件每次 onData 回调最长等待 30 秒；声明 `auth.session` 的插件因可能等待用户登录，回调上限为 600 秒。超时后停止实例并提示手动排查、重新绑定；为避免设备命令重复执行，不自动重启。
-- dispose()：停止、更新、断开或销毁时清理自有资源。
+## SDK 运行时上下文（`PluginContext`）
 
-所有 serial 调用必须在 run 或 onData 回调中顺序 await，确保回调返回前已完成。不支持对同一实例并发执行多个 write/exchange，也不要从脱离回调生命周期的定时器发起串口请求。插件应在 dispose 中清理自己的定时器；宿主会取消在途请求，并在清理超时后结束外部进程。
+- `ctx.config`：本次实例配置快照（已按 Schema 填充默认值）。
+- `ctx.autoEnabled`：本次绑定是否启用自动监听。
+- `ctx.session`：`{ panelId, connectionId, transport, target, encoding }`。
+- `ctx.signal`：`AbortSignal`（内置与外部插件均可用），在停止、解绑、断开或热重载时触发中止。
+- `ctx.stream.write(data, options)`：发送字符串或字节数组（1 至 65536 字节），支持 `encoding: 'utf8' | 'hex'` 与 `secret: true`。
+- `ctx.stream.exchange(data, options)`：先订阅响应再写入，等待 `match` 子串，`timeoutMs`（10–30000ms）与 `maxBytes`（1–262144）。
+- `ctx.stream.subscribe(listener)`：独立接收订阅，返回取消订阅函数；需要 `stream.read`。订阅不占用自动应答队列，可在动作等待登录或网络请求时继续接收数据。
+- `ctx.stream.acquire()`：取得跨回调独占租约，返回 `{ connectionId, write, release }`；需要 `stream.exclusive`。在流程完成后 `await lease.release()`，停止、断开和进程退出时宿主兜底释放。
+- `ctx.stream.hold(options)` / `ctx.stream.releaseHold(replay)`：仅串口支持，且须声明 `stream.exclusive`。扣住用户输入后，成功时在仍持有租约期间调用 `releaseHold(true)` 按原顺序补发；失败时调用 `releaseHold(false)` 丢弃。`maxBytes` 默认 4096，范围 256–1048576；`maxMs` 默认 15000，范围 1000–300000。
+- `ctx.auth.login(options)` / `ctx.auth.request(options)`：须声明 `auth.session`；由宿主管理独立的持久登录会话。插件提供 HTTPS `loginUrl`、登录检查或业务请求；业务请求与登录检查必须与登录地址同源，Cookie 不返回插件。`request` 返回 `{ status, text }`，响应体最多 64 KiB；Cookie、Host 等由宿主管理的请求头不能由插件覆盖。
+- `ctx.log(level, message)` / `ctx.state(value)`：增量上报诊断日志（全局保留最近 300 条）与运行态指标（≤ 16 KiB）。
+- `run(actionId, args)`：失败时须直接 `throw Error` 以中止宿主宏后续步骤。
 
-宿主统一仲裁动作与其他发送来源。有写权限的手动动作取得租约后持有至动作结束；自动回调在首次需要发送时申请租约，持有至该回调结束。声明 `serial.exclusive` 的插件不预占租约，由插件在回调内 `acquire()` 并在流程结束时显式 `release()`；租约可跨多个回调保持，实例停止或断开时宿主兜底释放并丢弃扣住的输入。取消正在进行的底层串口写入时，逻辑任务会立即收到取消错误，但租约要等驱动的写入完成回调后才能交给下一个事务；如果驱动永不回调，需要断开/重连端口来恢复。插件租约按 FIFO 等待（最多 64 项），可通过停止实例取消等待；队列已满、取消或连接变化会明确失败。终端直接输入等同步发送在串口被占用时立即拒绝。插件不应通过导入 serialport 自行打开端口。重连后的连接身份不同，旧实例不能继续写入新连接。
+所有异步流写入与租约调用须顺序 `await`，禁止对同一实例并发调用 `write`/`exchange`。订阅返回的取消函数须在实例清理时调用；延时发送须维护串行写队列，并在 `dispose` / `reset` / `ctx.signal` 中止时取消待发定时器。使用 `stream.exclusive` 的插件自行取得与释放显式租约，宿主不会为其预先占用会话；其他发送来源在租约期间按会话仲裁规则等待或拒绝。旧 `connectionId` 的租约不能写入重连后的会话。
 
-## 例子
 
-- examples/plugins/text-hex-responder：无需 OA 的完整文本/HEX 自动应答插件，支持分批、多次命中、延时与停用清理。
-- examples/plugins/template：主动查询和等待响应的起始模板。
-- OA 解锁作为外部插件发布在 `smallfishworld/DevKit-Plugins` 的 `plugins/oa-unlock`，不随 DevKit 内置；安装后旧 `device-actions.json` 会迁移为插件实例，既有实例与宏引用保持兼容。
+## OA 外部插件与旧配置迁移
 
-## 配置与版本
+OA 设备解锁由 [DevKit-Plugins 的 `plugins/oa-unlock`](https://github.com/smallfishworld/DevKit-Plugins/tree/main/plugins/oa-unlock) 提供，稳定 ID 为 `devkit.oa-debug`，支持串口。宿主只提供通用流租约、输入扣留、秘密值保护与认证会话；触发词、挑战码识别、取码请求和结果判定由插件实现。
 
-插件包、用户配置实例、运行中会话绑定分别管理。配置实例有独立 ID 和 configVersion。卸载插件包会停止相关实例并保留其配置与 ID，重新安装后可以恢复使用；明确删除配置实例才会删除该实例，引用它的快捷命令需要重新选择。停用实例不会删除配置。运行中修改普通参数需先停止或等待动作完成；禁用和关闭自动监听会取消在途工作。空闲绑定实例更新配置时重建并使用新快照，不会把旧 busy 状态复制给新的监听对象。
-已绑定的插件不能直接覆盖安装，需先解除相关绑定。更新包校验通过后再切换，失败保留已安装版本；已有实例下次绑定时按新 schema 校验。当前仅支持 apiVersion: 1 和 configVersion: 1，没有任意版本之间的自动配置迁移。
+1. 按插件仓库说明打包并在全局「扩展中心」安装本地 JSON 包；从 HTTPS 扩展源安装须等待相应版本正式发布。
+2. 安装该插件后，宿主才读取旧 `device-actions.json`，把有效 profile 转成 `legacy-<profile ID>` 的 API v2 配置实例。既有同 ID 实例不覆盖，旧文件不删除；迁移失败与其他插件隔离，可重试。
+3. 迁移实例默认不启用自动监听，也不会自动绑定串口。检查配置后从「当前串口插件」绑定，按需启用自动监听。
+4. 旧 `device-action` 宏步骤仍按现行导入规则丢弃；需要继续使用时，在宏中选择迁移实例及其插件动作。迁移不恢复已移除的设备动作编辑器。
 
-## 信任与运行边界
-
-API v1 外部包是用户信任的本地代码。utilityProcess 隔离卡死/崩溃并便于终止，但仍具有 Node API；能力清单不构成文件和网络的操作系统沙箱。不要安装来源不可信的代码。
-端口由宿主管理；声明 `auth.session` 的插件使用宿主创建的独立持久登录分区，Cookie 不暴露给插件。插件自动布防与安装分开，敏感串口事务不应向无关监听者广播秘密。
-
-## 验证
-
-独立协议测试：node examples/plugins/text-hex-responder/test.cjs。
-宿主单元与集成测试挂入 npm test；Electron 插件冒烟验证实际构建后的独立 worker、安装、绑定和动作。
-Box 的模拟串口与 Linux Electron 测试不替代 Windows CI 和真实设备/OA 联调。实际通过项见[三阶段验收记录](../openspec/changes/archive/2026-11-16-add-device-plugin-system/tasks.md)和 PR。
-
-## 插件包生成
-
-在仓库执行 `npm run plugin:pack -- examples/plugins/text-hex-responder <输出路径>.json` 生成自包含 JSON 包，包含 manifest 和文本文件映射。目录和 JSON 包均可安装；API v1 不直接解压 ZIP，不运行安装脚本。包上限 4 MiB、128 个文件，不含 node_modules；运行依赖请预先打包到 JS。
+自动解锁成功后，插件在同一独占租约内补发暂存输入；失败、超时、停止或断开时丢弃。发送口令须使用 `secret: true`，插件自身日志与状态也不得包含口令。秘密值的即时、跨批及延迟回显由宿主统一处理，不能广播给无关订阅者。

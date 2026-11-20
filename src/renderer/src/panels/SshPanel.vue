@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { ElMessage } from 'element-plus'
 import {
   ArrowRight,
   CircleClose,
@@ -19,7 +19,8 @@ import TerminalHistory from '@renderer/components/TerminalHistory.vue'
 import { useTerminalStream } from '../composables/useTerminalStream'
 import { ByteCounterThrottle } from '../../../shared/terminal-stream'
 import QuickCmdManager from '@renderer/components/QuickCmdManager.vue'
-import type { SshConfig, SshParams, SshSessionInfo } from '../../../shared/ssh'
+import SerialDevicePlugins from '@renderer/components/SerialDevicePlugins.vue'
+import type { SshConfig, SshParams } from '../../../shared/ssh'
 
 import type { QuickCmdStep } from '../../../shared/term-macro'
 import { useTermMacros } from '../composables/useTermMacros'
@@ -28,6 +29,7 @@ import { useTabStore } from '@renderer/stores/tabs'
 
 const props = defineProps<{ panelId: string }>()
 const tabStore = useTabStore()
+const recentParams = tabStore.tabs.find((tab) => tab.id === props.panelId)?.sshParams
 
 interface DataEvt {
   text: string
@@ -49,6 +51,9 @@ const params = reactive<SshParams>({
 })
 const open = ref(false)
 const connecting = ref(false)
+watch([open, connecting], ([connected, pending]) => {
+  tabStore.setConnection(props.panelId, connected ? 'connected' : pending ? 'connecting' : 'disconnected')
+}, { immediate: true })
 const rxBytes = ref(0)
 const txBytes = ref(0)
 
@@ -58,14 +63,20 @@ const termFont = ref('Consolas')
 const termFontSize = ref(13)
 const TERM_SIZES = [10, 11, 12, 13, 14, 15, 16, 17, 18, 20, 22, 24, 26, 28]
 
-const sessionName = ref('')
+/** 顶部工具栏「已存预设」的当前选中项（只用于选择/删除） */
+const presetName = ref('')
+/** 保存预设时输入的名字；留空则用「用户名@主机」生成 */
+const presetSaveName = ref('')
+/** 保存预设的命名行是否展开；删除预设需要点两次确认 */
+const presetSaving = ref(false)
+const presetDeleteArmed = ref(false)
 
-/** 左侧会话栏宽度（拖动分隔条调整，重启记忆） */
+/** 左侧侧栏宽度（快捷命令栏，拖动分隔条调整，重启记忆） */
 const sidebarWidth = ref(210)
 const { onMouseDown: onSidebarResize } = useSidebarDrag(sidebarWidth, () => void persistConfig())
-/** 左侧会话/快捷命令栏显示/隐藏 */
+/** 左侧侧栏（快捷命令栏）显示/隐藏 */
 const sidebarHidden = ref(false)
-/** 折叠/展开整条会话栏（与快捷命令栏一起收起；重启记忆） */
+/** 折叠/展开整条侧栏（与快捷命令栏一起收起；重启记忆） */
 function toggleSidebar(): void {
   sidebarHidden.value = !sidebarHidden.value
   void persistConfig()
@@ -128,7 +139,8 @@ onMounted(async () => {
   )
   const res = (await window.api.invoke('ssh', 'attach', props.panelId)) as { config: SshConfig }
   config.value = res.config
-  Object.assign(params, res.config.last)
+  Object.assign(params, res.config.last, recentParams ? { ...recentParams, password: '' } : undefined)
+  if (params.host) rememberConnection()
   termFont.value = config.value.termFont || 'Consolas'
   termFontSize.value = config.value.termFontSize || 13
   autoLog.value = config.value.autoLog !== false
@@ -145,6 +157,14 @@ onUnmounted(() => {
   window.api.invoke('ssh', 'dispose', props.panelId).catch(() => {})
 })
 
+function rememberConnection(): void {
+  const { host, port, username, authType, privateKeyPath } = params
+  tabStore.setConnection(props.panelId, open.value ? 'connected' : 'disconnected', {
+    sshParams: { host, port, username, authType, privateKeyPath }
+  })
+  tabStore.rename(props.panelId, `${username}@${host}`)
+}
+
 // ---------- 连接 ----------
 async function connect(): Promise<void> {
   if (!params.host.trim()) {
@@ -160,7 +180,7 @@ async function connect(): Promise<void> {
   if (res.ok) {
     open.value = true
     termView.value?.info(`已连接 ${params.username}@${params.host}:${params.port}`)
-    tabStore.rename(props.panelId, `${params.username}@${params.host}`)
+    rememberConnection()
     persistConfig()
     termView.value?.focus()
   } else {
@@ -237,31 +257,55 @@ async function persistConfig(): Promise<void> {
   await window.api.invoke('ssh', 'config:set', props.panelId, JSON.parse(JSON.stringify(config.value)))
 }
 
+/** 展开「预设名」输入行（点「存为预设」先命名，避免弹框抢焦点把工具栏状态弄乱） */
+function openSavePreset(): void {
+  if (!params.host.trim()) {
+    ElMessage.warning('请先填写主机')
+    return
+  }
+  presetSaveName.value = presetName.value.trim() || `${params.username}@${params.host}`
+  presetSaving.value = true
+}
+
+/** 把当前填写的主机/认证参数存成预设（同名覆盖） */
 async function saveSession(): Promise<void> {
   if (!config.value) return
-  const name = sessionName.value.trim() || `${params.username}@${params.host}`
+  if (!params.host.trim()) {
+    ElMessage.warning('请先填写主机')
+    return
+  }
+  const name = presetSaveName.value.trim() || `${params.username}@${params.host}`
+  presetSaving.value = false
   const list = config.value.sessions.filter((s) => s.name !== name)
   list.unshift({ name, params: JSON.parse(JSON.stringify(params)) as SshParams })
   config.value.sessions = list
-  sessionName.value = ''
+  presetName.value = name
   await persistConfig()
-  ElMessage.success(`会话「${name}」已保存`)
+  ElMessage.success(`预设「${name}」已保存`)
 }
 
-function loadSession(idx: number): void {
-  const s = sessions.value[idx]
-  if (s) Object.assign(params, s.params)
+/** 选中预设：套用其中的连接参数（不自动连接） */
+function applyPreset(name: string | undefined): void {
+  presetDeleteArmed.value = false
+  const preset = sessions.value.find((s) => s.name === name)
+  if (preset) Object.assign(params, preset.params)
 }
 
-async function deleteSession(idx: number): Promise<void> {
-  const s = sessions.value[idx]
-  if (!s || !config.value) return
-  try {
-    await ElMessageBox.confirm(`删除会话「${s.name}」？`, '删除', { type: 'warning' })
-  } catch {
+/** 第一次点击进入待确认状态，再点一次才真正删除 */
+function requestDeletePreset(): void {
+  if (!presetDeleteArmed.value) {
+    presetDeleteArmed.value = true
     return
   }
-  config.value.sessions = config.value.sessions.filter((x) => x.name !== s.name)
+  void deleteSelectedPreset()
+}
+
+async function deleteSelectedPreset(): Promise<void> {
+  presetDeleteArmed.value = false
+  const preset = sessions.value.find((s) => s.name === presetName.value)
+  if (!preset || !config.value) return
+  config.value.sessions = config.value.sessions.filter((s) => s.name !== preset.name)
+  presetName.value = ''
   await persistConfig()
 }
 
@@ -345,52 +389,58 @@ async function pickKeyFile(): Promise<void> {
           </el-button>
         </template>
         <el-divider direction="vertical" />
-        <el-input
-          v-model="sessionName"
+        <el-select
+          v-model="presetName"
           size="small"
-          placeholder="会话名"
-          style="width: 110px"
-        />
-        <el-button size="small" :icon="Plus" @click="saveSession">存为会话</el-button>
+          filterable
+          clearable
+          placeholder="套用已存预设"
+          aria-label="已存预设"
+          style="width: 168px"
+          @change="applyPreset"
+        >
+          <el-option
+            v-for="item in sessions"
+            :key="item.name"
+            :value="item.name"
+            :label="`${item.name}（${item.params.username}@${item.params.host}:${item.params.port}）`"
+          />
+        </el-select>
+        <el-button size="small" :icon="Plus" title="把当前填写的参数保存为预设（同名覆盖）" @click="openSavePreset">存为预设</el-button>
+        <el-button size="small" :type="presetDeleteArmed ? 'danger' : undefined"
+          :aria-label="presetDeleteArmed ? '确认删除所选预设' : '删除所选预设'"
+          :title="presetDeleteArmed ? '再点一次确认删除' : '删除所选预设'"
+          :disabled="!presetName" @click="requestDeletePreset">
+          <span v-if="presetDeleteArmed">确认</span><el-icon v-else><Delete /></el-icon>
+        </el-button>
+        <template v-if="presetSaving">
+          <el-input
+            v-model="presetSaveName"
+            size="small"
+            placeholder="预设名"
+            aria-label="预设名"
+            style="width: 150px"
+            @keydown.enter="saveSession"
+            @keydown.esc="presetSaving = false"
+          />
+          <el-button size="small" type="primary" @click="saveSession">保存</el-button>
+          <el-button size="small" @click="presetSaving = false">取消</el-button>
+        </template>
       </div>
     </div>
 
     <div class="body">
-      <!-- 会话库 + 快捷命令栏；可拖动调宽，也可整体折叠/展开 -->
+      <!-- 快捷命令栏；可拖动调宽，也可整体折叠/展开。
+           连接参数预设收进了顶部工具栏的下拉里，侧栏不再单列一块。 -->
       <template v-if="!sidebarHidden">
         <div class="sessions" :style="{ width: sidebarWidth + 'px' }">
-          <div class="sessions-head">
-            <span>会话</span>
-            <span class="hint">点击载入参数</span>
-          </div>
-          <div
-            v-for="(s, i) in sessions"
-            :key="s.name"
-            class="session-item"
-            :class="{ active: s.params.host === params.host && s.params.port === params.port }"
-            @click="loadSession(i)"
-          >
-            <div class="session-name">{{ s.name }}</div>
-            <div class="session-sub">
-              {{ s.params.authType === 'key' ? `${s.params.username}@${s.params.host}:${s.params.port}` : `${s.params.username}@${s.params.host}:${s.params.port} · 密码` }}
-              <el-button link type="danger" size="small" @click.stop="deleteSession(i)">
-                <el-icon><Delete /></el-icon>
-              </el-button>
-            </div>
-          </div>
-          <div v-if="sessions.length === 0" class="hint" style="padding: 8px">
-            暂无会话。连接成功后输入名称保存。
-          </div>
-          <div class="sessions-head" style="margin-top: 10px">
-            <span class="hint">⚠ 密码明文保存在本机 config.json，请勿保存生产环境密码</span>
-          </div>
-
           <QuickCmdManager :enabled="open" :writer="macroWriter" />
+          <p v-if="sessions.length" class="hint preset-note">⚠ 预设里的密码以明文保存在本机 config.json，请勿保存生产环境密码</p>
         </div>
 
-        <!-- 拖动调整会话栏宽度（VS Code 式分隔条）；中央折叠把手 -->
+        <!-- 拖动调整侧栏宽度（VS Code 式分隔条）；中央折叠把手 -->
         <div class="sidebar-split" title="拖动调整宽度" @mousedown="onSidebarResize">
-          <button class="split-toggle" title="折叠会话栏" @mousedown.stop @click="toggleSidebar">
+          <button class="split-toggle" title="折叠快捷命令栏" @mousedown.stop @click="toggleSidebar">
             <svg viewBox="0 0 8 12" width="7" height="10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
               <path d="M6.5 1L1.5 6l5 5" />
             </svg>
@@ -398,14 +448,31 @@ async function pickKeyFile(): Promise<void> {
         </div>
       </template>
 
-      <!-- 折叠后的细条：点击展开会话栏 -->
-      <div v-else class="sidebar-collapsed" :title="'展开会话栏'" @click="toggleSidebar">
+      <!-- 折叠后的细条：点击展开侧栏 -->
+      <div v-else class="sidebar-collapsed" :title="'展开快捷命令栏'" @click="toggleSidebar">
         <el-icon :size="16"><ArrowRight /></el-icon>
       </div>
 
       <!-- 终端 -->
       <div class="term-col">
         <div class="term-opts">
+          <el-button size="small" text :icon="Search" title="查找（Ctrl+F）" @click="openTermSearch">查找</el-button>
+          <el-button size="small" text @click="clearTerm">清屏</el-button>
+          <el-button size="small" text :icon="Download" @click="saveLog">保存日志</el-button>
+          <TerminalHistory tool="ssh" :panel-id="props.panelId" />
+          <el-popover placement="bottom-start" :width="270" trigger="click">
+            <template #reference><el-button size="small" text :icon="FolderOpened">日志设置</el-button></template>
+          <el-tooltip content="连接期间所有收发自动落盘（关闭后仅手动「存日志」）" placement="top">
+            <el-checkbox v-model="autoLog" size="small" title="新会话生效；关闭后使用临时历史，关闭面板或开始新会话时删除" @change="persistConfig">保留日志</el-checkbox>
+          </el-tooltip>
+            <div class="panel-row">
+              <el-button size="small" @click="setLogDir">设置保存路径</el-button>
+              <el-button size="small" @click="openLogDir">打开保存路径</el-button>
+            </div>
+          </el-popover>
+          <el-popover placement="bottom-end" :width="280" trigger="click">
+            <template #reference><el-button size="small" text>显示设置</el-button></template>
+            <div class="ssh-display-settings">
           <el-tooltip content="终端字体（可手输系统内已安装的字体名）" placement="top">
             <el-select
               v-model="termFont"
@@ -425,25 +492,12 @@ async function pickKeyFile(): Promise<void> {
               <el-option v-for="s in TERM_SIZES" :key="s" :value="s" :label="String(s)" />
             </el-select>
           </el-tooltip>
-          <el-button size="small" text :icon="Search" title="查找（Ctrl+F）" @click="openTermSearch">查找</el-button>
-        <TerminalHistory tool="ssh" :panel-id="props.panelId" />
-          <el-button size="small" text @click="clearTerm">清空</el-button>
           <el-tooltip content="每行前显示本地时间 [HH:MM:SS.mmm]，与日志落盘格式一致" placement="top">
             <el-checkbox v-model="showTime" size="small" @change="persistConfig">时间戳</el-checkbox>
           </el-tooltip>
-          <el-button size="small" text :icon="Download" @click="saveLog">存日志</el-button>
-          <el-dropdown trigger="click" @command="(cmd: string) => (cmd === 'set' ? setLogDir() : openLogDir())">
-            <el-button size="small" text :icon="FolderOpened">日志目录</el-button>
-            <template #dropdown>
-              <el-dropdown-menu>
-                <el-dropdown-item command="set">设置保存路径</el-dropdown-item>
-                <el-dropdown-item command="open">打开保存路径</el-dropdown-item>
-              </el-dropdown-menu>
-            </template>
-          </el-dropdown>
-          <el-tooltip content="连接期间所有收发自动落盘（关闭后仅手动「存日志」）" placement="top">
-            <el-checkbox v-model="autoLog" size="small" title="新会话生效；关闭后使用临时历史，关闭面板或开始新会话时删除" @change="persistConfig">保留日志</el-checkbox>
-          </el-tooltip>
+            </div>
+          </el-popover>
+          <SerialDevicePlugins :panel-id="props.panelId" :connected="open" transport="ssh" />
           <span class="counters">
             RX <b>{{ rxBytes }}</b> TX <b>{{ txBytes }}</b>
           </span>
@@ -462,6 +516,17 @@ async function pickKeyFile(): Promise<void> {
 </template>
 
 <style scoped>
+.panel.ssh-panel { padding:0; gap:0; }
+.ssh-panel > .panel-section { padding:9px 14px; border-width:0 0 1px; border-radius:0; background:var(--el-bg-color-overlay); }
+.ssh-panel .body { gap:0; }
+/* 顶部内边距与 .term-opts 的 7px 对齐：快捷命令标题与终端工具栏同一水平线 */
+.ssh-panel .sessions { display:flex; flex-direction:column; padding:7px 12px 14px; overflow:hidden; background:var(--el-bg-color-overlay); }
+.preset-note { flex:none; margin:12px 2px 0; padding-top:10px; border-top:1px solid var(--el-border-color-lighter); line-height:1.5; }
+.ssh-panel .term-col { gap:0; }
+.ssh-panel .term-opts { padding:7px 14px; flex-wrap:wrap; background:var(--el-bg-color-overlay); border-bottom:1px solid var(--el-border-color-lighter); }
+.ssh-panel .term-col :deep(.term) { border:0; border-radius:0; box-shadow:none; padding:12px 14px; }
+.ssh-display-settings { display:flex; flex-wrap:wrap; gap:8px; }
+
 .ssh-panel {
   display: flex;
   flex-direction: column;
@@ -481,7 +546,7 @@ async function pickKeyFile(): Promise<void> {
 .conn-bar {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 10px;
   flex-wrap: wrap;
 }
 
@@ -558,20 +623,6 @@ async function pickKeyFile(): Promise<void> {
   color: var(--el-color-primary);
 }
 
-.sessions-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  font-weight: 600;
-  font-size: 13px;
-  margin: 4px 0 8px;
-  gap: 8px;
-}
-
-.sessions-head .hint {
-  font-weight: 400;
-}
-
 /* 折叠后的细条（VS Code 式）：占 16px，点击展开 */
 .sidebar-collapsed {
   flex: 0 0 auto;
@@ -591,33 +642,6 @@ async function pickKeyFile(): Promise<void> {
   color: var(--el-color-primary);
 }
 
-.session-item {
-  padding: 7px 9px;
-  border-radius: 8px;
-  cursor: pointer;
-  transition: background 0.15s ease;
-}
-
-.session-item:hover {
-  background: var(--el-fill-color);
-}
-
-.session-item.active {
-  background: var(--el-fill-color-darker);
-}
-
-.session-name {
-  font-size: 13px;
-}
-
-.session-sub {
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
 .term-col {
   flex: 1;
   display: flex;
@@ -629,7 +653,8 @@ async function pickKeyFile(): Promise<void> {
 .term-opts {
   display: flex;
   align-items: center;
-  gap: 12px;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 
 .counters {

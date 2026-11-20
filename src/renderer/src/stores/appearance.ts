@@ -1,4 +1,4 @@
-import { computed, reactive, ref } from 'vue'
+import { computed, onScopeDispose, reactive, ref, watch } from 'vue'
 import { defineStore } from 'pinia'
 import {
   DEFAULT_APPEARANCE_SETTINGS,
@@ -13,14 +13,23 @@ export const useAppearanceStore = defineStore('appearance', () => {
   const initialized = ref(false)
 
   const terminalThemes = themeRegistry.listTerminal()
+  const systemColor = window.matchMedia('(prefers-color-scheme: dark)')
+  const systemDark = ref(systemColor.matches)
+  const onSystemColor = (event: MediaQueryListEvent): void => { systemDark.value = event.matches }
+  systemColor.addEventListener('change', onSystemColor)
+  onScopeDispose(() => systemColor.removeEventListener('change', onSystemColor))
 
   const terminalTheme = computed<TerminalTheme>(
-    () => themeRegistry.getTerminal(settings.terminalTheme) ?? DEVKIT_TERMINAL_THEME
+    () => themeRegistry.getTerminal(settings.followSystem
+      ? systemDark.value ? 'devkit-default' : 'solarized-light'
+      : settings.terminalTheme) ?? DEVKIT_TERMINAL_THEME
   )
 
   function applyCurrentUiTheme(): void {
     applyUiTheme(uiThemeFromTerminal(terminalTheme.value))
   }
+
+  watch(terminalTheme, applyCurrentUiTheme, { flush: 'sync' })
 
   async function persist(): Promise<void> {
     try {
@@ -39,6 +48,7 @@ export const useAppearanceStore = defineStore('appearance', () => {
         'appearance:get',
         'global'
       )) as Partial<AppearanceSettings> | null
+      if (saved?.followSystem === true) settings.followSystem = true
       if (saved && typeof saved.terminalTheme === 'string' && themeRegistry.getTerminal(saved.terminalTheme)) {
         settings.terminalTheme = saved.terminalTheme
       }
@@ -53,7 +63,12 @@ export const useAppearanceStore = defineStore('appearance', () => {
   function setTerminalTheme(id: string): void {
     if (!themeRegistry.getTerminal(id)) return
     settings.terminalTheme = id
-    applyCurrentUiTheme()
+    settings.followSystem = false
+    void persist()
+  }
+
+  function followSystem(): void {
+    settings.followSystem = true
     void persist()
   }
 
@@ -63,6 +78,7 @@ export const useAppearanceStore = defineStore('appearance', () => {
     terminalThemes,
     terminalTheme,
     init,
-    setTerminalTheme
+    setTerminalTheme,
+    followSystem
   }
 })

@@ -76,6 +76,7 @@ let searchAddon: SearchAddon | null = null
 let webglAddon: WebglAddon | null = null
 let resizeObserver: ResizeObserver | null = null
 /** fit 节流的收尾定时器（拖动停止后补最后一次重排） */
+let fitFrame: number | null = null
 let fitTrailingTimer: ReturnType<typeof setTimeout> | null = null
 // 被 select/clearSelection 补丁包装前的原始方法（doSearch 需要绕过锁造临时锚点选区）
 let rawSelect: ((col: number, row: number, length: number) => void) | null = null
@@ -183,11 +184,16 @@ onMounted(() => {
   const FIT_THROTTLE_MS = 120
   let lastFitAt = 0
   const runFit = (): void => {
-    try {
-      fitVisibleTerminal()
-    } catch {
-      /* 容器 0 尺寸时 fit 可能抛错，忽略 */
-    }
+    if (fitFrame !== null) return
+    // Defer layout writes out of the ResizeObserver delivery cycle.
+    fitFrame = requestAnimationFrame(() => {
+      fitFrame = null
+      try {
+        fitVisibleTerminal()
+      } catch {
+        /* 容器 0 尺寸时 fit 可能抛错，忽略 */
+      }
+    })
   }
   resizeObserver = new ResizeObserver(() => {
     const now = Date.now()
@@ -274,6 +280,10 @@ onUnmounted(() => {
   if (fitTrailingTimer) {
     clearTimeout(fitTrailingTimer)
     fitTrailingTimer = null
+  }
+  if (fitFrame !== null) {
+    cancelAnimationFrame(fitFrame)
+    fitFrame = null
   }
   resizeObserver?.disconnect()
   resizeObserver = null
@@ -718,8 +728,14 @@ defineExpose({ write, info, clear, reset, resync, resetVtState, focus, openSearc
   font-family: var(--font-mono);
 }
 
+/* min-width:0 是必需的：xterm 会把 .xterm-screen 撑到「列数 × 字符宽」的固有宽度，
+ * flex 子项默认 min-width:auto 不肯收缩，于是容器被屏幕反向撑宽 → FitAddon 按更宽的
+ * 父元素算出更多列 → 再撑宽……字号越大循环越猛（表现为放大后只有宽度变、高度不变，
+ * 以及空闲时 ResizeObserver↔fit 反复触发造成的画面闪烁）。overflow:hidden 兜底裁掉
+ * 一瞬间的越界，避免出现横向滚动条。 */
 .term-wrap {
   flex: 1;
+  min-width: 0;
   min-height: 0;
   display: flex;
   flex-direction: column;
@@ -728,14 +744,18 @@ defineExpose({ write, info, clear, reset, resync, resetVtState, focus, openSearc
 
 .term-stage {
   flex: 1;
+  min-width: 0;
   min-height: 0;
   display: flex;
   position: relative;
+  overflow: hidden;
 }
 
 .term {
   flex: 1;
+  min-width: 0;
   min-height: 0;
+  overflow: hidden;
   border: 1px solid var(--el-border-color-lighter);
   border-radius: 8px;
   padding: 6px 8px;

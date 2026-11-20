@@ -113,3 +113,15 @@ export function localEchoFor(data: string): string {
   }
   return out
 }
+
+/** 方向键浏览发送历史，回到最新位置时恢复尚未发送的内容。 */
+export function stepSendHistory(
+  history: readonly string[],
+  direction: 1 | -1,
+  state: { index: number; draft: string; text: string }
+): { index: number; draft: string; text: string } {
+  if (!history.length) return state
+  const draft = state.index === -1 ? state.text : state.draft
+  const index = Math.max(-1, Math.min(history.length - 1, state.index + direction))
+  return { index, draft, text: index === -1 ? draft : history[index] }
+}

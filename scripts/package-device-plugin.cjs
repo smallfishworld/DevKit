@@ -10,7 +10,7 @@ function pack(source, destination) {
   if (!relative.startsWith('..') && !path.isAbsolute(relative))
     throw new Error('输出文件须在插件目录之外')
   const manifest = JSON.parse(fs.readFileSync(path.join(root, 'manifest.json'), 'utf8'))
-  if (manifest.apiVersion !== 1 || typeof manifest.id !== 'string') throw new Error('manifest须声明id和apiVersion:1')
+  if (manifest.apiVersion !== 2 || typeof manifest.id !== 'string') throw new Error('manifest须声明id和apiVersion:2')
   const files = {}
   let size = 0
   function visit(dir, prefix) {
@@ -23,7 +23,7 @@ function pack(source, destination) {
       if (item.isDirectory()) visit(file, name)
       else if (item.isFile()) {
         const bytes = fs.readFileSync(file)
-        if (bytes.includes(0)) throw new Error('API v1 JSON包仅包含文本文件：' + name)
+        if (bytes.includes(0)) throw new Error('API v2 JSON包仅包含文本文件：' + name)
         size += bytes.length
         if (size > MAX_BYTES || Object.keys(files).length >= 127) throw new Error('插件包过大')
         files[name] = bytes.toString('utf8')

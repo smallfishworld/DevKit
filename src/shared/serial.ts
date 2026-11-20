@@ -20,6 +20,12 @@ export const DEFAULT_SERIAL_PARAMS: SerialParams = {
   rtscts: false
 }
 
+export function normalizeSerialParams(draft: Omit<SerialParams, 'baudRate'> & { baudRate: number | string }): SerialParams | undefined {
+  const baudRate = Number(draft.baudRate)
+  if (!draft.path || !Number.isInteger(baudRate) || baudRate < 1 || baudRate > 12_000_000) return
+  return { ...draft, baudRate }
+}
+
 /** 常用波特率（下拉可编辑，仍可手输 1200~12000000） */
 export const BAUD_RATES = [9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600, 1000000, 2000000, 4000000, 8000000, 12000000]
 
@@ -52,6 +58,8 @@ export interface SerialConfig {
   sidebarWidth: number
   /** 左侧会话/快捷命令栏显示/隐藏 */
   sidebarHidden?: boolean
+  /** 端口备注名（键为归一化端口路径，如 `COM1`）：标签页显示为「备注 (COM1)」 */
+  portLabels?: Record<string, string>
   /** 收发编码（收：按它解码线上的字节；发：按它编码下发文本；默认 UTF-8） */
   encoding: SerialEncoding
 }

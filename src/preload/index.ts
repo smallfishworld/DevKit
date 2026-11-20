@@ -3,6 +3,7 @@ import type { IpcRendererEvent } from 'electron'
 import type { ToolEvent, WinInfo } from '../shared/types'
 
 const api = {
+  platform: process.platform,
   invoke(tool: string, action: string, panelId: string, payload?: unknown): Promise<unknown> {
     return ipcRenderer.invoke('tool:invoke', { tool, action, panelId, payload })
   },

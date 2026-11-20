@@ -6,7 +6,7 @@
  */
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { ArrowDown, ArrowRight, CopyDocument, Delete, Download, EditPen, FolderAdd, Plus, Timer, Upload, VideoCamera } from '@element-plus/icons-vue'
+import { ArrowDown, ArrowRight, CopyDocument, Delete, EditPen, Plus, Timer, VideoCamera } from '@element-plus/icons-vue'
 import type { QuickCmd, QuickCmdStep, PluginActionReference, PluginMacroAction } from '../../../shared/term-macro'
 import { TERM_KEYS, keyName, stepPreview, resolveDropInsertion, validatePlayback } from '../../../shared/term-macro'
 import { useTermMacros } from '../composables/useTermMacros'
@@ -240,6 +240,8 @@ function onRecord(): void {
   openCmdDlg(-1, r.steps)
 }
 
+defineExpose({ finishRecording: () => { if (recording.value) onRecord() } })
+
 // ---------- 回放 ----------
 async function onPlay(cmd: QuickCmd): Promise<void> {
   if (!props.enabled) {
@@ -267,7 +269,9 @@ async function onPlay(cmd: QuickCmd): Promise<void> {
 
 // ---------- 多选 / 拖拽（排序 + 分组移动） ----------
 const selected = ref(new Set<string>())
-const dragOver = ref('') // 悬停目标：分组名 / '__ungrouped__' / 'item:<name>'（插到该命令前） / 'itemafter:<name>'（插到该命令后）
+/** 是否有命令正在拖动：只有拖动时才显示「移出分组」落区，平时侧栏底部就是干净的留白 */
+const dragging = ref(false)
+const dragOver = ref('') // 悬停目标：分组名 / '__tail__' / 'item:<name>'（插到该命令前） / 'itemafter:<name>'（插到该命令后）
 
 /** 点击命令：Ctrl/Shift 多选，否则执行该命令 */
 function onItemClick(name: string, e: MouseEvent): void {
@@ -289,8 +293,15 @@ function onDragStart(name: string, e: DragEvent): void {
   const next = new Set(selected.value)
   next.add(name)
   selected.value = next
+  dragging.value = true
   e.dataTransfer!.effectAllowed = 'move'
   e.dataTransfer!.setData('text/plain', [...next].join('\n'))
+}
+
+/** 拖动结束（无论落在哪里）：复位落区，避免「拖到此处」提示残留在侧栏底部 */
+function onDragEnd(): void {
+  dragging.value = false
+  dragOver.value = ''
 }
 
 /** 拖动悬停判定：行上半部 = 插到该命令前，下半部 = 插到该命令后 */
@@ -396,10 +407,10 @@ async function onImport(): Promise<void> {
 </script>
 
 <template>
-  <div>
-    <div class="sessions-head cmd-head" style="margin-top: 10px">
+  <div class="quick-cmd">
+    <div class="sessions-head cmd-head">
       <span>快捷命令</span>
-      <span>
+      <span class="cmd-head-actions">
         <el-tooltip
           :content="recording ? '停止录制并整理保存' : '录制宏：终端键入与发送都会记入（含自动延时与按键）'"
           placement="top"
@@ -408,18 +419,17 @@ async function onImport(): Promise<void> {
             <el-icon><VideoCamera /></el-icon>
           </el-button>
         </el-tooltip>
-        <el-tooltip content="新建分组：先建组，再在组内添加命令" placement="top">
-          <el-button size="small" text :icon="FolderAdd" @click="newGroupDlg = true" />
-        </el-tooltip>
-        <el-tooltip content="新建命令（可设分组）" placement="top">
-          <el-button size="small" text :icon="Plus" aria-label="新建快捷命令" @click="openCmdDlg(-1)" />
-        </el-tooltip>
-        <el-tooltip content="导入配置：支持 DevKit JSON 与 MobaXterm 宏文件（.mxtmacros / ini）" placement="top">
-          <el-button size="small" text :icon="Download" @click="onImport" />
-        </el-tooltip>
-        <el-tooltip content="导出配置：全部快捷命令存为 JSON" placement="top">
-          <el-button size="small" text :icon="Upload" @click="onExport" />
-        </el-tooltip>
+        <el-button size="small" text :icon="Plus" aria-label="新建快捷命令" @click="openCmdDlg(-1)" />
+        <el-dropdown trigger="click">
+          <el-button size="small" text aria-label="快捷命令分组与导入导出">⋯</el-button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item @click="newGroupDlg = true">新建分组…</el-dropdown-item>
+              <el-dropdown-item @click="onImport">导入命令…</el-dropdown-item>
+              <el-dropdown-item @click="onExport">导出命令…</el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
       </span>
     </div>
     <div class="cmd-list">
@@ -484,6 +494,7 @@ async function onImport(): Promise<void> {
             :title="it.cmd.steps.map(stepPreview).join(' → ')"
             @click="onItemClick(it.cmd.name, $event)"
             @dragstart="onDragStart(it.cmd.name, $event)"
+            @dragend="onDragEnd"
             @dragover.prevent.stop="onItemDragOver(it.cmd.name, $event)"
             @dragleave="onItemDragLeave(it.cmd.name, $event)"
             @drop.prevent.stop="onItemDrop(it.cmd.name)"
@@ -521,6 +532,7 @@ async function onImport(): Promise<void> {
         :title="it.cmd.steps.map(stepPreview).join(' → ')"
         @click="onItemClick(it.cmd.name, $event)"
         @dragstart="onDragStart(it.cmd.name, $event)"
+        @dragend="onDragEnd"
         @dragover.prevent.stop="onItemDragOver(it.cmd.name, $event)"
         @dragleave="onItemDragLeave(it.cmd.name, $event)"
         @drop.prevent.stop="onItemDrop(it.cmd.name)"
@@ -538,17 +550,6 @@ async function onImport(): Promise<void> {
           </el-button>
         </span>
       </div>
-      <div
-        v-if="grouped.ungrouped.length > 0"
-        class="ungrouped-drop"
-        :class="{ 'drop-hover': dragOver === '__ungrouped__' }"
-        @dragover.prevent="dragOver = '__ungrouped__'"
-        @dragleave="dragOver === '__ungrouped__' ? (dragOver = '') : null"
-        @drop.prevent="onDrop('')"
-      >
-        拖到此处移出分组 ▼
-      </div>
-
       <div v-if="quickCmds.length === 0" class="hint" style="padding: 4px 8px">
         {{ emptyHint ?? '点 + 添加多步骤命令，或用录制按钮录下操作序列' }}
       </div>
@@ -559,6 +560,18 @@ async function onImport(): Promise<void> {
         ● 录制中（{{ recordedCount }} 步）— 再点录制键停止并保存
       </div>
       <div v-if="playing" class="hint rec-hint">▶ 正在回放快捷命令…</div>
+    </div>
+
+    <!-- 列表下方的空白：平时就是留白，拖命令时才变成「移出分组」落区。
+         放在滚动区之外，命令再多也不会被挤走，侧栏剩余高度也有了用途 -->
+    <div
+      class="cmd-tail"
+      :class="{ active: dragOver === '__tail__', visible: dragging }"
+      @dragover.prevent="dragOver = '__tail__'"
+      @dragleave="dragOver === '__tail__' ? (dragOver = '') : null"
+      @drop.prevent="onDrop('')"
+    >
+      <span v-if="dragging">拖到此处移出分组 ▼</span>
     </div>
 
     <!-- 新建分组 -->
@@ -683,6 +696,14 @@ async function onImport(): Promise<void> {
 </template>
 
 <style scoped>
+/* 组件填满侧栏：标题固定，列表自己滚动，剩下的高度留给底部落区。
+   这样侧栏再长也不会出现「上面一小块、下面一大片空白」 */
+.quick-cmd { display:flex; flex-direction:column; flex:1 1 auto; min-height:0; }
+
+.cmd-head { display:flex; align-items:center; justify-content:space-between; gap:4px; margin-bottom:6px; font-size:13px; font-weight:600; flex:none; }
+.cmd-head-actions { display:flex; gap:2px; }
+.cmd-head-actions :deep(.el-button) { margin:0; padding-inline:4px; }
+
 .hint {
   font-size: 12px;
   color: var(--el-text-color-secondary);
@@ -691,14 +712,25 @@ async function onImport(): Promise<void> {
 .cmd-list {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 3px;
+  /* 列表吃掉侧栏剩余的全部高度：与下方落区共用 flex:1 时两者会被对半切开，
+     命令少也把列表压成半屏、下半截空着 */
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
 }
+
+/* 列表下方的落区：平时高度为 0（侧栏全部留给列表）；
+   拖命令时才展开成虚线框接收「移出分组」 */
+.cmd-tail { flex:0 0 auto; display:flex; align-items:center; justify-content:center; height:0; border-radius:7px; font-size:12px; color:var(--el-text-color-secondary); transition:height .12s ease; }
+.cmd-tail.visible { height:44px; margin-top:6px; border:1px dashed var(--el-border-color); }
+.cmd-tail.active { border:1px dashed var(--el-color-primary); background:var(--el-color-primary-light-9); }
 
 .cmd-item {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 5px 9px;
+  padding: 7px 9px;
   border-radius: 7px;
   font-size: 13px;
   cursor: pointer;
@@ -725,22 +757,6 @@ async function onImport(): Promise<void> {
   background: var(--el-color-primary-light-9);
   outline: 1px dashed var(--el-color-primary);
   border-radius: 6px;
-}
-
-.ungrouped-drop {
-  padding: 5px 9px;
-  margin-top: 2px;
-  border: 1px dashed var(--el-border-color);
-  border-radius: 7px;
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
-  text-align: center;
-  cursor: pointer;
-}
-
-.ungrouped-drop.drop-hover {
-  background: var(--el-color-primary-light-9);
-  outline: 1px dashed var(--el-color-primary);
 }
 
 .empty-item {
@@ -790,8 +806,8 @@ async function onImport(): Promise<void> {
 .cmd-group-head {
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 5px 6px;
+  gap: 5px;
+  padding: 6px 8px;
   border-radius: 6px;
   font-size: 12px;
   font-weight: 600;

@@ -1,4 +1,8 @@
-/** Keep possible token fragments across RX batches, including a late echo after cancel/timeout. */
+/**
+ * 串口「机密值」显示遮蔽：插件用 `write(..., { secret: true })` 写出的内容
+ * 在设备回显、终端显示与日志里都要遮掉，跨批拼回也算（口令可能被拆到两批）。
+ * 从原设备动作子系统独立出来——插件能力仍需要它。
+ */
 export class SerialSecretRedactor {
   private secrets = new Map<string, string[]>()
   private count = 0
@@ -8,7 +12,7 @@ export class SerialSecretRedactor {
   add(secret: string): void {
     const candidates = this.secrets.get(secret[0]) ?? []
     if (candidates.includes(secret)) return
-    if (this.count >= 64) throw new Error('本连接的设备动作次数达到上限，请重新连接设备')
+    if (this.count >= 64) throw new Error('本连接登记的口令数达到上限，请重新连接设备')
     this.count++
     candidates.push(secret)
     candidates.sort((a, b) => b.length - a.length)

@@ -2,107 +2,94 @@
 
 ## Purpose
 
-为串口设备扩展提供可信本地 JavaScript 插件、配置实例、受控串口会话和可诊断的独立运行时。OA 解锁等业务能力由外部插件提供，DevKit 只发行宿主能力，不内置具体业务插件。
+基于独立同构契约包 `@devkit/plugin-sdk`（API v2），为串口、SSH、网络调试及本地终端等流会话提供可信本地 JavaScript 插件、可视化条件/多规则配置实例、受控 `StreamSessionBridge` 会话租约、开发态热重载与可治理的 HTTPS 扩展源。OA 解锁等业务由外部插件提供，宿主不内置业务插件。
 
 ## Requirements
-### Requirement: 插件安装与兼容性
-宿主 SHALL 支持安装可信本地设备插件，校验插件 ID、版本、API 版本和入口范围。
+
+### Requirement: 独立契约包与插件安装兼容性
+宿主与插件仓库 SHALL 共享独立的同构契约包 `packages/plugin-sdk`（`@devkit/plugin-sdk`），统一提供 API v2 类型、Manifest/Schema 校验器、语义版本比较与官方单测夹具 `createMockPluginContext`。宿主 SHALL 校验插件 ID、版本、`apiVersion: 2`、`minHostVersion`、`transports` 与入口范围。
 #### Scenario: 安装兼容插件
-- WHEN 用户选择有效的本地插件包或目录
-- THEN 插件出现在列表中，安装本身不触发串口写入。
-#### Scenario: 安装无效或越界插件
-- WHEN manifest 无效、API 不兼容或入口越出插件目录
-- THEN 安装失败并说明原因，既有插件和用户配置不被覆盖。
-#### Scenario: 未安装 OA 业务插件
-- WHEN 用户目录存在旧 `device-actions.json`，但未安装提供 `devkit.oa-debug` 的外部插件
-- THEN 宿主不注册内置 OA 插件，也不读取、迁移或删除该旧配置。
-#### Scenario: 安装后迁移旧配置
-- WHEN 用户安装 ID 为 `devkit.oa-debug` 的外部插件且旧 `device-actions.json` 存在
-- THEN 宿主把旧 profile 一次性迁移为插件实例，迁移失败不影响其他插件，旧文件不被删除。
+- **WHEN** 用户选择有效的本地插件包或目录，且满足 `apiVersion: 2` 与 `minHostVersion`
+- **THEN** 插件出现在列表中，安装本身不触发任何流会话写入。
+#### Scenario: 安装无效、越界或不满足宿主最低版本的插件
+- **WHEN** manifest 无效、`apiVersion` 不为 2、当前宿主版本低于 `minHostVersion` 或入口越出插件目录
+- **THEN** 安装失败并说明原因，既有插件和用户配置不被覆盖。
 
-### Requirement: 插件源与远程更新
-宿主 SHALL 支持绑定 DevKit-Plugins 风格的 HTTPS 插件目录，按版本列出安装与更新，并在安装前校验插件包完整性。
-#### Scenario: 绑定 GitHub 插件仓库
-- WHEN 用户输入 `owner/repo`、GitHub 仓库链接或 `catalog.json` 地址
-- THEN 宿主读取目录并显示各插件版本及可更新状态，不自动安装。
-#### Scenario: 从 Release 安装或更新
-- WHEN 目录版本对应的安装包存在于同版本 Release 资产
-- THEN 宿主下载 JSON 插件包并核对 SHA-256 后安装；失败时保留已安装版本和配置。
-#### Scenario: 安装包未发布
-- WHEN Release 资产与 `packagePath` 均不存在
-- THEN 宿主明确提示插件包尚未发布，不改变已安装插件与配置。
-#### Scenario: 源格式或校验失败
-- WHEN 地址不是 HTTPS、目录格式无效、缺少校验值或 SHA-256 不匹配
-- THEN 宿主拒绝读取或安装，不执行下载的插件代码。
-
-### Requirement: 插件配置实例
-宿主 SHALL 将插件包、配置实例和会话绑定分开管理，保存前执行服务端校验。
+### Requirement: 插件配置实例与条件/多规则表单
+宿主 SHALL 将插件包、配置实例（`configVersion: 2`）和会话绑定分开管理，保存前执行服务端 Schema 校验。配置 Schema SHALL 支持 `x-visibleWhen` 条件显隐与对象数组（`type: "array"` + `items.type: "object"`）规则编辑；隐藏字段在保存校验时跳过 `required` 检查。
+#### Scenario: 条件显隐与多规则编辑
+- **WHEN** 插件 Schema 声明 `x-visibleWhen`（如 HEX 模式下隐藏文本换行/大小写项）或对象数组规则字段
+- **THEN** 配置表单按当前字段值实时切换可见项，并提供规则的增删与子字段编辑。
 #### Scenario: 配置实例独立
-- WHEN 同一个插件创建两个不同配置实例并绑定不同串口
-- THEN 参数与运行状态互不影响。
-#### Scenario: 配置失效
-- WHEN 用户保存不符合 schema 的配置
-- THEN 显示字段错误且保留原有效配置。
+- **WHEN** 同一个插件创建两个不同配置实例并绑定不同会话面板
+- **THEN** 参数与运行状态互不影响。
 
-### Requirement: 可视化配置与动作发现
-插件 SHALL 可贡献配置结构和动作元数据；宿主 SHALL 显示表单、动作和诊断。
-#### Scenario: 无 OA 插件
-- WHEN 安装普通应答插件
-- THEN 无需填写 OA 或挑战码字段即可配置、绑定和运行。
+### Requirement: 通用流会话桥接与多协议动作发现
+宿主 SHALL 通过 `StreamSessionBridge`（支持 `serial`、`ssh`、`net`、`pty`）向插件提供受控 `ctx.stream.write` / `ctx.stream.exchange` 与 `ctx.signal`，并按 `manifest.transports` 过滤可绑定会话。
+#### Scenario: 多协议绑定
+- **WHEN** 插件声明 `transports: ["serial", "ssh", "net"]`
+- **THEN** 用户可在已连接的串口、SSH 或网络调试面板中绑定同一插件配置并执行手动动作或自动应答。
 #### Scenario: 快捷命令调用插件
-- WHEN 宏包含已安装插件的有效动作引用
-- THEN 宿主等待动作结果后再继续，失败或取消时按现有宏语义停止。
-#### Scenario: 插件缺失
-- WHEN 引用的插件不存在或不兼容
-- THEN 宏保留引用并报告缺失，不静默跳过执行。
+- **WHEN** 宏包含已安装插件的有效动作引用
+- **THEN** 宿主等待动作结果后再继续，插件失败抛出异常或被取消时按宏语义中止后续步骤。
 
-### Requirement: 隔离的扩展运行时
-外部 JavaScript 插件 SHALL 在独立进程中运行，宿主保有串口并验证绑定会话。
-#### Scenario: 插件进程退出
-- WHEN 插件崩溃、超时或被禁用
-- THEN 在途任务被取消，监听和事务被释放，其他串口继续可用。
+### Requirement: 隔离的扩展运行时、增量同步与一键恢复
+外部 JavaScript 插件 SHALL 在独立 `utilityProcess` 中运行，宿主保有底层会话并验证 `connectionId` 租约。前端状态管理 SHALL 对高频 `status` 与 `log` 事件采用增量写入而非全量 `snapshot` 刷新，并在实例异常停止时提供一键重试绑定入口。
+#### Scenario: 插件进程退出或异常
+- **WHEN** 插件崩溃、超时或被禁用
+- **THEN** `ctx.signal` 触发中止，在途任务与租约被释放，其他会话继续可用；插件浮层展示错误并提供一键重试绑定按钮。
 #### Scenario: 连接已变化
-- WHEN 旧动作在串口重连后返回
-- THEN 旧动作不得写入新的连接。
-#### Scenario: 插件停止
-- WHEN 用户停用已运行插件
-- THEN 停止新的触发并取消在途工作，不留下定时器、订阅或端口租约。
+- **WHEN** 旧动作在会话重连后返回
+- **THEN** 旧动作不得写入新的连接。
 
-### Requirement: 数据与事务
-插件 SHALL 可处理原始字节，宿主 SHALL 协调设备动作与其他发送来源。
-#### Scenario: 分批协议输入
-- WHEN 一个帧被拆为多次接收或一次接收包含多帧
-- THEN 插件按协议缓存与消费数据，不假设一次 data 回调就是一帧。
-#### Scenario: 发送者冲突
-- WHEN 插件持有设备事务而其他来源申请发送
-- THEN 宿主按确定策略排队或拒绝，协议交互不被插入破坏。
+### Requirement: 开发态本地目录热重载
+宿主 SHALL 支持对本地插件开发目录开启 `watch:start` / `watch:stop` 文件监听。
+#### Scenario: 修改本地插件源码
+- **WHEN** 开发者修改被监听目录中的插件代码或清单
+- **THEN** 宿主防抖重装并安全停止再重新绑定受影响的活跃实例。
 
-### Requirement: 插件串口能力与认证会话
-宿主 SHALL 按 manifest 能力向插件提供独立接收订阅、跨回调独占租约、输入扣留/回放和隔离认证会话，未声明的能力调用 MUST 被拒绝。
-#### Scenario: 订阅与动作并行
-- WHEN 插件在手动动作或自动回调执行期间订阅串口数据
-- THEN 订阅独立收到该连接的数据，不依赖 exchange 或自动应答队列，取消订阅后不再回调。
-#### Scenario: 跨回调独占
-- WHEN 声明 `serial.exclusive` 的插件在回调中取得租约并跨多个回调保持
-- THEN 其他发送来源在释放前排队或拒绝；释放、停止或断开后宿主释放租约，旧租约不能写入新连接。
-#### Scenario: 扣键补发
-- WHEN 插件在自动流程中扣住用户输入并最终报告成功
-- THEN 宿主按原顺序经同一租约补发；失败、超时、取消或断开时丢弃，不发送到设备。
-#### Scenario: 认证会话
-- WHEN 声明 `auth.session` 的插件请求登录和同源 HTTPS 业务接口
-- THEN 宿主在独立持久分区中完成登录并携带 Cookie 请求，插件只得到状态码与响应文本；登录检查、业务接口与登录入口不同源或请求头越界时拒绝。
-#### Scenario: 能力未声明
-- WHEN 插件调用 manifest 未声明的串口订阅、独占、扣键或认证能力
-- THEN 宿主拒绝调用并说明缺少的能力，不改变串口状态。
+### Requirement: HTTPS 扩展源 v2 版本治理
+扩展中心 MUST 持久化已添加的 HTTPS 安装索引（`version: 2`），预置官方扩展源并支持手动刷新、停用、启用和移除。索引条目 MUST 校验 SHA-256、包标识、版本、`apiVersion: 2`，并支持 `minHostVersion`、`transports`、`deprecated` 与 `yanked` 治理字段。
+#### Scenario: 拦截已撤回或不兼容版本
+- **WHEN** 扩展源条目被标记为 `yanked: true` 或其 `minHostVersion` 高于当前宿主版本
+- **THEN** 扩展源界面明确标示状态并禁用安装按钮，宿主安装接口同步拒绝安装；已废弃（`deprecated`）条目展示提醒标签。
 
-### Requirement: 配置升级与诊断
-宿主 SHALL 保留配置版本与可理解的状态诊断。
-#### Scenario: 忙碌时修改普通配置
-- WHEN 配置实例仍有在途动作且用户修改普通参数
-- THEN 明确要求等待或停止任务，原任务保持启动时快照，未通过的修改不覆盖有效配置。
-#### Scenario: 关闭自动监听或禁用
-- WHEN 用户关闭已绑定实例的自动监听或禁用实例
-- THEN 在途任务被取消，空闲状态可再次明确绑定，旧 busy 不传递给新运行实例。
-#### Scenario: 日志
-- WHEN 插件报告状态或错误
-- THEN 用户可见插件与实例身份，敏感口令不出现在普通诊断中。
+### Requirement: 插件来源与当前绑定详情
+扩展中心 MUST 在插件详情呈现已记录的安装来源、支持的传输类型与运行状态。各会话面板的插件浮层 MUST 支持直接编辑、停止与重试绑定实例。
+
+#### Scenario: 查看来源并重试绑定
+- **WHEN** 用户在扩展中心查看已安装插件，或在会话浮层重试异常实例
+- **THEN** 展示已记录的来源与传输类型，重试只绑定当前有效会话，不复用旧连接的租约。
+
+### Requirement: 独立订阅与显式流会话租约
+宿主 SHALL 按 manifest 能力提供 `stream.subscribe` 与跨回调的 `stream.acquire`。订阅须声明 `stream.read`；显式租约须声明 `stream.exclusive` 与 `stream.write`。未声明的调用 MUST 被拒绝。
+#### Scenario: 动作等待期间持续接收
+- **WHEN** 插件在等待认证或网络请求期间保有独立订阅
+- **THEN** 订阅继续收到所属连接的数据，不依赖自动应答队列；取消订阅后不再回调。
+#### Scenario: 显式独占与释放
+- **WHEN** 插件取得显式租约并跨回调保持
+- **THEN** 其他发送来源按确定策略排队或拒绝；释放、停止、崩溃或断开后宿主回收租约，旧租约不得写入新连接。
+#### Scenario: 串口输入扣留
+- **WHEN** 具有 `stream.exclusive` 的串口插件扣住用户输入
+- **THEN** 仅在持有同一租约时允许按原顺序补发；失败、超时、停止或断开时丢弃，其他传输类型不接受扣留操作。
+
+### Requirement: 隔离的认证会话
+声明 `auth.session` 的插件 SHALL 通过宿主的隔离持久会话登录并访问同源 HTTPS 业务接口，Cookie MUST NOT 返回插件。
+#### Scenario: 登录与请求
+- **WHEN** 已声明能力的插件请求有效的登录检查或业务接口
+- **THEN** 宿主管理登录窗口与 Cookie，请求只返回状态码和有界响应文本。
+#### Scenario: 越界请求
+- **WHEN** 插件未声明 `auth.session`、业务接口与登录入口不同源，或试图覆盖 Cookie 等宿主管理的请求头
+- **THEN** 宿主拒绝调用，不暴露认证凭证。
+
+### Requirement: 按安装触发旧 OA 配置迁移
+宿主 SHALL 仅在安装稳定 ID 为 `devkit.oa-debug` 的外部插件后迁移旧 `device-actions.json`；迁移 MUST 保留源文件和既有实例，且不得自动开始设备动作。
+#### Scenario: 未安装业务插件
+- **WHEN** 用户目录存在旧配置但未安装 `devkit.oa-debug`
+- **THEN** 宿主不读取、迁移或删除该文件，也不注册内置 OA 业务插件。
+#### Scenario: 安装后迁移
+- **WHEN** 已安装外部 OA 插件且存在尚未迁移的有效 profile
+- **THEN** 生成稳定 `legacy-<profile ID>`、`configVersion: 2` 的实例，默认关闭自动监听，不自动绑定；已有同 ID 实例不覆盖。
+#### Scenario: 迁移失败
+- **WHEN** 旧文件或其中某项配置无效
+- **THEN** 迁移错误与其他插件隔离，源文件保留，并允许后续重试。

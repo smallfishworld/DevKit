@@ -1,5 +1,5 @@
 /**
- * 左侧会话栏拖拽调宽（VS Code 式分隔条）
+ * 左侧侧栏（快捷命令栏）拖拽调宽（VS Code 式分隔条）
  * 串口助手 / SSH 终端共用：按下分隔条后整窗拖动，宽度限制 150~460，松手持久化
  */
 import { onMounted, onUnmounted, type Ref } from 'vue'

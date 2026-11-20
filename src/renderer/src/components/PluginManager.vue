@@ -2,9 +2,7 @@
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Delete, Plus, Refresh, Upload } from '@element-plus/icons-vue'
-import type {
-  PluginDescriptor, PluginInstance, PluginLogEntry, PluginRuntimeStatus, PluginSourceInfo, PluginSourceItem
-} from '../../../shared/plugins'
+import type { PluginDescriptor, PluginInstance, PluginLogEntry, PluginRuntimeStatus } from '../../../shared/plugins'
 import PluginConfigForm from './PluginConfigForm.vue'
 import { defaultPluginConfig, parseConfigJson, canStopPlugin } from './plugin-config-form'
 
@@ -24,10 +22,6 @@ const pending = ref('')
 const stopping = ref('')
 const error = ref('')
 const installPath = ref('')
-const sourceInfo = ref<PluginSourceInfo>({ items: [] })
-const sourceUrlInput = ref('')
-const sourceBusy = ref('')
-const sourceError = ref('')
 const editVisible = ref(false)
 const editMode = ref('form')
 const formValid = ref(true)
@@ -39,7 +33,6 @@ const draft = reactive({
 })
 const editingPlugin = computed(() => plugins.value.find(plugin => plugin.id === draft.pluginId))
 const sessionLogs = computed(() => logs.value.filter(entry => entry.panelId === props.panelId))
-const sourceUpdates = computed(() => sourceInfo.value.items.filter(item => item.installedVersion && item.updateAvailable).length)
 const stateLabels: Record<string, string> = {
   idle: '待运行', starting: '启动中', ready: '已就绪', running: '运行中', stopped: '已停止', error: '异常'
 }
@@ -215,81 +208,6 @@ async function install(browse: boolean): Promise<void> {
     ElMessage.success('插件已安装，可以创建配置实例')
   })
 }
-async function loadSource(auto: boolean): Promise<void> {
-  try {
-    const reply = await api<{ source: PluginSourceInfo }>('source:get')
-    sourceInfo.value = reply.source
-    sourceUrlInput.value = reply.source.url || 'smallfishworld/DevKit-Plugins'
-    sourceError.value = ''
-    if (auto && reply.source.url && (!reply.source.checkedAt || Date.now() - reply.source.checkedAt > 5 * 60_000)) {
-      await refreshSource(true)
-    }
-  } catch (failure) {
-    sourceError.value = failure instanceof Error ? failure.message : String(failure)
-  }
-}
-async function refreshSource(silent = false): Promise<void> {
-  if (sourceBusy.value || pending.value) return
-  sourceBusy.value = 'refresh'
-  if (!silent) sourceError.value = ''
-  try {
-    const reply = await api<{ source: PluginSourceInfo }>('source:refresh')
-    sourceInfo.value = reply.source
-    sourceUrlInput.value = reply.source.url || sourceUrlInput.value
-  } catch (failure) {
-    sourceError.value = failure instanceof Error ? failure.message : String(failure)
-  } finally {
-    sourceBusy.value = ''
-  }
-}
-async function saveSource(): Promise<void> {
-  if (sourceBusy.value || pending.value) return
-  sourceBusy.value = 'save'
-  sourceError.value = ''
-  try {
-    const reply = await api<{ source: PluginSourceInfo }>('source:save', { url: sourceUrlInput.value.trim() })
-    sourceInfo.value = reply.source
-    sourceUrlInput.value = reply.source.url || ''
-    ElMessage.success(`插件源已绑定，目录中有 ${reply.source.items.length} 个插件`)
-  } catch (failure) {
-    sourceError.value = failure instanceof Error ? failure.message : String(failure)
-  } finally {
-    sourceBusy.value = ''
-  }
-}
-async function clearSource(): Promise<void> {
-  if (sourceBusy.value || pending.value) return
-  try {
-    await ElMessageBox.confirm('解绑后已安装的插件和配置都会保留，仅停止检查更新。', '解绑插件源', { type: 'warning' })
-  } catch { return }
-  sourceBusy.value = 'clear'
-  sourceError.value = ''
-  try {
-    const reply = await api<{ source: PluginSourceInfo }>('source:clear')
-    sourceInfo.value = reply.source
-    sourceUrlInput.value = ''
-    ElMessage.success('已解绑插件源')
-  } catch (failure) {
-    sourceError.value = failure instanceof Error ? failure.message : String(failure)
-  } finally {
-    sourceBusy.value = ''
-  }
-}
-async function installSource(item: PluginSourceItem): Promise<void> {
-  const updating = !!item.installedVersion
-  const action = updating ? '更新' : '安装'
-  try {
-    await ElMessageBox.confirm(
-      `${action}“${item.name}” ${item.version}（${item.id}）？\n\n将从插件源下载插件包，并按 SHA-256 校验。外部插件仍是可信代码，可访问本机文件、网络和环境变量；请确认插件源可信。`,
-      `确认${action}外部插件`, { type: 'warning', confirmButtonText: `信任来源并${action}`, cancelButtonText: '取消' }
-    )
-  } catch { return }
-  await operate('source:' + item.id, async () => {
-    const reply = await api<{ source: PluginSourceInfo }>('source:install', { pluginId: item.id, version: item.version })
-    sourceInfo.value = reply.source
-    ElMessage.success(`插件已${action}`)
-  })
-}
 async function bind(instance: PluginInstance): Promise<void> {
   await operate('bind', () => api('bind', { instanceId: instance.id }))
 }
@@ -323,9 +241,7 @@ function timeLabel(timestamp: number): string {
 watch(() => props.visible, (value) => {
   if (value) {
     error.value = ''
-    sourceError.value = ''
     void load()
-    void loadSource(true)
     refreshTimer = setInterval(() => { if (!pending.value) void load(false) }, 2000)
   } else {
     if (refreshTimer) clearInterval(refreshTimer)
@@ -421,40 +337,6 @@ onUnmounted(() => {
           </article>
         </div>
       </el-tab-pane>
-      <el-tab-pane name="source">
-        <template #label>
-          <span>插件源</span>
-          <el-badge v-if="sourceUpdates" :value="sourceUpdates" class="tab-badge" />
-        </template>
-        <div class="install-row">
-          <el-input v-model="sourceUrlInput" placeholder="GitHub 仓库 owner/repo，或 catalog.json 的 HTTPS 地址" clearable :disabled="!!sourceBusy || !!pending" @keyup.enter="saveSource" />
-          <el-button :loading="sourceBusy === 'save'" :disabled="!!sourceBusy || !!pending" @click="saveSource">保存并检查</el-button>
-          <el-button :icon="Refresh" :loading="sourceBusy === 'refresh'" :disabled="!sourceInfo.url || !!sourceBusy || !!pending" @click="refreshSource()">检查更新</el-button>
-          <el-button v-if="sourceInfo.url" text :disabled="!!sourceBusy || !!pending" @click="clearSource">解绑</el-button>
-        </div>
-        <el-alert title="插件源提供版本列表与 SHA-256 校验；外部插件仍是可信代码，安装或更新前请确认仓库来源。" type="warning" :closable="false" />
-        <p class="hint">仓库根目录需提供 catalog.json；安装包优先取同版本 Release 资产（标签 &lt;slug&gt;/v&lt;version&gt;），否则按 packagePath 下载，并读取同目录 SHA256SUMS。GitHub 仓库链接会自动转换为 raw 地址。</p>
-        <p v-if="sourceInfo.checkedAt" class="hint">上次检查：{{ new Date(sourceInfo.checkedAt).toLocaleString() }}</p>
-        <el-alert v-if="sourceError" type="error" :title="sourceError" :closable="false" class="error" />
-        <el-empty v-if="!sourceInfo.items.length" description="尚未获取插件列表" :image-size="65" />
-        <div v-else class="source-list">
-          <article v-for="item in sourceInfo.items" :key="item.id" class="package-card">
-            <div class="package-heading">
-              <strong>{{ item.name }}</strong><span class="hint">v{{ item.version }}</span>
-              <el-tag v-if="item.installedVersion" size="small" effect="plain" :type="item.updateAvailable ? 'warning' : 'success'">
-                {{ item.updateAvailable ? `可更新（已安装 ${item.installedVersion}）` : '已是最新' }}
-              </el-tag>
-            </div>
-            <p v-if="item.description" class="description">{{ item.description }}</p>
-            <div class="hint">{{ item.id }}</div>
-            <div class="package-actions">
-              <el-button size="small" type="primary" :loading="pending === 'source:' + item.id" :disabled="!!pending || !!sourceBusy || (!!item.installedVersion && !item.updateAvailable)" @click="installSource(item)">
-                {{ item.installedVersion ? (item.updateAvailable ? '更新' : '已是最新') : '安装' }}
-              </el-button>
-            </div>
-          </article>
-        </div>
-      </el-tab-pane>
       <el-tab-pane label="运行诊断" name="logs">
         <p class="hint">当前串口最近 {{ sessionLogs.length }} 条插件日志。停止或断开后可在配置列表重新绑定。</p>
         <el-empty v-if="!sessionLogs.length" description="暂无插件日志" :image-size="65" />
@@ -504,8 +386,7 @@ onUnmounted(() => {
 .error { margin-bottom: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .instance-toolbar { margin-bottom: 14px; }
 .instance-toolbar .el-select { width: 240px; }
-.instance-list, .package-list, .source-list { max-height: 55vh; overflow: auto; }
-.tab-badge { margin-left: 6px; }
+.instance-list, .package-list { max-height: 55vh; overflow: auto; }
 .instance-card, .package-card { border: 1px solid var(--el-border-color); border-radius: 7px; padding: 14px; margin-bottom: 12px; }
 .instance-heading > div:first-child { flex: 1; min-width: 200px; }
 .instance-controls, .action-row, .capabilities, .package-actions { margin-top: 12px; }

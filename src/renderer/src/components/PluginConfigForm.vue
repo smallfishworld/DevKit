@@ -1,18 +1,27 @@
 <script setup lang="ts">
 import { computed, reactive, watch } from 'vue'
-import { configFields } from './plugin-config-form'
+import { Delete, Plus } from '@element-plus/icons-vue'
+import {
+  configFields,
+  defaultPluginConfig,
+  isConfigObject,
+  isFieldVisible,
+  visibleConfigFields,
+  type ConfigField
+} from './plugin-config-form'
 
 const props = defineProps<{ modelValue: Record<string, unknown>; schema: unknown }>()
 const emit = defineEmits<{
   (event: 'update:modelValue', value: Record<string, unknown>): void
   (event: 'validity', valid: boolean): void
 }>()
-const fields = computed(() => configFields(props.schema))
+const allFields = computed(() => configFields(props.schema))
+const fields = computed(() => visibleConfigFields(props.schema, props.modelValue))
 const jsonText = reactive<Record<string, string>>({})
 const errors = reactive<Record<string, string>>({})
 
 watch(() => props.modelValue, (config) => {
-  for (const field of fields.value) {
+  for (const field of allFields.value) {
     if (field.widget === 'json' && !errors[field.key]) {
       jsonText[field.key] = config[field.key] === undefined ? '' : JSON.stringify(config[field.key], null, 2)
     }
@@ -35,6 +44,30 @@ function setJson(key: string, text: string): void {
     errors[key] = error instanceof Error ? error.message : 'JSON 语法错误'
   }
   emit('validity', Object.keys(errors).length === 0)
+}
+function arrayRows(key: string): Record<string, unknown>[] {
+  const value = props.modelValue[key]
+  if (!Array.isArray(value)) return []
+  return value.map((item) => (isConfigObject(item) ? item : {}))
+}
+function addArrayRow(field: ConfigField): void {
+  const rows = arrayRows(field.key)
+  const itemDefault = defaultPluginConfig(field.schema.items)
+  setValue(field.key, [...rows, itemDefault])
+}
+function removeArrayRow(key: string, index: number): void {
+  const rows = arrayRows(key).filter((_, idx) => idx !== index)
+  setValue(key, rows)
+}
+function setArrayCell(key: string, index: number, subKey: string, value: unknown): void {
+  const rows = arrayRows(key).map((row, idx) => {
+    if (idx !== index) return row
+    const next = { ...row }
+    if (value === undefined) delete next[subKey]
+    else next[subKey] = value
+    return next
+  })
+  setValue(key, rows)
 }
 function options(field: Record<string, unknown>): Array<string | number | boolean> {
   return field.enum as Array<string | number | boolean>
@@ -78,6 +111,50 @@ function numeric(field: Record<string, unknown>, key: string): number | undefine
         :placeholder="typeof field.schema.description === 'string' ? field.schema.description : field.key"
         @update:model-value="(value: string) => setValue(field.key, value)"
       />
+      <div v-else-if="field.widget === 'array'" class="array-editor">
+        <div v-for="(row, rowIdx) in arrayRows(field.key)" :key="rowIdx" class="array-row">
+          <div class="array-row-head">
+            <span>规则 #{{ rowIdx + 1 }}</span>
+            <el-button size="small" text type="danger" :icon="Delete" @click="removeArrayRow(field.key, rowIdx)">删除</el-button>
+          </div>
+          <div class="array-row-fields">
+            <template v-for="sub in field.itemFields ?? []" :key="sub.key">
+              <div v-if="isFieldVisible(sub.schema, row)" class="array-sub-field">
+                <label class="sub-label">{{ sub.title }}</label>
+                <el-select
+                  v-if="sub.widget === 'enum'"
+                  :model-value="row[sub.key] as string | number | boolean | undefined"
+                  size="small"
+                  @update:model-value="(v: unknown) => setArrayCell(field.key, rowIdx, sub.key, v)"
+                >
+                  <el-option v-for="(opt, idx) in options(sub.schema)" :key="idx" :label="String(opt)" :value="opt" />
+                </el-select>
+                <el-switch
+                  v-else-if="sub.widget === 'boolean'"
+                  :model-value="row[sub.key] === true"
+                  @update:model-value="(v: string | number | boolean) => setArrayCell(field.key, rowIdx, sub.key, v)"
+                />
+                <el-input-number
+                  v-else-if="sub.widget === 'number'"
+                  :model-value="typeof row[sub.key] === 'number' ? row[sub.key] as number : undefined"
+                  :min="numeric(sub.schema, 'minimum')"
+                  :max="numeric(sub.schema, 'maximum')"
+                  size="small"
+                  @update:model-value="(v: number | undefined) => setArrayCell(field.key, rowIdx, sub.key, v)"
+                />
+                <el-input
+                  v-else
+                  :model-value="typeof row[sub.key] === 'string' ? row[sub.key] as string : ''"
+                  size="small"
+                  :placeholder="sub.description || sub.key"
+                  @update:model-value="(v: string) => setArrayCell(field.key, rowIdx, sub.key, v)"
+                />
+              </div>
+            </template>
+          </div>
+        </div>
+        <el-button size="small" plain :icon="Plus" @click="addArrayRow(field)">添加{{ field.title }}</el-button>
+      </div>
       <el-input
         v-else
         :model-value="jsonText[field.key] ?? ''"
@@ -97,4 +174,10 @@ function numeric(field: Record<string, unknown>, key: string): number | undefine
 .plugin-config-form :deep(.el-select) { width: 100%; }
 .field-help { width: 100%; color: var(--el-text-color-secondary); font-size: 12px; line-height: 1.6; margin-top: 3px; }
 .json-input :deep(textarea) { font-family: var(--font-mono); font-size: 12px; }
+.array-editor { width: 100%; display: flex; flex-direction: column; gap: 8px; }
+.array-row { padding: 8px 10px; border: 1px solid var(--el-border-color-lighter); border-radius: 6px; background: var(--el-fill-color-blank); }
+.array-row-head { display: flex; align-items: center; justify-content: space-between; font-size: 12px; font-weight: 600; margin-bottom: 6px; }
+.array-row-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 8px; }
+.array-sub-field { display: flex; flex-direction: column; gap: 3px; }
+.sub-label { font-size: 11px; color: var(--el-text-color-secondary); }
 </style>

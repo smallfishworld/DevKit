@@ -1,7 +1,10 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { Close } from '@element-plus/icons-vue'
-import { useTabStore } from '@renderer/stores/tabs'
+import { Box, Close, House, Plus } from '@element-plus/icons-vue'
+import { connectionLabels, useTabStore } from '@renderer/stores/tabs'
+
+import { toolById } from '@renderer/tools/registry'
+import ToolLauncher from './ToolLauncher.vue'
 
 const tabs = useTabStore()
 
@@ -28,6 +31,8 @@ function onDragEnd(): void {
   overId.value = null
 }
 
+const launcher = ref<InstanceType<typeof ToolLauncher>>()
+
 function onDrop(toId: string): void {
   if (draggingId.value) tabs.moveTab(draggingId.value, toId)
   onDragEnd()
@@ -35,14 +40,13 @@ function onDrop(toId: string): void {
 </script>
 
 <template>
-  <div class="tab-bar">
+  <nav class="tab-bar" aria-label="工作区">
     <div
       v-for="tab in tabs.tabs"
       :key="tab.id"
       class="tab-item"
       :class="{ active: tab.id === tabs.activeId, dragging: tab.id === draggingId, 'drop-target': tab.id === overId && tab.id !== draggingId }"
       :draggable="tab.id !== 'home'"
-      @click="tabs.activate(tab.id)"
       @auxclick.middle="tabs.close(tab.id)"
       @dragstart="(e: DragEvent) => onDragStart(tab.id, e)"
       @dragend="onDragEnd"
@@ -50,10 +54,41 @@ function onDrop(toId: string): void {
       @dragleave="overId === tab.id && (overId = null)"
       @drop.prevent="onDrop(tab.id)"
     >
-      <span class="tab-title" :title="tab.title">{{ tab.title }}</span>
-      <span v-if="tab.id !== 'home'" class="tab-close" @click.stop="tabs.close(tab.id)">
+      <button
+        type="button" class="tab-select"
+        :aria-current="tab.id === tabs.activeId ? 'page' : undefined"
+        @click="tabs.activate(tab.id)"
+      >
+        <span v-if="tab.connection" class="tab-dot" :data-state="tab.connection" :title="connectionLabels[tab.connection]" :aria-label="connectionLabels[tab.connection]" role="img" />
+        <el-icon :size="15">
+          <House v-if="tab.id === 'home'" />
+          <Box v-else-if="tab.toolId === 'extensions'" />
+          <component :is="toolById(tab.toolId)?.icon" v-else />
+        </el-icon>
+        <span class="tab-title" :title="tab.title">{{ tab.id === 'home' ? '首页' : tab.title }}</span>
+      </button>
+      <button v-if="tab.id !== 'home'" type="button" class="tab-close" :aria-label="'关闭 ' + tab.title" @click="tabs.close(tab.id)">
         <el-icon :size="12"><Close /></el-icon>
-      </span>
+      </button>
     </div>
-  </div>
+    <button class="new-tool" type="button" aria-label="快速打开工具" title="快速打开工具（Ctrl+K）" aria-keyshortcuts="Control+K" @click="launcher?.open()">
+      <el-icon><Plus /></el-icon>
+    </button>
+  </nav>
+  <ToolLauncher ref="launcher" />
 </template>
+
+<style scoped>
+.tab-item { padding-inline:0 7px; gap:3px; }
+.tab-select, .tab-close { border:0; background:transparent; color:inherit; cursor:pointer; }
+.tab-select { height:100%; display:flex; align-items:center; gap:8px; padding:0 7px 0 13px; font:inherit; }
+.tab-item:first-child { padding-inline-end:0; }
+.tab-item:first-child .tab-select { padding-inline-end:11px; }
+.tab-close { flex:none; padding:4px; }
+
+.new-tool { flex:none; align-self:center; display:grid; place-items:center; width:32px; height:30px; margin-inline-start:2px; border:0; border-radius:6px; background:transparent; color:var(--el-text-color-secondary); cursor:pointer; }
+.tab-dot { width:6px; height:6px; border-radius:50%; background:var(--el-text-color-placeholder); }
+.tab-dot[data-state="connected"] { background:var(--el-color-success); }
+.tab-dot[data-state="connecting"] { background:var(--el-color-warning); }
+.new-tool:hover { background:var(--el-fill-color-light); color:var(--el-text-color-primary); }
+</style>

@@ -6,7 +6,7 @@ async function fixture(extra = {}) {
   const writes = []
   const instance = await activate({
     config: { ...defaults, ...extra }, session: {},
-    serial: { write: async data => writes.push(data) },
+    stream: { write: async data => writes.push(data) },
     log() {}, state() {}
   })
   return { instance, writes }
@@ -37,7 +37,7 @@ async function main() {
 
   await assert.rejects(() => activate({
     config: {...defaults, mode:'hex', match:'Z1', response:'01'},
-    serial:{}, log(){}, state(){}
+    stream:{}, log(){}, state(){}
   }), /十六进制/)
   console.log('PASS standalone responder: split text, multiple frames, HEX, manual action, dispose and validation')
 }

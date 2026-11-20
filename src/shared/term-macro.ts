@@ -88,17 +88,19 @@ export function stepPreview(st: QuickCmdStep): string {
 export function migrateQuickCmd(c: { name: string; group?: string; mode?: string; text?: string; newline?: string } | QuickCmd): QuickCmd {
   const anyC = c as { steps?: QuickCmdStep[]; mode?: string; text?: string; newline?: string }
   if (Array.isArray(anyC.steps)) {
-    const steps = anyC.steps.map((step): QuickCmdStep => {
-      // 插件动作步骤只保留稳定引用，丢弃导入数据可能携带的任何额外字段
-      if ((step as { type?: unknown } | undefined)?.type === 'plugin-action') {
-        return {
-          type: 'plugin-action',
-          instanceId: typeof step.instanceId === 'string' ? step.instanceId : '',
-          actionId: typeof step.actionId === 'string' ? step.actionId : ''
+    // 旧版「设备动作」步骤已随该子系统移除：导入时直接丢弃，避免回放时卡在未知步骤
+    const steps = anyC.steps
+      .filter((step) => (step as { type?: unknown } | undefined)?.type !== 'device-action')
+      .map((step): QuickCmdStep => {
+        if ((step as { type?: unknown } | undefined)?.type === 'plugin-action') {
+          return {
+            type: 'plugin-action',
+            instanceId: typeof step.instanceId === 'string' ? step.instanceId : '',
+            actionId: typeof step.actionId === 'string' ? step.actionId : ''
+          }
         }
-      }
-      return step
-    })
+        return step
+      })
     return { name: c.name, group: (c as QuickCmd).group ?? '', steps }
   }
   return {

@@ -11,11 +11,15 @@
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json",
     "typecheck:web": "vue-tsc --noEmit -p tsconfig.web.json",
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
-    "test": "node tests/term-test.js && node tests/termflow-test.js && node tests/vtguard-test.js && node tests/logtext-test.js && node tests/diff-test.js && node tests/logic-test.js && node tests/mobamacro-test.js && node tests/quickcmd-test.js && node tests/net-test.js && node tests/tftp-test.js && node tests/ymodem-test.js && node tests/zmodem-test.js && node tests/bridge-test.js && node tests/theme-test.js && node tests/local-terminal-test.js && node tests/terminal-test.js && node tests/terminal-services-test.js && node tests/plugin-source-test.js && node tests/plugin-backend-test.js && node tests/serial-plugins-test.js && node tests/plugin-ui-test.js && node examples/plugins/text-hex-responder/test.cjs && node tests/plugin-rx-redactor-test.js",
+    "test": "node tests/term-test.js && node tests/termflow-test.js && node tests/vtguard-test.js && node tests/logtext-test.js && node tests/diff-test.js && node tests/logic-test.js && node tests/mobamacro-test.js && node tests/quickcmd-test.js && node tests/net-test.js && node tests/tftp-test.js && node tests/ymodem-test.js && node tests/zmodem-test.js && node tests/bridge-test.js && node tests/theme-test.js && node tests/local-terminal-test.js && node tests/terminal-test.js && node tests/terminal-services-test.js && node tests/plugin-rx-redactor-test.js && node tests/plugin-retention-test.js && node tests/plugin-sdk-v2-test.js && node tests/workbench-review-test.js && node tests/picker-title-test.js && node tests/plugin-backend-test.js && node tests/plugin-ui-test.js && node tests/serial-plugins-test.js",
     "test:pty-smoke": "electron scripts/pty-smoke.cjs",
+    "test:extensions-smoke": "node scripts/extensions-workbench-smoke.cjs",
+    "test:debug-unlock-smoke": "node scripts/debug-unlock-smoke.cjs",
     "dist": "npm run build && electron-builder --win",
     "dist:dir": "npm run build && electron-builder --dir",
     "dist:zip": "npm run build && electron-builder --win zip --x64",
+    "dist:mac": "npm run build && electron-builder --mac",
+    "dist:linux": "npm run build && electron-builder --linux",
     "plugin:pack": "node scripts/package-device-plugin.cjs",
     "test:plugins-smoke": "node scripts/plugins-smoke.cjs"
   },
@@ -28,13 +32,15 @@
     "diff": "^9.0.0",
     "element-plus": "^2.14.5",
     "iconv-lite": "^0.7.3",
-    "koffi": "^3.2.0",
     "node-pty": "^1.1.0",
     "pinia": "^4.0.3",
     "serialport": "^13.0.0",
     "ssh2": "^1.17.0",
-    "uiohook-napi": "^1.5.5",
     "zmodem.js": "^0.1.10"
+  },
+  "optionalDependencies": {
+    "koffi": "^3.2.0",
+    "uiohook-napi": "^1.5.5"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
@@ -92,6 +98,22 @@
     },
     "portable": {
       "artifactName": "DevKit-${version}-portable.exe"
+    },
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "artifactName": "DevKit-${version}-mac-${arch}.${ext}",
+      "target": [
+        "dmg",
+        "zip"
+      ]
+    },
+    "linux": {
+      "category": "Development",
+      "artifactName": "DevKit-${version}-linux-${arch}.${ext}",
+      "target": [
+        "AppImage",
+        "tar.gz"
+      ]
     }
   },
   "license": "MIT",

@@ -1,6 +1,6 @@
-/** Separate, trusted-code extension host. Does not own or open serial ports. */
+/** Separate, trusted-code extension host (API v2). Does not own transport handles. */
 import { pathToFileURL } from 'node:url'
-import type { PluginContext, PluginModuleInstance, PluginSessionInfo } from '../../../shared/plugins'
+import type { PluginContext, PluginModuleInstance, StreamSessionInfo } from '../../../shared/plugins'
 
 type Message = Record<string, unknown>
 type ParentPort = { postMessage(value: unknown): void; on(event: 'message', listener: (event: { data: Message }) => void): void }
@@ -50,7 +50,7 @@ async function handle(message: Message): Promise<void> {
     let result: unknown
     if (message.method === 'activate') {
       if (instance) throw new Error('插件已激活')
-      const input = message.input as { entry: string; config: Record<string, unknown>; session: PluginSessionInfo; autoEnabled: boolean }
+      const input = message.input as { entry: string; config: Record<string, unknown>; session: StreamSessionInfo; autoEnabled: boolean }
       const imported = await import(pathToFileURL(input.entry).href)
       const activate = imported.activate ?? imported.default?.activate
       if (typeof activate !== 'function') throw new Error('插件入口须导出 activate(ctx)')
@@ -59,11 +59,11 @@ async function handle(message: Message): Promise<void> {
         session: input.session,
         autoEnabled: input.autoEnabled,
         signal: controller.signal,
-        serial: {
-          write: (data, options) => rpc('serial.write', [data, options ?? {}]) as ReturnType<PluginContext['serial']['write']>,
-          exchange: (data, options) => rpc('serial.exchange', [data, options]) as ReturnType<PluginContext['serial']['exchange']>,
+        stream: {
+          write: (data, options) => rpc('stream.write', [data, options ?? {}]) as ReturnType<PluginContext['stream']['write']>,
+          exchange: (data, options) => rpc('stream.exchange', [data, options]) as ReturnType<PluginContext['stream']['exchange']>,
           subscribe: (listener) => {
-            if (typeof listener !== 'function') throw new Error('serial.subscribe 需要函数')
+            if (typeof listener !== 'function') throw new Error('stream.subscribe 需要函数')
             const stream = 'stream-' + (++counter)
             const handler = (value: unknown): void => {
               if (controller.signal.aborted) return
@@ -71,30 +71,32 @@ async function handle(message: Message): Promise<void> {
               catch (error) { send({ type: 'log', level: 'error', message: 'data 监听回调异常：' + errorMessage(error) }) }
             }
             streams.set(stream, handler)
-            void rpc('serial.subscribe', [stream]).catch((error: Error) => {
+            void rpc('stream.subscribe', [stream]).catch((error: Error) => {
               streams.delete(stream)
               send({ type: 'log', level: 'error', message: error.message })
             })
             return () => {
               if (!streams.delete(stream)) return
-              void rpc('serial.unsubscribe', [stream]).catch(() => {})
+              void rpc('stream.unsubscribe', [stream]).catch(() => {})
             }
           },
           acquire: async () => {
-            const reply = await rpc('serial.acquire', []) as { connectionId: string }
+            const reply = await rpc('stream.acquire', []) as { connectionId: string; leaseId: string }
             let released = false
             return {
               connectionId: reply.connectionId,
-              write: (data, options) => rpc('serial.lease.write', [data, options ?? {}]) as ReturnType<PluginContext['serial']['write']>,
+              write: (data, options) => released
+                  ? Promise.reject(new Error('流事务已结束'))
+                  : rpc('stream.lease.write', [reply.leaseId, data, options ?? {}]) as ReturnType<PluginContext['stream']['write']>,
               release: async () => {
                 if (released) return
                 released = true
-                await rpc('serial.lease.release', [])
+                await rpc('stream.lease.release', [reply.leaseId])
               }
             }
           },
-          hold: (options) => rpc('serial.hold', [options ?? {}]) as ReturnType<PluginContext['serial']['hold']>,
-          releaseHold: (replay) => rpc('serial.releaseHold', [replay === true]) as ReturnType<PluginContext['serial']['releaseHold']>
+          hold: (options) => rpc('stream.hold', [options ?? {}]) as ReturnType<PluginContext['stream']['hold']>,
+          releaseHold: (replay) => rpc('stream.releaseHold', [replay === true]) as ReturnType<PluginContext['stream']['releaseHold']>
         },
         auth: {
           login: (options) => rpc('auth.login', [options]) as ReturnType<NonNullable<PluginContext['auth']>['login']>,

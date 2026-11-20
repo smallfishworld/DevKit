@@ -92,6 +92,10 @@ async function main() {
     })
     assert.deepEqual(migrated.steps, [step])
     assert.match(stepPreview(step), /enabled.*send/)
+    // 已移除的「设备动作」步骤在导入时被丢弃，只保留仍然支持的步骤
+    assert.deepEqual(
+      migrateQuickCmd({ name: 'legacy', steps: [{ type: 'device-action', profile: 'debug' }, { type: 'cmd', text: 'x' }] }).steps,
+      [{ type: 'cmd', text: 'x' }])
   })
 
   const { playCmd } = useTermMacros()

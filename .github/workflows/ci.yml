@@ -39,6 +39,11 @@ jobs:
       - name: Device plugin Electron integration smoke
         run: npm run test:plugins-smoke
 
+      - name: Official HTTPS plugin source and serial binding smoke
+        env:
+          DEVKIT_OFFICIAL_SOURCE_SMOKE: '1'
+        run: npm run test:extensions-smoke
+
       - name: node-pty runtime smoke test
         run: npm run test:pty-smoke
 

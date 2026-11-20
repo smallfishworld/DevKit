@@ -1,19 +1,23 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import {
   ArrowRight,
-  CaretRight,
-  CircleClose,
-  Connection,
+  Clock,
+  Operation,
   Delete,
   Download,
   FolderOpened,
   Plus,
   Refresh,
   Search,
+  Setting,
   UploadFilled
 } from '@element-plus/icons-vue'
+import SerialDevicePlugins from '@renderer/components/SerialDevicePlugins.vue'
+import { DEFAULT_LOG_RETENTION, validLogRetention } from '../../../shared/log-retention'
+import type { LogRetentionSettings } from '../../../shared/log-retention'
+import { stepSendHistory } from '@renderer/components/termInput'
 import TerminalView from '@renderer/components/TerminalView.vue'
 import TerminalHistory from '@renderer/components/TerminalHistory.vue'
 import PluginManager from '@renderer/components/PluginManager.vue'
@@ -23,7 +27,8 @@ import { useTerminalStream } from '../composables/useTerminalStream'
 import { ByteCounterThrottle } from '../../../shared/terminal-stream'
 import QuickCmdManager from '@renderer/components/QuickCmdManager.vue'
 import type { SerialConfig, SerialEncoding, SerialParams, SerialTransferEvt, TransferProtocol } from '../../../shared/serial'
-import { BAUD_RATES } from '../../../shared/serial'
+import { BAUD_RATES, DEFAULT_SERIAL_PARAMS, normalizeSerialParams } from '../../../shared/serial'
+import { normalizePortPath, portRemark, portTabTitle } from '../../../shared/serial-title'
 import type { VtGuardStats } from '../../../shared/vtguard'
 import type { QuickCmdStep, PluginActionReference, PluginMacroAction } from '../../../shared/term-macro'
 import { useTermMacros } from '../composables/useTermMacros'
@@ -31,7 +36,9 @@ import { useSidebarDrag } from '../composables/useSidebarDrag'
 import { useTabStore } from '@renderer/stores/tabs'
 
 const props = defineProps<{ panelId: string }>()
+const emit = defineEmits<{ openExtensions: [] }>()
 const tabStore = useTabStore()
+const initialSerialParams = tabStore.tabs.find((tab) => tab.id === props.panelId)?.serialParams
 
 interface PortInfo {
   path: string
@@ -49,14 +56,10 @@ interface DataEvt {
 // ---------- 状态 ----------
 const ports = ref<PortInfo[]>([])
 const config = ref<SerialConfig | null>(null)
-const params = reactive<SerialParams>({
-  path: '',
-  baudRate: 115200,
-  dataBits: 8,
-  stopBits: 1,
-  parity: 'none',
-  rtscts: false
-})
+const params = reactive<SerialParams>({ ...DEFAULT_SERIAL_PARAMS })
+const connectionDraft = reactive({ ...DEFAULT_SERIAL_PARAMS, baudRate: DEFAULT_SERIAL_PARAMS.baudRate as number | string })
+const activeParams = ref<SerialParams>()
+const displayedParams = computed(() => activeParams.value ?? params)
 const open = ref(false)
 let connectionGeneration = 0
 const opening = ref(false)
@@ -77,12 +80,6 @@ const pluginStatuses = ref<PluginRuntimeStatus[]>([])
 const pluginExecuting = ref('')
 const sessionPluginStatuses = computed(() => pluginStatuses.value.filter(status => status.panelId === props.panelId))
 const pluginBusy = computed(() => !!pluginExecuting.value || sessionPluginStatuses.value.some(status => status.bound && status.state === 'running'))
-const pluginSummary = computed(() => {
-  if (sessionPluginStatuses.value.some(status => status.state === 'error')) return '插件运行异常'
-  if (pluginBusy.value) return '插件动作运行中'
-  const count = sessionPluginStatuses.value.filter(status => status.bound).length
-  return count ? `${count} 个插件配置已绑定` : ''
-})
 async function pluginApi<T>(action: string, payload?: unknown): Promise<T> {
   const result = await window.api.invoke('plugins', action, props.panelId, payload) as T & { ok: boolean; error?: string }
   if (!result.ok) throw new Error(result.error || '插件操作失败')
@@ -130,17 +127,6 @@ async function runPluginAction(action: PluginActionReference): Promise<void> {
     await refreshPluginStatus()
   }
 }
-async function cancelPluginAction(): Promise<void> {
-  const instanceIds = new Set([
-    ...sessionPluginStatuses.value.filter(status => status.bound && status.state === 'running').map(status => status.instanceId),
-    ...(pluginExecuting.value ? [pluginExecuting.value] : [])
-  ])
-  const results = await Promise.allSettled([...instanceIds].map(instanceId => pluginApi('stop', { instanceId })))
-  const failure = results.find(result => result.status === 'rejected')
-  if (failure?.status === 'rejected') ElMessage.warning(failure.reason instanceof Error ? failure.reason.message : '无法停止插件')
-  await refreshPluginStatus()
-}
-
 // ---------- 终端（TerminalView 共享组件：xterm.js 封装） ----------
 const termView = ref<InstanceType<typeof TerminalView> | null>(null)
 useTerminalStream('serial', props.panelId, termView)
@@ -171,6 +157,9 @@ function syncViewVisibility(): void {
   }).catch(() => {})
 }
 watch(() => tabStore.activeId, syncViewVisibility)
+watch([open, opening, displayedParams], ([connected, connecting, current]) => {
+  tabStore.setConnection(props.panelId, connected ? 'connected' : connecting ? 'connecting' : 'disconnected', current.path ? { serialParams: { ...current } } : undefined)
+}, { deep: true, immediate: true })
 
 const TERM_SIZES = [10, 11, 12, 13, 14, 15, 16, 17, 18, 20, 22, 24, 26, 28]
 
@@ -188,20 +177,49 @@ const sendMode = ref<'ascii' | 'hex'>('ascii')
 const sendText = ref('')
 const sendNewline = ref<'none' | 'crlf' | 'lf' | 'cr'>('crlf')
 const history = ref<string[]>([])
+let historyIndex = -1
+let historyDraft = ''
+
+function recallSendHistory(event: KeyboardEvent, direction: 1 | -1): void {
+  if (event.isComposing || !history.value.length) return
+  event.preventDefault()
+  const next = stepSendHistory(history.value, direction, {
+    index: historyIndex, draft: historyDraft, text: sendText.value
+  })
+  historyIndex = next.index
+  historyDraft = next.draft
+  sendText.value = next.text
+}
 /** 定时发送面板：非常用功能，默认收起，点「定时」展开 */
 const loopPanel = ref(false)
 const loopOn = ref(false)
 const loopPeriod = ref(1000)
 let loopTimer: ReturnType<typeof setInterval> | null = null
 
-const sessionName = ref('')
+const connectionSettings = ref(false)
+const connectionSaving = ref(false)
+const connectionError = ref('')
+/** 连接参数浮层里「已存预设」的当前选中项（只用于选择/删除，不参与命名） */
+const presetName = ref('')
+/** 「保存为预设」输入的名字；留空则用「端口 @ 波特率」生成 */
+const newPresetName = ref('')
+/** 删除预设需要点两次（确认框会把连接参数浮层顶掉，故用按钮二次确认） */
+const presetDeleteArmed = ref(false)
+const logSettings = ref(false)
+const logDirectory = ref('')
+const retention = reactive({ ...DEFAULT_LOG_RETENTION })
+const retentionSaved = ref<LogRetentionSettings>({ ...DEFAULT_LOG_RETENTION })
+const retentionLast = ref<{ at: number; removed: number; failed: number }>()
+const retentionError = ref('')
+const retentionBusy = ref(false)
+const parityCode = computed(() => ({ none: 'N', even: 'E', odd: 'O' })[displayedParams.value.parity])
 
-/** 左侧会话栏宽度（拖动分隔条调整，重启记忆） */
+/** 左侧侧栏宽度（快捷命令栏，拖动分隔条调整，重启记忆） */
 const sidebarWidth = ref(210)
 const { onMouseDown: onSidebarResize } = useSidebarDrag(sidebarWidth, () => void persistConfig())
-/** 左侧会话/快捷命令栏显示/隐藏 */
+/** 左侧侧栏（快捷命令栏）显示/隐藏 */
 const sidebarHidden = ref(false)
-/** 折叠/展开整条会话栏（与快捷命令栏一起收起；重启记忆） */
+/** 折叠/展开整条侧栏（快捷命令栏一起收起；重启记忆） */
 function toggleSidebar(): void {
   sidebarHidden.value = !sidebarHidden.value
   void persistConfig()
@@ -225,9 +243,23 @@ let unsubs: Array<() => void> = []
 let signalTimer: ReturnType<typeof setInterval> | null = null
 
 const sessions = computed(() => config.value?.sessions ?? [])
+/** 端口备注表（显式备注 → 预设名回退，见 shared/serial-title.ts） */
+const portLabels = computed(() => config.value?.portLabels ?? {})
+/** 顶栏标题：与标签页同源，但端口号本身就是标题时不重复拼 */
+const portHeading = computed(() => {
+  const path = displayedParams.value.path
+  if (!path) return '串口'
+  const remark = portRemark(path, portLabels.value, sessions.value)
+  return remark && remark !== normalizePortPath(path) ? `${remark} · ${normalizePortPath(path)}` : normalizePortPath(path)
+})
+/** 标签页标题：有备注时「备注 (COM1)」，否则裸端口号 */
+function syncTabTitle(path: string): void {
+  if (path) tabStore.rename(props.panelId, portTabTitle(path, portLabels.value, sessions.value))
+}
 
 // ---------- 快捷命令宏（全局共享，见 composables/useTermMacros） ----------
 const { recording, recordTermKey, recordSend, playCmd } = useTermMacros()
+const commandManager = ref<InstanceType<typeof QuickCmdManager>>()
 
 /** 宏步骤执行器：串口写法（key 按键按 ASCII 下发） */
 function macroWriter(st: QuickCmdStep): void {
@@ -243,9 +275,8 @@ const xferKind = ref<'send' | 'recv'>('send')
 const xferProtocol = ref<TransferProtocol>('ymodem')
 const xferPath = ref('')
 /** 传输进度窗（transfer 事件驱动） */
-const transferDlg = ref(false)
 const transfer = ref<SerialTransferEvt | null>(null)
-let dlgCloseTimer: ReturnType<typeof setTimeout> | null = null
+let transferNoticeTimer: ReturnType<typeof setTimeout> | undefined
 
 const transferring = computed(
   () => !!transfer.value && (transfer.value.state === 'start' || transfer.value.state === 'progress')
@@ -256,41 +287,21 @@ const transferPct = computed(() => {
   return Math.min(100, Math.round((t.bytes / t.total) * 100))
 })
 
-/** 发文件：下拉选协议 → 系统文件选择框 → 确认开始 */
-async function onSendFile(proto: TransferProtocol): Promise<void> {
-  if (!open.value) {
-    ElMessage.warning('串口未打开')
-    return
-  }
-  const pick = (await window.api.invoke('serial', 'file:pick', props.panelId)) as {
-    ok: boolean
-    path?: string
-  }
-  if (!pick.ok || !pick.path) return
-  xferProtocol.value = proto
-  xferPath.value = pick.path
-  xferKind.value = 'send'
+function openTransfer(): void {
+  if (!open.value || transferring.value) return
+  xferPath.value = ''
   xferDlg.value = true
 }
 
-/** 收文件：下拉选协议 → 系统目录选择框 → 确认开始 */
-async function onRecvFile(proto: TransferProtocol): Promise<void> {
-  if (!open.value) {
-    ElMessage.warning('串口未打开')
-    return
-  }
-  const pick = (await window.api.invoke('serial', 'file:pick-dir', props.panelId)) as {
-    ok: boolean
-    path?: string
-  }
-  if (!pick.ok || !pick.path) return
-  xferProtocol.value = proto
-  xferPath.value = pick.path
-  xferKind.value = 'recv'
-  xferDlg.value = true
+async function chooseTransferPath(): Promise<void> {
+  const kind = xferKind.value
+  const action = kind === 'send' ? 'file:pick' : 'file:pick-dir'
+  const pick = (await window.api.invoke('serial', action, props.panelId)) as { ok: boolean; path?: string }
+  if (pick.ok && pick.path && xferDlg.value && kind === xferKind.value) xferPath.value = pick.path
 }
 
 async function startXfer(): Promise<void> {
+  if (!open.value || transferring.value || !xferPath.value) return
   xferDlg.value = false
   // 记住本次协议选择（下次默认选中）
   if (config.value) {
@@ -318,14 +329,8 @@ function cancelTransfer(): void {
 function onTransferEvt(p: unknown): void {
   const t = p as SerialTransferEvt
   transfer.value = t
-  if (t.state === 'start') {
-    if (dlgCloseTimer) {
-      clearTimeout(dlgCloseTimer)
-      dlgCloseTimer = null
-    }
-    transferDlg.value = true
-    return
-  }
+  clearTimeout(transferNoticeTimer)
+  if (t.state === 'start' || t.state === 'progress') return
   if (t.state === 'done') {
     const msg = t.dir === 'send' ? `文件发送完成：${t.name}` : `接收完成：${t.name || '(无文件)'}`
     ElMessage.success(msg)
@@ -336,11 +341,7 @@ function onTransferEvt(p: unknown): void {
   } else if (t.state === 'cancel') {
     termView.value?.info('传输已取消')
   }
-  if (dlgCloseTimer) clearTimeout(dlgCloseTimer)
-  dlgCloseTimer = setTimeout(() => {
-    transferDlg.value = false
-    dlgCloseTimer = null
-  }, 1200)
+  transferNoticeTimer = setTimeout(() => { transfer.value = null }, 1600)
 }
 
 // ---------- 初始化 ----------
@@ -361,6 +362,7 @@ onMounted(async () => {
       if (open.value !== s.open) connectionGeneration++
       open.value = s.open
       if (!s.open) {
+        activeParams.value = undefined
         dtrOn.value = false
         rtsOn.value = false
         signals.value = null
@@ -384,7 +386,7 @@ onMounted(async () => {
   config.value = res.config
   delete (config.value as SerialConfig & { crAsNewline?: boolean }).crAsNewline
   delete (config.value as SerialConfig & { guardScrollback?: boolean }).guardScrollback
-  Object.assign(params, res.config.last)
+  Object.assign(params, res.config.last, initialSerialParams)
   termFont.value = config.value.termFont || 'Consolas'
   termFontSize.value = config.value.termFontSize || 13
   xferProtocol.value = config.value.xferProtocol || 'ymodem'
@@ -393,8 +395,10 @@ onMounted(async () => {
   encoding.value = config.value.encoding ?? 'utf8'
   if (config.value.sidebarWidth) sidebarWidth.value = config.value.sidebarWidth
   sidebarHidden.value = config.value.sidebarHidden === true
-  termView.value?.info('就绪。选择串口后点击「打开」，终端内可直接输入命令。')
+  termView.value?.info('就绪。选择串口后点击「连接」，终端内可直接输入命令。')
   await refreshPorts()
+  // 恢复上次端口时标签页也要带上备注（refreshPorts 里已按最新配置重算）
+  syncTabTitle(params.path)
   await refreshPluginStatus()
 })
 
@@ -404,6 +408,7 @@ onUnmounted(() => {
   unsubs.forEach((u) => u())
   unsubs = []
   byteCounter.dispose()
+  clearTimeout(transferNoticeTimer)
   stopLoop()
   stopSignalPoll()
   window.api.invoke('serial', 'dispose', props.panelId).catch(() => {})
@@ -412,7 +417,66 @@ onUnmounted(() => {
 async function refreshPorts(): Promise<void> {
   ports.value = (await window.api.invoke('serial', 'list', props.panelId)) as PortInfo[]
   // 串口列表带回填 COM 口后，标签随所选端口即时更新（便于开多个窗口区分）
-  if (params.path) tabStore.rename(props.panelId, `${params.path}@${params.baudRate}`)
+  if (params.path) syncTabTitle(params.path)
+}
+
+/** 连接参数编辑区里正在编辑的端口备注（随连接参数保存到 config.portLabels） */
+const connectionLabel = ref('')
+function resetConnectionDraft(): void {
+  Object.assign(connectionDraft, params)
+  presetName.value = ''
+  newPresetName.value = ''
+  presetDeleteArmed.value = false
+  connectionError.value = ''
+  connectionLabel.value = portLabels.value[normalizePortPath(connectionDraft.path)] ?? ''
+}
+
+/** 选中已存预设：把该预设的完整参数套进草稿（不直接连接） */
+function applyPreset(name: string | undefined): void {
+  presetDeleteArmed.value = false
+  const preset = sessions.value.find((item) => item.name === name)
+  if (!preset) return
+  Object.assign(connectionDraft, preset.params)
+  connectionError.value = ''
+  connectionLabel.value = portLabels.value[normalizePortPath(preset.params.path)] ?? ''
+}
+
+// 切换端口时带出该端口已记住的备注，避免把 A 口的备注写到 B 口上
+watch(() => connectionDraft.path, (path) => {
+  connectionLabel.value = portLabels.value[normalizePortPath(path)] ?? ''
+})
+
+async function saveConnection(reconnect: boolean): Promise<void> {
+  if (connectionSaving.value || opening.value) return
+  const next = normalizeSerialParams(connectionDraft)
+  if (!next) {
+    connectionError.value = '请选择串口，波特率须为 1–12000000 的整数。'
+    return
+  }
+  connectionSaving.value = true
+  connectionError.value = ''
+  try {
+    // 端口备注随连接参数一起保存：标签页显示「备注 (COM1)」。键做归一化（com1 / \.\COM1 同口）
+    const labelKey = normalizePortPath(next.path)
+    if (config.value && labelKey) {
+      const labels = { ...(config.value.portLabels ?? {}) }
+      const label = connectionLabel.value.trim()
+      if (label && label !== labelKey) labels[labelKey] = label
+      else delete labels[labelKey]
+      config.value.portLabels = labels
+    }
+    await persistConfig(next)
+    Object.assign(params, next)
+    if (reconnect && open.value) await closePort()
+    connectionSettings.value = false
+    if (reconnect) await openPort()
+    // 备注可能刚改过：不论连没连上都按新备注刷新标题
+    syncTabTitle(next.path)
+  } catch (error) {
+    connectionError.value = String(error)
+  } finally {
+    connectionSaving.value = false
+  }
 }
 
 // ---------- 开关串口 ----------
@@ -421,18 +485,20 @@ async function openPort(): Promise<void> {
     ElMessage.warning('请选择串口')
     return
   }
+  if (opening.value || open.value) return
+  const requested = { ...params }
   opening.value = true
   // 必须在下发 open 之前复位：open 一返回主进程就可能推出新会话的数据，
   // 那时终端若还停在上个会话遗留的备用屏里，这批数据会画进备用屏、随复位一起消失。
   // 上个会话可能停在备用屏里（vi/top 被打断）或残留模式未复位：拉回主屏+软复位，
   // 但不碰回滚内容（设备随后自己发的清屏仍会按正常 VT 语义执行）
   termView.value?.resetVtState()
-  const res = (await window.api.invoke('serial', 'open', props.panelId, { ...params })) as {
-    ok: boolean
-    error?: string
-  }
+  const res = (await window.api.invoke('serial', 'open', props.panelId, requested).catch((error: unknown) => ({
+    ok: false, error: String(error)
+  }))) as { ok: boolean; error?: string }
   opening.value = false
   if (res.ok) {
+    activeParams.value = requested
     open.value = true
     dtrOn.value = true
     rtsOn.value = true
@@ -443,8 +509,8 @@ async function openPort(): Promise<void> {
     await window.api.invoke('serial', 'dtr', props.panelId, { on: true }).catch(() => {})
     await window.api.invoke('serial', 'rts', props.panelId, { on: true }).catch(() => {})
     termView.value?.info(`已打开 ${params.path} @ ${params.baudRate}，终端内可直接输入`)
-    tabStore.rename(props.panelId, `${params.path}@${params.baudRate}`)
-    persistConfig()
+    tabStore.rename(props.panelId, portTabTitle(params.path, portLabels.value, sessions.value))
+    void persistConfig().catch((error: unknown) => ElMessage.warning(String(error)))
     startSignalPoll()
     termView.value?.focus()
   } else {
@@ -457,7 +523,8 @@ async function closePort(): Promise<void> {
   stopSignalPoll()
   await window.api.invoke('serial', 'close', props.panelId)
   open.value = false
-  tabStore.rename(props.panelId, `${params.path}@${params.baudRate}`)
+  activeParams.value = undefined
+  tabStore.rename(props.panelId, params.path ? portTabTitle(params.path, portLabels.value, sessions.value) : '串口助手')
   termView.value?.info('已断开')
 }
 
@@ -523,8 +590,15 @@ function writeCmd(text: string, mode: 'ascii' | 'hex', newline: 'none' | 'crlf' 
     .catch(() => {})
 }
 
+function sendFromKeyboard(event: KeyboardEvent): void {
+  if (event.isComposing) return
+  event.preventDefault()
+  send()
+}
+
 function send(): void {
   doSend(sendText.value, sendMode.value, sendNewline.value)
+  historyIndex = -1
 }
 
 function startLoop(): void {
@@ -571,6 +645,43 @@ function saveLog(): void {
     .catch(() => {})
 }
 
+async function openLogSettings(): Promise<void> {
+  logSettings.value = true
+  retentionBusy.value = true
+  retentionError.value = ''
+  try {
+    const [directory, cleanup] = await Promise.all([
+      window.api.invoke('serial', 'log:get-dir', props.panelId) as Promise<{ dir?: string }>,
+      window.api.invoke('serial', 'log:retention:get', props.panelId) as Promise<{
+        settings: LogRetentionSettings
+        last?: { at: number; removed: number; failed: number }
+      }>
+    ])
+    logDirectory.value = directory.dir ?? ''
+    if (validLogRetention(cleanup.settings)) {
+      Object.assign(retention, cleanup.settings)
+      retentionSaved.value = cleanup.settings
+    }
+    retentionLast.value = cleanup.last
+  } catch (e) { retentionError.value = (e as Error).message }
+  finally { retentionBusy.value = false }
+}
+
+async function saveLogRetention(): Promise<void> {
+  if (!validLogRetention(retention) || retentionBusy.value) return
+  retentionBusy.value = true
+  retentionError.value = ''
+  try {
+    const result = await window.api.invoke('serial', 'log:retention:set', props.panelId, { ...retention }) as {
+      ok: boolean; error?: string; settings: LogRetentionSettings
+    }
+    if (!result.ok) throw new Error(result.error || '保存失败')
+    retentionSaved.value = result.settings
+    ElMessage.success('清理规则已保存')
+  } catch (e) { retentionError.value = (e as Error).message }
+  finally { retentionBusy.value = false }
+}
+
 function openLogDir(): void {
   void window.api.invoke('serial', 'log:open-dir', props.panelId).catch(() => {})
 }
@@ -582,115 +693,174 @@ async function setLogDir(): Promise<void> {
     dir?: string
     error?: string
   }
-  if (res.ok && res.dir) ElMessage.success(`日志保存目录已设为：${res.dir}（新会话生效）`)
+  if (res.ok && res.dir) {
+    logDirectory.value = res.dir
+    if (config.value) config.value.logDir = res.dir
+    ElMessage.success(`日志保存目录已设为：${res.dir}（新会话生效）`)
+  }
 }
 
 // ---------- 会话与配置 ----------
-async function persistConfig(): Promise<void> {
+async function persistConfig(nextParams: SerialParams = params): Promise<void> {
   if (!config.value) return
-  config.value.last = { ...params }
-  config.value.termFont = termFont.value
-  config.value.termFontSize = termFontSize.value
-  config.value.autoLog = autoLog.value
-  config.value.showTime = showTime.value
-  config.value.encoding = encoding.value
-  config.value.sidebarWidth = sidebarWidth.value
-  config.value.sidebarHidden = sidebarHidden.value
-  await window.api.invoke('serial', 'config:set', props.panelId, JSON.parse(JSON.stringify(config.value)))
+  const updated: SerialConfig = {
+    ...config.value,
+    last: { ...nextParams },
+    termFont: termFont.value,
+    termFontSize: termFontSize.value,
+    autoLog: autoLog.value,
+    showTime: showTime.value,
+    encoding: encoding.value,
+    sidebarWidth: sidebarWidth.value,
+    sidebarHidden: sidebarHidden.value
+  }
+  await window.api.invoke('serial', 'config:set', props.panelId, JSON.parse(JSON.stringify(updated)))
 }
 
-async function saveSession(): Promise<void> {
+/** 把连接参数浮层里的当前草稿存成预设：选中预设时直接覆盖，未选中时询问名字。
+ *  预设名只作备注的「回退来源」（见 shared/serial-title.ts），不覆盖用户显式填写的备注名——
+ *  否则保存预设会悄悄改掉用户已经设好的标签页标题。 */
+async function savePreset(): Promise<void> {
   if (!config.value) return
-  const name = sessionName.value.trim() || `${params.path}@${params.baudRate}`
-  const list = config.value.sessions.filter((s) => s.name !== name)
-  list.unshift({ name, params: JSON.parse(JSON.stringify(params)) as SerialParams })
-  config.value.sessions = list
-  sessionName.value = ''
-  await persistConfig()
-  ElMessage.success(`会话「${name}」已保存`)
-}
-
-function loadSession(idx: number): void {
-  const s = sessions.value[idx]
-  if (s) Object.assign(params, s.params)
-}
-
-async function deleteSession(idx: number): Promise<void> {
-  const s = sessions.value[idx]
-  if (!s || !config.value) return
-  try {
-    await ElMessageBox.confirm(`删除会话「${s.name}」？`, '删除', { type: 'warning' })
-  } catch {
+  const next = normalizeSerialParams(connectionDraft)
+  if (!next) {
+    connectionError.value = '请选择串口，波特率须为 1–12000000 的整数。'
     return
   }
-  config.value.sessions = config.value.sessions.filter((x) => x.name !== s.name)
+  const name = newPresetName.value.trim() || `${next.path} @ ${next.baudRate}`
+  const list = config.value.sessions.filter((s) => s.name !== name)
+  list.unshift({ name, params: { ...next } })
+  config.value.sessions = list
+  presetName.value = name
+  newPresetName.value = ''
   await persistConfig()
+  // 无显式备注时标题回退到最新预设名；有显式备注则保持不变
+  syncTabTitle(next.path)
+  ElMessage.success(`预设「${name}」已保存`)
 }
+
+/** 第一次点击进入待确认状态，再点一次才真正删除 */
+function requestDeletePreset(): void {
+  if (!presetDeleteArmed.value) {
+    presetDeleteArmed.value = true
+    return
+  }
+  void deletePreset()
+}
+
+async function deletePreset(): Promise<void> {
+  presetDeleteArmed.value = false
+  const name = presetName.value.trim()
+  const preset = sessions.value.find((item) => item.name === name)
+  if (!preset || !config.value) return
+  config.value.sessions = config.value.sessions.filter((item) => item.name !== name)
+  presetName.value = ''
+  await persistConfig()
+  // 预设名可能是该端口的备注回退来源：删掉后标题要跟着回退
+  syncTabTitle(preset.params.path)
+  ElMessage.success(`预设「${name}」已删除`)
+}
+
 </script>
 
 <template>
   <div class="panel serial-panel">
-    <!-- 连接工具栏：打开后参数区收起，只留 COM 口徽标 -->
-    <div class="panel-section">
-      <div class="conn-bar">
-        <template v-if="!open">
-          <el-select
-            v-model="params.path"
-            placeholder="选择串口"
-            size="small"
-            style="width: 210px"
-          >
-            <el-option
-              v-for="p in ports"
-              :key="p.path"
-              :value="p.path"
-              :label="`${p.path}  ${p.friendlyName}`"
-            />
-          </el-select>
-          <el-button size="small" :icon="Refresh" @click="refreshPorts" />
-          <el-select
-            v-model="params.baudRate"
-            size="small"
-            filterable
-            allow-create
-            default-first-option
-            style="width: 110px"
-          >
-            <el-option v-for="b in BAUD_RATES" :key="b" :value="b" :label="String(b)" />
-          </el-select>
-          <el-select v-model="params.dataBits" size="small" style="width: 78px">
-            <el-option :value="7" label="7 位" />
-            <el-option :value="8" label="8 位" />
-          </el-select>
-          <el-select v-model="params.parity" size="small" style="width: 88px">
-            <el-option value="none" label="无校验" />
-            <el-option value="even" label="偶校验" />
-            <el-option value="odd" label="奇校验" />
-          </el-select>
-          <el-select v-model="params.stopBits" size="small" style="width: 78px">
-            <el-option :value="1" label="1 停止" />
-            <el-option :value="2" label="2 停止" />
-          </el-select>
-          <el-checkbox v-model="params.rtscts" size="small">RTS/CTS</el-checkbox>
-          <el-button
-            type="primary"
-            size="small"
-            :icon="CaretRight"
-            :loading="opening"
-            @click="openPort"
-          >
-            打开
-          </el-button>
-        </template>
-        <template v-else>
-          <el-tag type="success" size="default" class="com-badge" effect="dark">
-            {{ params.path }}
-          </el-tag>
-          <el-button type="danger" size="small" :icon="CircleClose" @click="closePort">
-            断开
-          </el-button>
-        </template>
-        <el-divider direction="vertical" />
+    <header class="conn-bar">
+      <div class="conn-group">
+        <h1 :title="displayedParams.path">{{ portHeading }}</h1>
+        <el-popover v-model:visible="connectionSettings" placement="bottom-start" :width="440" trigger="click" @before-enter="resetConnectionDraft">
+          <template #reference>
+            <el-button size="small" :aria-expanded="connectionSettings" aria-label="连接参数" :disabled="opening || connectionSaving">
+              {{ displayedParams.baudRate }} · {{ displayedParams.dataBits }}{{ parityCode }}{{ displayedParams.stopBits }} ▾
+            </el-button>
+          </template>
+          <section class="connection-editor" aria-label="连接参数" @keydown.esc="!connectionSaving && (connectionSettings = false)">
+            <h2>连接参数</h2>
+            <p class="hint">{{ open ? '保存并重连会结束当前连接。仅保存会在下次连接时使用新参数。' : '选择串口并确认连接参数。' }}</p>
+            <fieldset class="conn-fields" :disabled="connectionSaving || opening">
+              <div class="conn-field conn-preset-field"><span>已存预设</span>
+                <div class="conn-preset-row">
+                  <el-select v-model="presetName" :teleported="false" size="small" filterable
+                    clearable placeholder="选择已存预设套用参数" aria-label="已存预设"
+                    @change="(name: string) => name && applyPreset(name)">
+                    <el-option v-for="preset in sessions" :key="preset.name" :value="preset.name"
+                      :label="`${preset.name}（${preset.params.path} @ ${preset.params.baudRate}）`" />
+                  </el-select>
+                  <el-button size="small" :type="presetDeleteArmed ? 'danger' : undefined"
+                    :icon="presetDeleteArmed ? undefined : Delete"
+                    :aria-label="presetDeleteArmed ? '确认删除所选预设' : '删除所选预设'"
+                    :title="presetDeleteArmed ? '再点一次确认删除' : '删除所选预设'"
+                    :disabled="!presetName" @click="requestDeletePreset">
+                    <span v-if="presetDeleteArmed">确认</span>
+                  </el-button>
+                </div>
+              </div>
+              <div class="conn-field conn-save-as-field"><span>保存为预设</span>
+                <div class="conn-port-field">
+                  <el-input v-model="newPresetName" size="small" maxlength="24" clearable
+                    :placeholder="`留空则用 ${connectionDraft.path || '端口'} @ ${connectionDraft.baudRate}`"
+                    aria-label="新预设名" @keydown.enter.prevent="savePreset" />
+                  <el-button size="small" :icon="Plus" aria-label="保存预设" title="把上面的参数保存为预设（同名覆盖）"
+                    :disabled="!connectionDraft.path" @click="savePreset" />
+                </div>
+              </div>
+              <div class="conn-field"><span>串口</span>
+                <div class="conn-port-field">
+                  <el-select v-model="connectionDraft.path" :teleported="false" placeholder="选择串口" aria-label="串口" size="small">
+                    <el-option v-for="port in ports" :key="port.path" :value="port.path"
+                      :label="[port.path, port.friendlyName].filter(Boolean).join(' · ')" />
+                  </el-select>
+                  <el-button size="small" :icon="Refresh" aria-label="刷新串口列表" @click="refreshPorts" />
+                </div>
+              </div>
+              <div class="conn-field"><span>备注名</span>
+                <el-input v-model="connectionLabel" size="small" maxlength="24" clearable
+                  :placeholder="`如：黑色串口板子（标签显示为「备注 (${connectionDraft.path || 'COM1'})」）`"
+                  aria-label="端口备注名" @keydown.enter.prevent />
+              </div>
+              <div class="conn-field"><span>波特率</span>
+                <el-select v-model="connectionDraft.baudRate" :teleported="false" aria-label="波特率" size="small"
+                  filterable allow-create default-first-option>
+                  <el-option v-for="baud in BAUD_RATES" :key="baud" :value="baud" :label="String(baud)" />
+                </el-select>
+              </div>
+              <div class="conn-field"><span>数据位</span>
+                <el-select v-model="connectionDraft.dataBits" :teleported="false" aria-label="数据位" size="small">
+                  <el-option :value="7" label="7 位" />
+                  <el-option :value="8" label="8 位" />
+                </el-select>
+              </div>
+              <div class="conn-field"><span>校验</span>
+                <el-select v-model="connectionDraft.parity" :teleported="false" aria-label="校验位" size="small">
+                  <el-option value="none" label="无校验" />
+                  <el-option value="even" label="偶校验" />
+                  <el-option value="odd" label="奇校验" />
+                </el-select>
+              </div>
+              <div class="conn-field"><span>停止位</span>
+                <el-select v-model="connectionDraft.stopBits" :teleported="false" aria-label="停止位" size="small">
+                  <el-option :value="1" label="1 停止" />
+                  <el-option :value="2" label="2 停止" />
+                </el-select>
+              </div>
+              <el-checkbox v-model="connectionDraft.rtscts" size="small">RTS/CTS</el-checkbox>
+            </fieldset>
+            <p v-if="connectionError" class="hint" role="alert">{{ connectionError }}</p>
+            <div class="connection-footer">
+              <el-button :disabled="connectionSaving" @click="connectionSettings = false">取消</el-button>
+              <el-button :disabled="opening || connectionSaving" @click="saveConnection(false)">仅保存</el-button>
+              <el-button type="primary" :loading="connectionSaving" :disabled="opening" @click="saveConnection(true)">{{ open ? '保存并重连' : '保存并连接' }}</el-button>
+            </div>
+          </section>
+        </el-popover>
+        <span class="port-status" :class="{ online: open }">{{ open ? '已连接' : opening ? '连接中' : '未连接' }}</span>
+        <el-button v-if="open" size="small" :disabled="opening || connectionSaving" @click="closePort">断开</el-button>
+        <el-button v-else size="small" type="primary" :loading="opening" :disabled="connectionSaving" @click="params.path ? openPort() : (connectionSettings = true)">连接</el-button>
+      </div>
+      <div class="conn-group">
+      <el-popover placement="bottom-end" :width="280" trigger="click">
+        <template #reference><el-button text size="small" :icon="Operation">DTR · RTS</el-button></template>
+        <div class="conn-group">
         <el-button size="small" :disabled="!open" :type="dtrOn ? 'warning' : 'default'" @click="toggleDtr">
           DTR {{ dtrOn ? '高' : '低' }}
         </el-button>
@@ -702,51 +872,18 @@ async function deleteSession(idx: number): Promise<void> {
           <el-tag size="small" :type="signals.dsr ? 'success' : 'info'">DSR</el-tag>
           <el-tag size="small" :type="signals.dcd ? 'success' : 'info'">DCD</el-tag>
         </span>
-        <el-divider direction="vertical" />
-        <el-input
-          v-model="sessionName"
-          size="small"
-          placeholder="会话名"
-          style="width: 110px"
-        />
-        <el-button size="small" :icon="Plus" @click="saveSession">存为会话</el-button>
+        </div>
+      </el-popover>
+        <SerialDevicePlugins :panel-id="props.panelId" :connected="open" @manage="pluginManagerOpen = true" @extensions="emit('openExtensions')" />
       </div>
-    </div>
+    </header>
 
     <div class="body">
-      <!-- 会话库 + 快捷命令宏（全局共享）；宽度可拖动调整，可整体折叠/展开 -->
-      <template v-if="!sidebarHidden">
-        <div class="sessions" :style="{ width: sidebarWidth + 'px' }">
-          <div class="sessions-head">
-            <span>会话</span>
-            <span class="hint">点击载入参数</span>
-            <el-button size="small" text :icon="Connection" title="安装插件、配置实例并绑定到当前串口" @click="pluginManagerOpen = true">插件</el-button>
-          </div>
-          <div
-            v-for="(s, i) in sessions"
-            :key="s.name"
-            class="session-item"
-            :class="{ active: s.params.path === params.path && s.params.baudRate === params.baudRate }"
-            @click="loadSession(i)"
-          >
-            <div class="session-name">{{ s.name }}</div>
-            <div class="session-sub">
-              {{ s.params.path }} @ {{ s.params.baudRate }}
-              <el-button link type="danger" size="small" @click.stop="deleteSession(i)">
-                <el-icon><Delete /></el-icon>
-              </el-button>
-            </div>
-          </div>
-          <div v-if="sessions.length === 0" class="hint" style="padding: 8px">
-            暂无会话。配置好参数后输入名称保存。
-          </div>
-
-          <div v-if="pluginSummary" role="status" class="plugin-status">
-            <span>{{ pluginSummary }}</span>
-            <el-button v-if="pluginBusy" size="small" text @click="cancelPluginAction">停止插件</el-button>
-            <el-button size="small" text @click="pluginManagerOpen = true">查看</el-button>
-          </div>
+      <!-- 快捷命令宏（全局共享）；宽度可拖动调整，可整体折叠/展开。
+           连接参数的「已存预设」收进了连接栏的浮层里，这里不再单列一块。 -->
+        <div v-if="!sidebarHidden" class="sessions" :style="{ width: sidebarWidth + 'px' }">
           <QuickCmdManager
+            ref="commandManager"
             :enabled="open"
             :writer="macroWriter"
             :get-connection-generation="() => connectionGeneration"
@@ -757,24 +894,40 @@ async function deleteSession(idx: number): Promise<void> {
           />
         </div>
 
-        <!-- 拖动调整会话栏宽度（VS Code 式分隔条）；中央折叠把手 -->
-        <div class="sidebar-split" title="拖动调整宽度" @mousedown="onSidebarResize">
-          <button class="split-toggle" title="折叠会话栏" @mousedown.stop @click="toggleSidebar">
+        <!-- 拖动调整侧栏宽度（VS Code 式分隔条）；中央折叠把手，与 SSH 页一致 -->
+        <div v-if="!sidebarHidden" class="sidebar-split" title="拖动调整宽度" @mousedown="onSidebarResize">
+          <button class="split-toggle" title="折叠快捷命令栏" @mousedown.stop @click="toggleSidebar">
             <svg viewBox="0 0 8 12" width="7" height="10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
               <path d="M6.5 1L1.5 6l5 5" />
             </svg>
           </button>
         </div>
-      </template>
 
-      <!-- 折叠后的细条：点击展开会话栏 -->
-      <div v-else class="sidebar-collapsed" title="展开会话栏" @click="toggleSidebar">
+      <!-- 折叠后的细条：点击展开侧栏 -->
+      <div v-else class="sidebar-collapsed" title="展开快捷命令栏" @click="toggleSidebar">
         <el-icon :size="16"><ArrowRight /></el-icon>
       </div>
 
       <!-- 终端 + 发送 -->
       <div class="term-col">
-        <div class="term-opts">
+        <div class="term-opts" role="group" aria-label="终端操作">
+          <div class="term-group" role="group" aria-label="终端输出">
+            <el-button size="small" text :icon="Search" title="查找（Ctrl+F）" @click="openTermSearch">查找</el-button>
+            <el-button size="small" text @click="clearTerm">清屏</el-button>
+          </div>
+          <div class="term-group" role="group" aria-label="日志">
+            <el-button size="small" text :icon="Download" @click="saveLog">保存日志</el-button>
+            <TerminalHistory tool="serial" :panel-id="props.panelId" />
+            <el-button size="small" text :icon="FolderOpened" @click="openLogSettings">日志设置</el-button>
+          </div>
+          <el-button size="small" text :icon="UploadFilled" :disabled="!open || transferring" @click="openTransfer">文件传输</el-button>
+          <el-button v-if="recording" class="stop-recording" size="small" text type="danger" @click="commandManager?.finishRecording()">停止录制</el-button>
+          <el-popover placement="bottom-end" :width="310" trigger="click">
+            <template #reference>
+              <el-button class="display-action" size="small" text :icon="Setting">显示设置</el-button>
+            </template>
+            <div class="display-settings">
+          <span>字体</span>
           <el-tooltip content="终端字体（可手输系统内已安装的字体名）" placement="top">
             <el-select
               v-model="termFont"
@@ -789,6 +942,7 @@ async function deleteSession(idx: number): Promise<void> {
               <el-option value="SimSun" label="宋体" />
             </el-select>
           </el-tooltip>
+          <span>字号</span>
           <el-tooltip content="字号（Ctrl+滚轮 或 Ctrl+= / Ctrl+- / Ctrl+0 缩放）" placement="top">
             <el-select v-model="termFontSize" size="small" filterable style="width: 74px">
               <el-option v-for="s in TERM_SIZES" :key="s" :value="s" :label="String(s)" />
@@ -798,68 +952,50 @@ async function deleteSession(idx: number): Promise<void> {
             <el-checkbox v-model="localEcho" size="small">本地回显</el-checkbox>
           </el-tooltip>
           <el-tooltip content="每行前显示本地时间 [HH:MM:SS.mmm]，与日志落盘格式一致" placement="top">
-            <el-checkbox v-model="showTime" size="small" @change="persistConfig">时间戳</el-checkbox>
+            <el-checkbox v-model="showTime" size="small" @change="persistConfig()">时间戳</el-checkbox>
           </el-tooltip>
+          <span>接收编码</span>
           <el-tooltip content="串口线上字节的编码：多数嵌入式设备输出 GBK，选错时中文显示乱码 / ？；对打开中的会话即时生效" placement="top">
             <el-select v-model="encoding" size="small" style="width: 88px" @change="onEncodingChange">
               <el-option value="utf8" label="UTF-8" />
               <el-option value="gbk" label="GBK" />
             </el-select>
           </el-tooltip>
-          <el-button size="small" text :icon="Search" title="查找（Ctrl+F）" @click="openTermSearch">查找</el-button>
-        <TerminalHistory tool="serial" :panel-id="props.panelId" />
-          <el-button size="small" text @click="clearTerm">清空</el-button>
-          <el-button size="small" text :icon="Download" @click="saveLog">存日志</el-button>
-          <el-dropdown trigger="click" @command="(cmd: string) => (cmd === 'set' ? setLogDir() : openLogDir())">
-            <el-button size="small" text :icon="FolderOpened">日志目录</el-button>
-            <template #dropdown>
-              <el-dropdown-menu>
-                <el-dropdown-item command="set">设置保存路径</el-dropdown-item>
-                <el-dropdown-item command="open">打开保存路径</el-dropdown-item>
-              </el-dropdown-menu>
-            </template>
-          </el-dropdown>
-          <el-tooltip content="会话期间所有收发自动落盘（关闭后仅手动「存日志」）" placement="top">
-            <el-checkbox v-model="autoLog" size="small" title="新会话生效；关闭后使用临时历史，关闭面板或开始新会话时删除" @change="persistConfig">保留日志</el-checkbox>
-          </el-tooltip>
-          <el-tooltip content="发送文件到设备：先选协议（YMODEM/ZMODEM），再选文件" placement="top">
-            <el-dropdown
-              :disabled="!open || transferring"
-              trigger="click"
-              @command="(proto: string) => onSendFile(proto as TransferProtocol)"
-            >
-              <el-button size="small" text :icon="UploadFilled" :disabled="!open || transferring">
-                发文件
-              </el-button>
-              <template #dropdown>
-                <el-dropdown-menu>
-                  <el-dropdown-item command="ymodem">YMODEM 发送</el-dropdown-item>
-                  <el-dropdown-item command="zmodem">ZMODEM 发送</el-dropdown-item>
-                </el-dropdown-menu>
-              </template>
-            </el-dropdown>
-          </el-tooltip>
-          <el-tooltip content="接收设备发来的文件：先选协议，再选保存目录" placement="top">
-            <el-dropdown
-              :disabled="!open || transferring"
-              trigger="click"
-              @command="(proto: string) => onRecvFile(proto as TransferProtocol)"
-            >
-              <el-button size="small" text :icon="Download" :disabled="!open || transferring">
-                收文件
-              </el-button>
-              <template #dropdown>
-                <el-dropdown-menu>
-                  <el-dropdown-item command="ymodem">YMODEM 接收</el-dropdown-item>
-                  <el-dropdown-item command="zmodem">ZMODEM 接收</el-dropdown-item>
-                </el-dropdown-menu>
-              </template>
-            </el-dropdown>
-          </el-tooltip>
-          <span class="counters">
-            RX <b>{{ rxBytes }}</b> TX <b>{{ txBytes }}</b>
-          </span>
+            </div>
+          </el-popover>
         </div>
+        <div v-if="transfer" class="transfer-strip">
+          <strong>{{ transfer.protocol.toUpperCase() }} · {{ transfer.dir === 'send' ? '发送' : '接收' }}</strong>
+          <span class="xfer-name" :title="transfer.name">{{ transfer.name || '等待设备端…' }}</span>
+          <el-progress :percentage="transferPct" :indeterminate="transferring && !transfer.total"
+            :status="transfer.state === 'error' ? 'exception' : transfer.state === 'done' ? 'success' : undefined" />
+          <span v-if="!transfer.total && transferring" class="hint">协商中…</span>
+          <el-button v-if="transferring" size="small" text type="danger" @click="cancelTransfer">取消传输</el-button>
+        </div>
+        <el-dialog v-model="logSettings" title="会话日志设置" width="min(420px, 95vw)" append-to-body>
+          <el-checkbox v-model="autoLog" @change="persistConfig()">自动保存会话日志</el-checkbox>
+          <p class="hint">自动保存设置在新会话中生效。</p>
+          <el-input :model-value="logDirectory" readonly aria-label="自动日志目录" placeholder="读取日志目录…" />
+          <div class="panel-row log-dir-actions">
+            <el-button size="small" @click="setLogDir">设置保存路径</el-button>
+            <el-button size="small" @click="openLogDir">打开保存路径</el-button>
+          </div>
+          <section class="log-cleanup">
+            <h3>历史日志自动清理</h3>
+            <el-checkbox v-model="retention.enabled" :disabled="retentionBusy">自动清理过期归档日志</el-checkbox>
+            <el-form label-position="top" @submit.prevent="saveLogRetention">
+              <el-form-item label="保留最近月数（1–120）">
+                <el-input-number v-model="retention.months" :min="1" :max="120" :step="1" step-strictly :disabled="retentionBusy || !retention.enabled" />
+              </el-form-item>
+              <p class="hint">启动后及每 24 小时检查。按最后写入时间判断，正在使用的归档和手动导出文件会跳过。</p>
+              <p class="hint" role="status">{{ retentionSaved.enabled ? `已保存：保留最近 ${retentionSaved.months} 个月` : '已保存：关闭自动清理' }}</p>
+              <p v-if="retentionLast" class="hint">上次清理 {{ new Date(retentionLast.at).toLocaleString() }} · 移除 {{ retentionLast.removed }} 个 · 失败 {{ retentionLast.failed }} 个</p>
+              <el-alert v-if="retentionError" :title="retentionError" type="error" :closable="false" role="alert" />
+              <el-button native-type="submit" size="small" :loading="retentionBusy" :disabled="!validLogRetention(retention)">保存清理规则</el-button>
+            </el-form>
+          </section>
+          <template #footer><el-button type="primary" @click="logSettings = false">完成</el-button></template>
+        </el-dialog>
         <TerminalView
           ref="termView"
           v-model:font-size="termFontSize"
@@ -890,41 +1026,41 @@ async function deleteSession(idx: number): Promise<void> {
             :disabled="loopOn"
           >
             <el-option value="none" label="无换行" />
-            <el-option value="crlf" label="\r\n" />
-            <el-option value="lf" label="\n" />
-            <el-option value="cr" label="\r" />
+            <el-option value="crlf" label="CRLF" />
+            <el-option value="lf" label="LF" />
+            <el-option value="cr" label="CR" />
           </el-select>
-          <el-dropdown
-            v-if="history.length"
-            trigger="click"
-            @command="(cmd: string) => (sendText = cmd)"
-          >
-            <el-button size="small">历史</el-button>
-            <template #dropdown>
-              <el-dropdown-menu>
-                <el-dropdown-item v-for="h in history" :key="h" :command="h">
-                  {{ h.slice(0, 60) }}
-                </el-dropdown-item>
-              </el-dropdown-menu>
-            </template>
-          </el-dropdown>
           <el-input
             v-model="sendText"
             size="small"
             class="send-input mono"
-            :placeholder="sendMode === 'hex' ? 'HEX：AA BB 01' : '输入要发送的内容'"
+            aria-label="发送内容"
+            :placeholder="sendMode === 'hex' ? 'HEX：AA BB 01' : '输入命令，Enter 发送 · ↑↓ 调取历史'"
             :disabled="loopOn"
-            @keydown.ctrl.enter="send"
-          />
-          <el-button type="primary" size="small" :icon="Connection" :disabled="!open || loopOn" @click="send">
-            发送
-          </el-button>
+            @input="historyIndex = -1"
+            @keydown.up.exact="recallSendHistory($event, 1)"
+            @keydown.down.exact="recallSendHistory($event, -1)"
+            @keydown.enter.exact="sendFromKeyboard"
+            @keydown.ctrl.enter="sendFromKeyboard"
+          >
+            <template #suffix>
+              <el-dropdown trigger="click" :disabled="!history.length || loopOn" @command="(cmd: string) => (sendText = cmd)">
+                <el-button text size="small" :icon="Clock" :disabled="!history.length || loopOn" aria-label="选择发送历史" />
+                <template #dropdown>
+                  <el-dropdown-menu>
+                    <el-dropdown-item v-for="h in history" :key="h" :command="h">{{ h.slice(0, 60) }}</el-dropdown-item>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown>
+            </template>
+          </el-input>
+          <el-button type="primary" size="small" :disabled="!open || loopOn" @click="send">发送</el-button>
           <!-- 定时发送：默认收起，点「定时」展开 -->
           <el-tooltip content="定时循环发送（非常用功能，展开后可用）" placement="top">
             <el-button
               size="small"
               :type="loopOn ? 'danger' : loopPanel ? 'warning' : 'default'"
-              @click="loopPanel = !loopPanel"
+              @click="loopOn ? stopLoop() : (loopPanel = !loopPanel)"
             >
               {{ loopOn ? '停止循环' : '定时' }}
             </el-button>
@@ -943,14 +1079,31 @@ async function deleteSession(idx: number): Promise<void> {
       </div>
     </div>
 
-    <!-- 传输确认 -->
-    <el-dialog v-model="xferDlg" :title="xferKind === 'send' ? '发送文件到设备' : '接收设备发来的文件'" width="400px" append-to-body>
-      <el-form label-width="80px" size="small" @submit.prevent>
-        <el-form-item :label="xferKind === 'send' ? '发送文件' : '保存目录'">
-          <div class="xfer-path">{{ xferPath }}</div>
-        </el-form-item>
+    <footer class="serial-status">
+      <span class="serial-status-summary">{{ displayedParams.path || '串口' }} · {{ open ? '已连接' : '未连接' }}</span>
+      <span>RX <b>{{ rxBytes }}</b> B</span>
+      <span>TX <b>{{ txBytes }}</b> B</span>
+      <span>{{ autoLog ? '保留日志' : '临时日志' }}</span>
+    </footer>
+
+    <el-dialog v-model="xferDlg" title="串口文件传输" width="min(460px, 95vw)" append-to-body>
+      <el-form label-position="top" size="small" class="transfer-form" @submit.prevent="startXfer">
         <el-form-item label="传输协议">
-          <el-tag size="small" effect="plain">{{ xferProtocol.toUpperCase() }}</el-tag>
+          <el-select v-model="xferProtocol" aria-label="传输协议">
+            <el-option label="YMODEM" value="ymodem" />
+            <el-option label="ZMODEM" value="zmodem" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="方向">
+          <el-select v-model="xferKind" aria-label="方向" @change="xferPath = ''">
+            <el-option label="发送到设备" value="send" />
+            <el-option label="从设备接收" value="recv" />
+          </el-select>
+        </el-form-item>
+        <el-form-item class="transfer-path" :label="xferKind === 'send' ? '本地文件' : '接收保存目录'">
+          <el-input :model-value="xferPath" readonly>
+            <template #append><el-button @click="chooseTransferPath">{{ xferKind === 'send' ? '选择文件' : '选择目录' }}</el-button></template>
+          </el-input>
         </el-form-item>
       </el-form>
       <div class="hint">
@@ -962,36 +1115,7 @@ async function deleteSession(idx: number): Promise<void> {
       </div>
       <template #footer>
         <el-button @click="xferDlg = false">取消</el-button>
-        <el-button type="primary" @click="startXfer">开始传输</el-button>
-      </template>
-    </el-dialog>
-
-    <!-- 传输进度 -->
-    <el-dialog
-      v-model="transferDlg"
-      title="文件传输"
-      width="420px"
-      :close-on-click-modal="false"
-      :show-close="false"
-      append-to-body
-    >
-      <div v-if="transfer" class="xfer-box">
-        <div class="xfer-line">
-          <el-tag size="small" effect="plain">{{ transfer.protocol.toUpperCase() }}</el-tag>
-          <span>{{ transfer.dir === 'send' ? '发送' : '接收' }}</span>
-          <span class="xfer-name">{{ transfer.name || '等待设备端…' }}</span>
-        </div>
-        <el-progress
-          :percentage="transferPct"
-          :indeterminate="!transfer.total"
-          :status="transfer.state === 'error' ? 'exception' : transfer.state === 'done' ? 'success' : undefined"
-        />
-        <div class="hint xfer-count">
-          {{ transfer.total ? `${transfer.bytes} / ${transfer.total} 字节` : '协商中…' }}
-        </div>
-      </div>
-      <template #footer>
-        <el-button :disabled="!transferring" @click="cancelTransfer">取消传输</el-button>
+        <el-button type="primary" :disabled="!xferPath || !open || transferring" @click="startXfer">开始传输</el-button>
       </template>
     </el-dialog>
 
@@ -1005,236 +1129,70 @@ async function deleteSession(idx: number): Promise<void> {
 </template>
 
 <style scoped>
-.plugin-status { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; font-size: 12px; padding: 4px 8px; color: var(--el-text-color-secondary); }
-.serial-panel {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  overflow: hidden;
+.serial-panel { height:100%; overflow:hidden; padding:0; gap:0; container-type:inline-size; }
+.mono { font-family:var(--font-mono); }
+.hint { font-size:12px; color:var(--el-text-color-secondary); }
+.conn-bar, .conn-group { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+/* 顶部连接栏：高度由内边距撑开（约 40px），标题与按钮不再贴着上下边框 */
+.conn-bar { justify-content:space-between; flex:none; padding:9px 14px; background:var(--el-bg-color-overlay); border-bottom:1px solid var(--el-border-color-lighter); }
+.conn-bar h1 { margin:0 2px 0 0; font:600 14px var(--font-mono); }
+.conn-fields { display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:8px; border:0; padding:0; margin:0; min-width:0; }
+.conn-field { display:grid; gap:3px; color:var(--el-text-color-secondary); font-size:12px; }
+.conn-fields > .el-checkbox { align-self:end; }
+.conn-port-field { display:flex; gap:4px; }
+.conn-port-field .el-select { min-width:0; }
+.port-status { padding:2px 8px; border-radius:20px; font-size:12px; background:var(--el-fill-color); }
+.port-status.online { color:var(--el-color-success); background:var(--el-color-success-light-9); }
+.sig { display:inline-flex; gap:4px; }
+.body { display:flex; flex:1; min-height:0; position:relative; }
+.connection-editor h2 { font-size:14px; margin:0; }
+.connection-editor .hint { margin:6px 0 10px; }
+.connection-footer { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:6px; margin-top:10px; }
+.connection-footer .el-button { margin:0; }
+/* 顶部内边距与 .term-opts 的 7px 对齐：两侧第一行（快捷命令标题 / 查找工具栏）落在同一水平线上 */
+.sessions { display:flex; flex-direction:column; flex:none; min-width:150px; max-width:27%; padding:7px 12px 14px; overflow:hidden; background:var(--el-bg-color-overlay); }
+.sidebar-split { flex:0 0 4px; margin:0 -2px; cursor:col-resize; border-radius:2px; position:relative; z-index:5; }
+.sidebar-split:hover { background:var(--el-color-primary); opacity:.5; }
+/* 分隔条中央的折叠把手：默认近乎隐没，悬停才浮出（同 SshPanel） */
+.split-toggle { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); width:12px; height:32px; display:flex; align-items:center; justify-content:center; padding:0; background:transparent; border:1px solid transparent; border-radius:6px; color:var(--el-text-color-placeholder); opacity:.45; cursor:pointer; transition:opacity .15s ease, background .15s ease, border-color .15s ease, color .15s ease; z-index:6; }
+.sidebar-split:hover .split-toggle { opacity:1; }
+.split-toggle:hover { background:var(--el-color-primary-light-9); border-color:var(--el-color-primary-light-7); color:var(--el-color-primary); }
+/* 折叠后的细条：占 16px，点击展开 */
+.sidebar-collapsed { flex:0 0 auto; width:16px; align-self:stretch; display:flex; align-items:center; justify-content:center; border-right:1px solid var(--el-border-color-lighter); color:var(--el-text-color-secondary); cursor:pointer; transition:background .15s ease; }
+.sidebar-collapsed:hover { background:var(--el-fill-color); color:var(--el-color-primary); }
+/* 已存预设占满一行 + 下方一条分隔线：它是「先套参数再改细节」的入口，不与单个字段并排 */
+.conn-preset-field { grid-column:1/-1; padding-bottom:9px; border-bottom:1px dashed var(--el-border-color-lighter); }
+.conn-preset-row { display:flex; gap:4px; }
+.conn-preset-row .el-select { flex:1; min-width:0; }
+.conn-save-as-field { grid-column:1/-1; }
+.term-col { flex:1; display:flex; flex-direction:column; min-width:0; }
+.term-col :deep(.term) { border:0; border-radius:0; box-shadow:none; padding:12px 14px; }
+.term-col :deep(.search-bar) { margin:0; border-radius:0; border-width:0 0 1px; }
+.term-opts, .term-group { display:flex; align-items:center; flex-wrap:wrap; gap:4px; }
+.term-opts { padding:7px 14px; background:var(--el-bg-color-overlay); border-bottom:1px solid var(--el-border-color-lighter); }
+.term-group { gap:6px; }
+.term-group + .term-group { margin-inline-start:4px; border-inline-start:1px solid var(--el-border-color-lighter); padding-inline-start:10px; }
+.term-opts :deep(.el-button) { margin:0; }
+.term-opts :is(.display-action, .stop-recording) { margin-inline-start:auto !important; }
+.term-opts .stop-recording + .display-action { margin-inline-start:0 !important; }
+.display-settings { display:grid; grid-template-columns:auto 1fr; align-items:center; gap:8px; }
+.display-settings :deep(.el-select) { width:100% !important; }
+.send-bar { display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding:10px 14px; background:var(--el-bg-color-overlay); border-top:1px solid var(--el-border-color-lighter); }
+.send-bar :deep(.el-button) { margin:0; }
+.send-input { flex:1; min-width:135px; }
+.serial-status { display:flex; justify-content:flex-end; gap:16px; padding:7px 16px; font-size:12px; color:var(--el-text-color-secondary); border-top:1px solid var(--el-border-color-lighter); }
+.serial-status-summary { margin-inline-end:auto; }
+.serial-status b { font-family:var(--font-mono); }
+@container (max-width:690px) {
+  .sessions { position:absolute; z-index:2; inset:0 auto 0 0; max-width:75%; box-shadow:var(--el-box-shadow-light); }
+  .sidebar-split { display:none; }
 }
-
-.mono {
-  font-family: var(--font-mono);
-}
-
-.hint {
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
-}
-
-.conn-bar {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-
-.sig {
-  display: inline-flex;
-  gap: 4px;
-}
-
-.body {
-  display: flex;
-  gap: 6px;
-  flex: 1;
-  min-height: 0;
-}
-
-.sessions {
-  flex: 0 0 auto;
-  min-width: 150px;
-  border-right: 1px solid var(--el-border-color-lighter);
-  padding-right: 14px;
-  overflow-y: auto;
-}
-
-/* 拖动调宽分隔条（VS Code 式）：平时 4px，悬停/拖动高亮 */
-.sidebar-split {
-  flex: 0 0 4px;
-  margin: 0 -2px;
-  cursor: col-resize;
-  border-radius: 2px;
-  position: relative;
-  z-index: 5;
-}
-
-.sidebar-split:hover {
-  background: var(--el-color-primary);
-  opacity: 0.5;
-}
-
-/* 分隔条中央的折叠把手：默认近乎隐没（透明底，只余浅灰细箭头），悬停才浮出底色与描边；
-   mousedown.stop 避免点击把手被当成拖动调宽 */
-.split-toggle {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  width: 12px;
-  height: 32px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  color: var(--el-text-color-placeholder);
-  opacity: 0.45;
-  cursor: pointer;
-  transition:
-    opacity 0.15s ease,
-    background 0.15s ease,
-    border-color 0.15s ease,
-    color 0.15s ease;
-  z-index: 6;
-}
-
-.sidebar-split:hover .split-toggle {
-  opacity: 1;
-}
-
-.split-toggle:hover {
-  background: var(--el-color-primary-light-9);
-  border-color: var(--el-color-primary-light-7);
-  color: var(--el-color-primary);
-}
-
-.sessions-head {
-  display: flex;
-  align-items: center;
-  font-weight: 600;
-  font-size: 13px;
-  margin: 4px 0 8px;
-  gap: 8px;
-}
-
-.sessions-head .hint {
-  font-weight: 400;
-  margin-right: auto;
-}
-
-/* 折叠后的细条（VS Code 式）：占 16px，点击展开 */
-.sidebar-collapsed {
-  flex: 0 0 auto;
-  width: 16px;
-  align-self: stretch;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-right: 1px solid var(--el-border-color-lighter);
-  color: var(--el-text-color-secondary);
-  cursor: pointer;
-  transition: background 0.15s ease;
-}
-
-.sidebar-collapsed:hover {
-  background: var(--el-fill-color);
-  color: var(--el-color-primary);
-}
-
-.session-item {
-  padding: 7px 9px;
-  border-radius: 8px;
-  cursor: pointer;
-  transition: background 0.15s ease;
-}
-
-.session-item:hover {
-  background: var(--el-fill-color);
-}
-
-.session-item.active {
-  background: var(--el-fill-color-darker);
-}
-
-.session-name {
-  font-size: 13px;
-}
-
-.session-sub {
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.com-badge {
-  font-family: var(--font-mono);
-  font-size: 13px;
-  letter-spacing: 0.5px;
-}
-
-.term-col {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  gap: 8px;
-}
-
-.term-opts {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.counters {
-  margin-left: auto;
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
-}
-
-.counters b {
-  color: var(--el-color-success);
-  font-family: var(--font-mono);
-}
-
-.send-bar {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-  padding-top: 2px;
-}
-
-.send-input {
-  flex: 1;
-  min-width: 200px;
-}
-
-.xfer-box {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.xfer-line {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 13px;
-}
-
-.xfer-name {
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  direction: rtl;
-  text-align: left;
-}
-
-.xfer-path {
-  font-family: var(--font-mono);
-  font-size: 12px;
-  word-break: break-all;
-  color: var(--el-text-color-regular);
-}
-
-.xfer-count {
-  text-align: right;
-}
+.transfer-form { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:0 12px; }
+.transfer-path { grid-column:1/-1; }
+.log-dir-actions { margin-top:10px; }
+.log-cleanup { margin-top:14px; padding-top:12px; border-top:1px solid var(--el-border-color-lighter); }
+.log-cleanup h3 { font-size:14px; margin:0 0 4px; }
+.transfer-strip { display:flex; align-items:center; gap:8px; padding:4px 12px; border-bottom:1px solid var(--el-border-color-lighter); background:var(--el-bg-color-overlay); font-size:12px; }
+.transfer-strip .xfer-name { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.transfer-strip .el-progress { flex:1; min-width:64px; }
 </style>

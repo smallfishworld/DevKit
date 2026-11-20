@@ -10,27 +10,27 @@ const { validateSchema, applyDefaults, safeConfigPattern, validateConfig } = req
 const { parseAuthLogin, parseAuthRequest } = require('../src/main/services/plugins/auth')
 
 const fixtureManifest = {
-  id: 'test.serial-fixture', name: 'Fixture', version: '1.0.0', apiVersion: 1, entry: 'index.cjs',
+  id: 'test.serial-fixture', name: 'Fixture', version: '1.0.0', apiVersion: 2, transports: ['serial'], entry: 'index.cjs',
   configSchema: { type: 'object', properties: { match: { type: 'string', default: 'PING' }, delay: { type: 'integer', minimum: 0, maximum: 2000, default: 0 } }, required: ['match'], additionalProperties: false },
   actions: [{ id: 'ping', label: 'Ping' }, { id: 'wait', label: 'Wait' }, { id: 'secret', label: 'Secret' }, { id: 'crash', label: 'Crash' },
     { id: 'stream', label: 'Stream' }, { id: 'lease', label: 'Lease' }, { id: 'hold', label: 'Hold' }, { id: 'hold-discard', label: 'Hold Discard' }],
-  autoRespond: true, capabilities: ['serial.read','serial.write','serial.exclusive']
+  autoRespond: true, capabilities: ['stream.read','stream.write','stream.exclusive']
 }
 const pluginCode = `exports.activate = async (ctx) => ({
   async run(action) {
-    if (action === 'ping') return await ctx.serial.exchange('PING', { match: 'PONG', timeoutMs: 2000 })
-    if (action === 'wait') return await ctx.serial.exchange('WAIT', { match: 'never', timeoutMs: 10000 })
-    if (action === 'secret') { await ctx.serial.write('sensitive-token', { secret: true }); ctx.log('info','sent sensitive-token'); return { ok:true } }
+    if (action === 'ping') return await ctx.stream.exchange('PING', { match: 'PONG', timeoutMs: 2000 })
+    if (action === 'wait') return await ctx.stream.exchange('WAIT', { match: 'never', timeoutMs: 10000 })
+    if (action === 'secret') { await ctx.stream.write('sensitive-token', { secret: true }); ctx.log('info','sent sensitive-token'); return { ok:true } }
     if (action === 'stream') return await new Promise((resolve, reject) => {
       const timer = setTimeout(() => { stop(); reject(new Error('stream timeout')) }, 3000)
-      const stop = ctx.serial.subscribe((event) => {
+      const stop = ctx.stream.subscribe((event) => {
         if (event.text !== 'STREAM') return
         clearTimeout(timer); stop(); resolve({ ok:true, text:event.text })
       })
-      ctx.serial.write('WATCH').catch((error) => { clearTimeout(timer); stop(); reject(error) })
+      ctx.stream.write('WATCH').catch((error) => { clearTimeout(timer); stop(); reject(error) })
     })
     if (action === 'lease') {
-      const lease = await ctx.serial.acquire()
+      const lease = await ctx.stream.acquire()
       await lease.write('LEASE-LOCK')
       await lease.write('LEASE-SECRET', { secret: true })
       await new Promise((resolve) => setTimeout(resolve, 100))
@@ -38,10 +38,10 @@ const pluginCode = `exports.activate = async (ctx) => ({
       return { ok:true, connectionId:lease.connectionId }
     }
     if (action === 'hold' || action === 'hold-discard') {
-      const lease = await ctx.serial.acquire()
-      await ctx.serial.hold({ maxBytes:512, maxMs:1500 })
+      const lease = await ctx.stream.acquire()
+      await ctx.stream.hold({ maxBytes:512, maxMs:1500 })
       await new Promise((resolve) => setTimeout(resolve, 100))
-      await ctx.serial.releaseHold(action === 'hold')
+      await ctx.stream.releaseHold(action === 'hold')
       await lease.release()
       return { ok:true }
     }
@@ -49,14 +49,14 @@ const pluginCode = `exports.activate = async (ctx) => ({
   },
   async onData(event) {
     if (ctx.config.delay) await new Promise(r=>setTimeout(r,ctx.config.delay))
-    if (event.text === 'TRIGGER') await ctx.serial.write('AUTO')
+    if (event.text === 'TRIGGER') await ctx.stream.write('AUTO')
   },
   async dispose() { ctx.log('info','disposed') }
 })`
 
 function makeBridge() {
   const listeners = new Map()
-  const sessions = new Map([['p1', { panelId:'p1', connectionId:'c1', path:'MOCK1', encoding:'utf8' }],['p2', { panelId:'p2', connectionId:'c2', path:'MOCK2', encoding:'utf8' }]])
+  const sessions = new Map([['p1', { panelId:'p1', connectionId:'c1', transport:'serial', target:'MOCK1', encoding:'utf8' }],['p2', { panelId:'p2', connectionId:'c2', transport:'serial', target:'MOCK2', encoding:'utf8' }]])
   const owners = new Map()
   const holds = new Map()
   const writes = []
@@ -68,7 +68,7 @@ function makeBridge() {
     emit(panelId,{ type:'data',connectionId:session.connectionId,bytes:[...Buffer.from(text)],text,receivedAt:Date.now(),sequence:++sequence })
   }
   return {
-    writes, owners, holds, sessions, listeners, subscriptions, data,
+    transport: 'serial', writes, owners, holds, sessions, listeners, subscriptions, data,
     close(panelId) { const session=sessions.get(panelId); sessions.delete(panelId); emit(panelId,{type:'closed',connectionId:session.connectionId,reason:'disconnected'}) },
     describe: panelId => sessions.get(panelId),
     beginHold(panelId,owner,options) { holds.set(panelId,{owner,options,chunks:[]}) },
@@ -122,10 +122,10 @@ async function main() {
   let ownedService
   try {
     assert.equal(parseManifest(fixtureManifest).id,fixtureManifest.id)
-    assert.throws(()=>parseManifest({...fixtureManifest,apiVersion:2}),/不兼容/)
+    assert.throws(()=>parseManifest({...fixtureManifest,apiVersion:1}),/不兼容/)
     assert.throws(()=>parseManifest({...fixtureManifest,version:'latest'}),/语义版本/)
-    assert.throws(()=>parseManifest({...fixtureManifest,autoRespond:false,capabilities:['serial.exclusive']}),/serial.exclusive/)
-    assert.throws(()=>parseManifest({...fixtureManifest,capabilities:['serial.read','serial.write','shell']}),/capabilities/)
+    assert.throws(()=>parseManifest({...fixtureManifest,autoRespond:false,capabilities:['stream.exclusive']}),/stream.exclusive/)
+    assert.throws(()=>parseManifest({...fixtureManifest,capabilities:['stream.read','stream.write','shell']}),/capabilities/)
     const authScope={loginUrl:'https://oa.example.invalid/login',authOrigins:[]}
     const login=parseAuthLogin({...authScope,check:{type:'json',url:'https://oa.example.invalid/session',field:'data.authenticated'}})
     assert.equal(login.timeoutMs,180000)
@@ -152,7 +152,7 @@ async function main() {
     const bridge=makeBridge()
     const processes=ownedProcesses
     const events=[]
-    const service=new PluginService(bridge,[],{
+    const service=new PluginService({serial:bridge},[],{
       userData:path.join(root,'runtime'),
       hostPath:process.env.DEVKIT_PLUGIN_TEST_HOST,
       hostFactory(script) {
@@ -242,7 +242,7 @@ async function main() {
     bridge.close('p1')
     await until(async()=>!(await api('status')).statuses.find(s=>s.instanceId===id).bound,'disconnect cleanup')
     assert.equal(bridge.owners.size,0)
-    bridge.sessions.set('p1',{panelId:'p1',connectionId:'c-new',path:'MOCK1',encoding:'utf8'})
+    bridge.sessions.set('p1',{panelId:'p1',connectionId:'c-new',transport:'serial', target:'MOCK1',encoding:'utf8'})
     assert.equal((await api('bind',{instanceId:id})).ok,true)
     const status=(await api('status')).statuses.find(s=>s.instanceId===id)
     assert.equal(status.connectionId,'c-new','reconnect has fresh identity')
@@ -254,7 +254,7 @@ async function main() {
     await until(()=>processes.every(child=>child.exitCode!==null||child.signalCode!==null),'children exit')
     assert.equal(bridge.owners.size,0)
     // Saved instances survive restart; binding and auto execution do not.
-    const reloaded=new PluginService(bridge,[],{userData:path.join(root,'runtime'),emit:()=>{}})
+    const reloaded=new PluginService({serial:bridge},[],{userData:path.join(root,'runtime'),emit:()=>{}})
     assert.equal((await reloaded.invoke('p1','instance:list')).instances.length,1)
     assert.equal((await reloaded.invoke('p1','status')).statuses.length,0)
     assert.equal((await reloaded.invoke('p1','remove',{pluginId:fixtureManifest.id})).ok,true)
@@ -265,20 +265,20 @@ async function main() {
     const installedOa=path.join(migratedRoot,'plugins','installed','devkit.oa-debug')
     await fs.mkdir(installedOa,{recursive:true})
     await fs.writeFile(path.join(installedOa,'manifest.json'),JSON.stringify({
-      id:'devkit.oa-debug',name:'OA Unlock',version:'1.0.0',apiVersion:1,entry:'index.cjs',
+      id:'devkit.oa-debug',name:'OA Unlock',version:'1.0.0',apiVersion:2,transports:['serial'],entry:'index.cjs',
       configSchema:{type:'object',additionalProperties:true},actions:[{id:'run',label:'Run'}],
-      autoRespond:true,capabilities:['serial.read','serial.write','serial.exclusive','auth.session']
+      autoRespond:true,capabilities:['stream.read','stream.write','stream.exclusive','auth.session']
     }))
     await fs.writeFile(path.join(installedOa,'index.cjs'),'exports.activate = () => ({})')
     await fs.writeFile(path.join(migratedRoot,'device-actions.json'),'{malformed')
-    const migration=new PluginService(bridge,[],{userData:migratedRoot,emit:()=>{}})
+    const migration=new PluginService({serial:bridge},[],{userData:migratedRoot,emit:()=>{}})
     assert.equal((await migration.invoke('p1','list')).ok,true,'bad OA config cannot block unrelated plugins')
     assert.ok((await migration.invoke('p1','status')).logs.some(entry=>entry.level==='warn'))
     await fs.writeFile(path.join(migratedRoot,'device-actions.json'),JSON.stringify({profiles:[{id:'a'.repeat(64),label:'Legacy'}]}))
     const legacyInstances=(await migration.invoke('p1','instance:list')).instances
     assert.equal(legacyInstances.length,1,'fixed legacy file retries migration')
     assert.equal(legacyInstances[0].id.length,71)
-    const migrationReload=new PluginService(bridge,[],{userData:migratedRoot,emit:()=>{}})
+    const migrationReload=new PluginService({serial:bridge},[],{userData:migratedRoot,emit:()=>{}})
     assert.equal((await migrationReload.invoke('p1','instance:list')).instances.length,1,'71-character legacy identity reloads')
     const stateStore=new PluginStore(path.join(root,'size-limit'))
     await stateStore.writeState([],false)
@@ -289,7 +289,7 @@ async function main() {
       manifest:{...fixtureManifest,id:'test.generation',actions:[],autoRespond:false,configSchema:{type:'object',additionalProperties:false}},
       activate(ctx){contexts.push(ctx);return {dispose(){}}}
     }
-    const generation=new PluginService(bridge,[generationPlugin],{userData:path.join(root,'generation'),emit:()=>{}})
+    const generation=new PluginService({serial:bridge},[generationPlugin],{userData:path.join(root,'generation'),emit:()=>{}})
     const ga=(action,payload)=>generation.invoke('p1',action,payload)
     const generationInstance=(await ga('instance:save',{instance:{pluginId:'test.generation',label:'Generation',config:{}}})).instance
     assert.equal((await ga('bind',{instanceId:generationInstance.id})).ok,true)

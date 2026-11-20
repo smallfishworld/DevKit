@@ -60,7 +60,7 @@
 | `tests/theme-test.js` / `tests/local-terminal-test.js` | 终端主题 / 本地终端 shell profile |
 | `tests/terminal-test.js` / `tests/terminal-services-test.js` | 终端流控（terminal-stream.ts：LogFormatter / OutputWindow ACK 背压）与磁盘历史（SessionHistory 积压背压 / 失败上报） |
 | `tests/plugin-backend-test.js` | 插件安装/JSON 包、进程 RPC、独立订阅、跨回调独占租约、扣键回放、`auth.session` 参数校验、迁移与准入（`npm run test:plugins-smoke` 为 Electron 插件 UI 冒烟） |
-| `tests/plugin-source-test.js` | 插件源 catalog.json 校验、GitHub raw/Release 地址解析、版本比较、SHA256SUMS 校验与 404 回退 |
+| `tests/plugin-backend-test.js` / `tests/plugin-sdk-v2-test.js` / `tests/plugin-retention-test.js` | API v2 安装、schema、隔离进程、stream 独占/订阅/输入保持、auth 参数边界、扩展源校验与多传输桥接；OA 协议测试在 DevKit-Plugins 仓库 |
 | DevKit-Plugins `plugins/oa-unlock/test` | OA 解锁协议回归：配置校验、手动/自动流程、挑战码分行匹配、登录过期重登与口令隐私（在插件仓库执行 `node scripts/test.cjs`） |
 
 ## 打包与发布流程（走 GitHub CI，不在本机构建上传）

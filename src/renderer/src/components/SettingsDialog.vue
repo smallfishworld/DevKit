@@ -1,214 +1,132 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
+import { Check, Close, Refresh } from '@element-plus/icons-vue'
 import { useAppearanceStore } from '@renderer/stores/appearance'
+import { relativeLuminance } from '../../../shared/theme'
 
-const props = defineProps<{ modelValue: boolean }>()
-const emit = defineEmits<{ (e: 'update:modelValue', value: boolean): void }>()
-
+const visible = defineModel<boolean>({ required: true })
 const appearance = useAppearanceStore()
-const visible = computed({
-  get: () => props.modelValue,
-  set: (value: boolean) => emit('update:modelValue', value)
+const keyword = ref('')
+
+/** 全部配色一次性铺开成色板栅格（按明暗排序），不再折叠进「更多终端配色」下拉 */
+const allThemes = computed(() =>
+  appearance.terminalThemes.map((theme) => ({
+    ...theme,
+    light: relativeLuminance(theme.background) > 0.5
+  }))
+)
+const filtered = computed(() => {
+  const kw = keyword.value.trim().toLowerCase()
+  return kw ? allThemes.value.filter((t) => t.name.toLowerCase().includes(kw)) : allThemes.value
 })
+/** 浅色配色排在前面（与「由亮到暗」的浏览习惯一致），同组内保持注册顺序 */
+const sortedThemes = computed(() => [
+  ...filtered.value.filter((t) => t.light),
+  ...filtered.value.filter((t) => !t.light)
+])
+const selectedId = computed(() => appearance.terminalTheme.id)
 
-const terminal = computed(() => appearance.terminalTheme)
+function choose(id: string): void {
+  appearance.setTerminalTheme(id)
+}
 
-const ansiRows = computed(() => [
-  ['black', terminal.value.ansi.black],
-  ['red', terminal.value.ansi.red],
-  ['green', terminal.value.ansi.green],
-  ['yellow', terminal.value.ansi.yellow],
-  ['blue', terminal.value.ansi.blue],
-  ['magenta', terminal.value.ansi.magenta],
-  ['cyan', terminal.value.ansi.cyan],
-  ['white', terminal.value.ansi.white],
-  ['brightBlack', terminal.value.ansi.brightBlack],
-  ['brightRed', terminal.value.ansi.brightRed],
-  ['brightGreen', terminal.value.ansi.brightGreen],
-  ['brightYellow', terminal.value.ansi.brightYellow],
-  ['brightBlue', terminal.value.ansi.brightBlue],
-  ['brightMagenta', terminal.value.ansi.brightMagenta],
-  ['brightCyan', terminal.value.ansi.brightCyan],
-  ['brightWhite', terminal.value.ansi.brightWhite]
-] as const)
-
-function onTerminalThemeChange(value: string): void {
-  appearance.setTerminalTheme(value)
+/** 关闭「跟随系统」时锁定到当前生效的配色，避免界面忽然跳回默认主题 */
+function toggleFollow(on: boolean): void {
+  if (on) appearance.followSystem()
+  else appearance.setTerminalTheme(appearance.terminalTheme.id)
 }
 </script>
 
 <template>
-  <el-dialog v-model="visible" title="终端配色" width="720px" append-to-body>
-    <div class="appearance-settings">
-      <section class="setting-section">
-        <div class="setting-head">
-          <div>
-            <h3>终端配色</h3>
-            <p>选定的终端主题同时驱动整个界面：主界面、面板、标签栏、按钮、边框与弹层全部跟随，切换后立即生效。</p>
-          </div>
-          <el-select
-            :model-value="appearance.settings.terminalTheme"
-            filterable
-            style="width: 220px"
-            @change="onTerminalThemeChange"
+  <el-popover v-model:visible="visible" placement="bottom-end" :width="404" trigger="click" popper-class="appearance-popper">
+    <template #reference><slot /></template>
+    <section class="appearance-settings" aria-label="外观与终端配色">
+      <header>
+        <h2>外观与终端配色</h2>
+        <el-button text size="small" :icon="Close" aria-label="关闭外观浮层" @click="visible = false" />
+      </header>
+
+      <div class="follow-row">
+        <span>
+          <strong>跟随系统</strong>
+          <small>按 Windows 浅色/深色自动切换（深色用 DevKit 默认，浅色用 Solarized Light）</small>
+        </span>
+        <el-switch :model-value="appearance.settings.followSystem" size="small" @update:model-value="toggleFollow" />
+      </div>
+
+      <div class="theme-filter">
+        <el-input v-model="keyword" size="small" clearable placeholder="筛选配色（如 nord、solar）" aria-label="筛选配色" />
+      </div>
+
+      <div class="theme-scroll">
+        <!-- 全部配色一次性铺开，按明暗排序（浅色在前，与列表卡片观感一致），不再折叠成「更多」 -->
+        <div class="theme-grid">
+          <button
+            v-for="theme in sortedThemes"
+            :key="theme.id"
+            type="button"
+            class="theme-tile"
+            :aria-pressed="!appearance.settings.followSystem && selectedId === theme.id"
+            :title="`${theme.name}${theme.author ? ' · ' + theme.author : ''}`"
+            @click="choose(theme.id)"
           >
-            <el-option
-              v-for="theme in appearance.terminalThemes"
-              :key="theme.id"
-              :value="theme.id"
-              :label="theme.name"
-            />
-          </el-select>
+            <span class="swatch" :style="{ background: theme.background, color: theme.foreground }">
+              <i :style="{ background: theme.ansi.green }"></i>
+              <i :style="{ background: theme.ansi.yellow }"></i>
+              <i :style="{ background: theme.ansi.blue }"></i>
+              <i :style="{ background: theme.ansi.magenta }"></i>
+              <em :style="{ background: theme.cursor }"></em>
+            </span>
+            <span class="tile-name">{{ theme.name }}</span>
+            <el-icon v-if="!appearance.settings.followSystem && selectedId === theme.id" class="tile-check"><Check /></el-icon>
+          </button>
         </div>
+        <p v-if="!sortedThemes.length" class="empty">没有匹配的配色</p>
+      </div>
 
-        <div
-          class="terminal-preview"
-          :style="{ background: terminal.background, color: terminal.foreground }"
-        >
-          <div class="preview-line dim">devkit@device:~$ <span class="cmd">make test</span></div>
-          <div class="preview-line">
-            <span :style="{ color: terminal.ansi.green }">PASS</span>
-            <span> serial protocol tests</span>
-          </div>
-          <div class="preview-line">
-            <span :style="{ color: terminal.ansi.yellow }">WARN</span>
-            <span> retrying connection...</span>
-          </div>
-          <div class="preview-line">
-            <span :style="{ color: terminal.ansi.red }">ERROR</span>
-            <span> device timeout</span>
-          </div>
-          <div class="preview-line">
-            <span :style="{ color: terminal.ansi.blue }">INFO</span>
-            <span> RX 1024 bytes · TX 256 bytes</span>
-            <span class="cursor" :style="{ background: terminal.cursor }"></span>
-          </div>
-        </div>
-
-        <div class="palette" aria-label="ANSI 16 色预览">
-          <div
-            v-for="([name, color]) in ansiRows"
-            :key="name"
-            class="swatch-wrap"
-            :title="`${name}: ${color}`"
-          >
-            <span class="swatch" :style="{ background: color }"></span>
-            <span class="swatch-name">{{ name.replace('bright', '+') }}</span>
-          </div>
-        </div>
-
-        <div class="theme-meta">
-          <span>{{ terminal.name }}</span>
-          <span v-if="terminal.author">· {{ terminal.author }}</span>
-          <span>· ANSI 16 色</span>
-        </div>
-      </section>
-    </div>
-
-    <template #footer>
-      <el-button type="primary" @click="visible = false">完成</el-button>
-    </template>
-  </el-dialog>
+      <footer>
+        <span class="current">
+          <el-icon><Refresh /></el-icon>
+          <template v-if="appearance.settings.followSystem">跟随系统 · 当前 {{ appearance.terminalTheme.name }}</template>
+          <template v-else>当前 · {{ appearance.terminalTheme.name }}</template>
+        </span>
+        <small>配色同时应用到整个界面与终端</small>
+      </footer>
+    </section>
+  </el-popover>
 </template>
 
 <style scoped>
-.appearance-settings {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
+.appearance-settings { display:flex; flex-direction:column; gap:10px; }
+header { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+h2 { margin:0; font-size:14px; }
 
-.setting-section {
-  padding: 14px 16px;
-  border: 1px solid var(--el-border-color-lighter);
-  border-radius: 10px;
-  background: var(--el-bg-color);
-}
+.follow-row { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:8px 10px; border:1px solid var(--el-border-color-lighter); border-radius:8px; background:var(--el-fill-color-lighter); cursor:pointer; }
+.follow-row strong { display:block; font-size:13px; }
+.follow-row small { display:block; margin-top:2px; font-size:11px; line-height:1.45; color:var(--el-text-color-secondary); }
 
-.setting-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 20px;
-}
+.theme-filter :deep(.el-input) { width:100%; }
 
-.setting-head h3 {
-  margin: 0 0 4px;
-  font-size: 14px;
-}
+.theme-scroll { display:flex; flex-direction:column; gap:8px; max-height:min(56vh, 460px); overflow-y:auto; padding-right:2px; }
 
-.setting-head p {
-  margin: 0;
-  color: var(--el-text-color-secondary);
-  font-size: 12px;
-  line-height: 1.6;
-}
+/* 三列平铺：18 套配色一屏可见大半，滚动条只负责收尾；不用分组标题占高度 */
+.theme-grid { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:6px; }
+/* 每个配色一块：色板条（背景 + 主色点 + 光标位）直观展示观感，不必再单开一个大预览框 */
+.theme-tile { position:relative; display:flex; flex-direction:column; align-items:stretch; gap:5px; min-width:0; padding:5px; border:1px solid var(--el-border-color); border-radius:8px; background:var(--el-bg-color); color:inherit; font:inherit; cursor:pointer; transition:border-color .15s ease, background .15s ease; }
+.theme-tile:hover { border-color:var(--el-color-primary-light-5); background:var(--el-fill-color-light); }
+.theme-tile[aria-pressed="true"] { border-color:var(--el-color-primary); background:var(--el-color-primary-light-9); }
+.theme-tile:focus-visible { outline:2px solid var(--el-color-primary); outline-offset:1px; }
 
-.terminal-preview {
-  margin-top: 14px;
-  min-height: 132px;
-  padding: 14px 16px;
-  border: 1px solid var(--el-border-color-lighter);
-  border-radius: 8px;
-  font-family: var(--font-mono);
-  font-size: 13px;
-  line-height: 1.65;
-  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.28);
-}
+.swatch { display:flex; align-items:flex-end; gap:2px; height:30px; padding:5px 6px; border-radius:5px; border:1px solid var(--el-border-color-lighter); }
+.swatch i { width:5px; height:10px; border-radius:1px; }
+.swatch em { width:4px; height:12px; margin-inline-start:auto; border-radius:1px; }
 
-.preview-line {
-  white-space: pre-wrap;
-}
+.tile-name { min-width:0; padding:0 2px; overflow:hidden; font-size:11px; line-height:1.35; text-align:start; text-overflow:ellipsis; white-space:nowrap; }
+/* 选中勾落在色板右上角，不挤占名称文字宽度 */
+.tile-check { position:absolute; top:2px; right:2px; padding:1px; border-radius:999px; font-size:11px; color:var(--el-color-primary); background:var(--el-bg-color); }
 
-.preview-line.dim {
-  opacity: 0.82;
-}
+.empty { margin:4px 0; font-size:12px; color:var(--el-text-color-secondary); }
 
-.cmd {
-  font-weight: 600;
-}
-
-.cursor {
-  display: inline-block;
-  width: 7px;
-  height: 14px;
-  margin-left: 4px;
-  vertical-align: -2px;
-}
-
-.palette {
-  display: grid;
-  grid-template-columns: repeat(8, minmax(0, 1fr));
-  gap: 8px;
-  margin-top: 12px;
-}
-
-.swatch-wrap {
-  min-width: 0;
-  text-align: center;
-}
-
-.swatch {
-  display: block;
-  height: 24px;
-  border: 1px solid rgba(127, 127, 127, 0.35);
-  border-radius: 5px;
-}
-
-.swatch-name {
-  display: block;
-  margin-top: 3px;
-  overflow: hidden;
-  color: var(--el-text-color-secondary);
-  font-family: var(--font-mono);
-  font-size: 9px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.theme-meta {
-  margin-top: 10px;
-  color: var(--el-text-color-secondary);
-  font-size: 11px;
-}
+footer { display:flex; align-items:center; justify-content:space-between; gap:8px; padding-top:8px; border-top:1px solid var(--el-border-color-lighter); font-size:11px; color:var(--el-text-color-secondary); }
+.current { display:inline-flex; align-items:center; gap:5px; color:var(--el-text-color-regular); }
 </style>
