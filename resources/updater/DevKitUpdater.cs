@@ -157,14 +157,21 @@ internal static class DevKitUpdater
         if (target.StartsWith(@"\\", StringComparison.Ordinal)) throw new IOException("Network paths are unsupported.");
         for (string current = target; current != null; current = Path.GetDirectoryName(current))
         {
-            if ((File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
+            if ((File.GetAttributes(FileSystemPath(current)) & FileAttributes.ReparsePoint) != 0)
                 throw new IOException("A path redirects outside the application directory.");
         }
     }
 
+    private static string FileSystemPath(string path)
+    {
+        if (path.StartsWith(@"\\?\", StringComparison.Ordinal)) return path;
+        if (path.StartsWith(@"\\", StringComparison.Ordinal)) return @"\\?\UNC\" + path.Substring(2);
+        return @"\\?\" + path;
+    }
+
     private static void StagePackage(string archive, string expectedHash, bool portable, string stage)
     {
-        using (var source = new FileStream(archive, FileMode.Open, FileAccess.Read, FileShare.Read))
+        using (var source = new FileStream(FileSystemPath(archive), FileMode.Open, FileAccess.Read, FileShare.Read))
         using (var sha256 = SHA256.Create())
         {
             string actualHash = BitConverter.ToString(sha256.ComputeHash(source)).Replace("-", "");
@@ -181,6 +188,7 @@ internal static class DevKitUpdater
                 return;
             }
 
+            stage = FileSystemPath(stage);
             Directory.CreateDirectory(stage);
             var seen = new HashSet<string>(PathComparer);
             long total = 0;
@@ -231,6 +239,7 @@ internal static class DevKitUpdater
 
     private static void AssertManagedDirectory(string root, bool existing)
     {
+        root = FileSystemPath(root);
         try
         {
             string inventory = Path.Combine(root, Inventory.Replace('/', Path.DirectorySeparatorChar));
@@ -365,7 +374,11 @@ internal static class DevKitUpdater
         try
         {
             if (portable) File.Delete(path);
-            else if (Directory.Exists(path)) Directory.Delete(path, true);
+            else
+            {
+                string directory = FileSystemPath(path);
+                if (Directory.Exists(directory)) Directory.Delete(directory, true);
+            }
         }
         catch (IOException) { }
         catch (UnauthorizedAccessException) { }
