@@ -1,25 +1,20 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
   <defs>
     <linearGradient id="tile" x1="0" y1="0" x2="160" y2="256" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#03483C"/>
-      <stop offset="1" stop-color="#09251E"/>
+      <stop stop-color="#1B1830"/>
+      <stop offset="1" stop-color="#171429"/>
     </linearGradient>
   </defs>
-  <rect width="256" height="256" rx="48" fill="url(#tile)"/>
-  <g transform="translate(18 18) scale(0.86)">
-    <title>DevKit Module Core</title>
+  <rect width="256" height="256" rx="56" fill="url(#tile)"/>
+  <g transform="translate(33.28 51.04) scale(0.74)">
+    <title>DevKit DK Monogram</title>
   <defs>
-    <linearGradient id="module-green" x1="32" y1="32" x2="176" y2="208" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#18D09A"/>
-      <stop offset="1" stop-color="#06B782"/>
+    <linearGradient id="brand-gradient" x1="8" y1="104" x2="248" y2="104" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#6173FF"/>
+      <stop offset="0.52" stop-color="#7D62FC"/>
+      <stop offset="1" stop-color="#9852FA"/>
     </linearGradient>
-    <linearGradient id="module-teal" x1="32" y1="32" x2="176" y2="208" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#08B5B2"/>
-      <stop offset="1" stop-color="#08C8C2"/>
-    </linearGradient>
-    <path id="module" d="M56 32H172Q176 32 176 36V84Q176 88 172 88H92V152Q92 156 88 156H68Q64 156 64 160V192H36Q32 192 32 188V56Q32 32 56 32Z"/>
   </defs>
-  <use href="#module" fill="url(#module-green)"/>
-  <use href="#module" fill="url(#module-teal)" transform="rotate(180 128 128)"/>
+  <path fill="url(#brand-gradient)" fill-rule="evenodd" d="M20 8H64C99 8 128 27 147 57L191 13Q196 8 203 8H238Q248 8 248 18Q248 22 244 26L166 104L244 182Q248 186 248 190Q248 200 238 200H203Q196 200 191 195L147 151C128 181 99 200 64 200H20Q8 200 8 188V20Q8 8 20 8ZM52 54V154H64C93 154 117 132 117 104C117 76 93 54 64 54Z"/>
   </g>
 </svg>
