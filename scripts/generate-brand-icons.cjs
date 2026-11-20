@@ -10,16 +10,16 @@ if (!body) throw new Error('mark.svg must contain an SVG root')
 
 const mono = master
   .replace(/\s*<linearGradient\b[\s\S]*?<\/linearGradient>/g, '')
-  .replace(/fill="url\(#module-(?:green|teal)\)"/g, 'fill="currentColor"')
+  .replace(/fill="url\(#brand-gradient\)"/g, 'fill="currentColor"')
 const app = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
   <defs>
     <linearGradient id="tile" x1="0" y1="0" x2="160" y2="256" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#03483C"/>
-      <stop offset="1" stop-color="#09251E"/>
+      <stop stop-color="#1B1830"/>
+      <stop offset="1" stop-color="#171429"/>
     </linearGradient>
   </defs>
-  <rect width="256" height="256" rx="48" fill="url(#tile)"/>
-  <g transform="translate(18 18) scale(0.86)">
+  <rect width="256" height="256" rx="56" fill="url(#tile)"/>
+  <g transform="translate(33.28 51.04) scale(0.74)">
     ${body}
   </g>
 </svg>
