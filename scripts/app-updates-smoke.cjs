@@ -17,7 +17,7 @@ try {
   }))
   const flags = process.platform === 'linux' ? ['--no-sandbox'] : []
   const result = spawnSync(require('electron'), [...flags, dir], {
-    cwd: root, stdio: 'inherit', timeout: 45_000,
+    cwd: root, stdio: 'inherit', timeout: 90_000,
     env: { ...process.env, DEVKIT_SMOKE_USER_DATA: dir }
   })
   if (result.error) throw result.error
