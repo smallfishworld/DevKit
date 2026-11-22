@@ -143,19 +143,20 @@ async function install(): Promise<void> {
 .extension-layout { display:grid; grid-template-columns:minmax(220px, 1fr) minmax(0, 2.25fr); gap:24px; align-items:start; }
 .extension-layout > .panel-section { padding:0; border:0; border-radius:0; background:transparent; }
 .extension-layout > article.panel-section { padding-inline-start:24px; border-inline-start:1px solid var(--el-border-color); }
-.extension-summary { display:flex; align-items:center; gap:10px; }
-.extension-facts { display:flex; flex-wrap:wrap; gap:6px; margin-top:5px; }
-.extension-icon { width:34px; height:34px; flex:none; border-radius:8px; color:var(--el-color-primary); background:var(--el-color-primary-light-9); }
-.extension-install-note { margin-top:14px; font-size:12px; }
+.extension-summary { display:flex; align-items:center; gap:12px; }
+.extension-facts { display:flex; flex-wrap:wrap; gap:6px; margin-top:6px; }
+.extension-icon { width:36px; height:36px; flex:none; border-radius:8px; color:var(--el-color-primary); background:var(--el-color-primary-light-9); }
+.extension-install-note { margin-top:16px; font-size:12px; }
 .extension-install-note summary { cursor:pointer; }
-.extension-list { display:grid; gap:3px; margin-block-start:10px; }
-.extension-list button { display:flex; align-items:center; gap:10px; padding:10px; border:1px solid var(--el-border-color-lighter); border-radius:7px; background:var(--el-bg-color-page); text-align:start; color:inherit; cursor:pointer; }
+.extension-list { display:grid; gap:4px; margin-block-start:12px; }
+.extension-list button { display:flex; align-items:center; gap:10px; padding:10px 12px; border:1px solid var(--el-border-color-lighter); border-radius:8px; background:var(--el-bg-color-page); text-align:start; color:inherit; cursor:pointer; }
 .extension-list button:hover { background:var(--el-fill-color-light); }
 .extension-list button[aria-pressed="true"] { background:var(--el-color-primary-light-9); color:var(--el-color-primary); }
-.extension-list button > span { display:grid; gap:3px; }
-.extension-list small, article p { color:var(--el-text-color-secondary); }
-.extension-center h2 { display:flex; align-items:center; gap:8px; margin:0; font-size:17px; }
-.module-entry { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; padding:10px; border:1px solid var(--el-border-color-lighter); border-radius:8px; background:var(--el-bg-color-page); }
+.extension-list button > span { display:grid; gap:4px; }
+.extension-list strong { font-size:13px; }
+.extension-list small, article p { font-size:12px; color:var(--el-text-color-secondary); }
+.extension-center h2 { display:flex; align-items:center; gap:8px; margin:0; font-size:16px; font-weight:600; }
+.module-entry { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; padding:12px; border:1px solid var(--el-border-color-lighter); border-radius:8px; background:var(--el-bg-color-page); }
 @container (max-width:560px) {
   .extension-layout { grid-template-columns:minmax(0,1fr); }
   .extension-layout > article.panel-section { padding-inline-start:0; border-inline-start:0; }

@@ -45,7 +45,7 @@ export function readPendingUpdate(value: unknown, current: string): UpdatePackag
   return { version, notes: notes.slice(0, 24_000), bytes, tag, hash }
 }
 
-export function parseRelease(value: unknown, current: string, format: PackageFormat): ReleaseResult {
+export function parseRelease(value: unknown, current: string, format?: PackageFormat): ReleaseResult {
   const { draft, prerelease, tag_name: tag, assets, body } = record(value)
   if (typeof tag !== 'string' || draft !== false || prerelease !== false || !Array.isArray(assets)) {
     if (typeof tag === 'string' && (draft === true || prerelease === true)) return { status: 'current' }
@@ -53,9 +53,14 @@ export function parseRelease(value: unknown, current: string, format: PackageFor
   }
   const version = tag.replace(/^v/, '')
   if (!isNewerVersion(version, current)) return { status: 'current' }
+  const notes = typeof body === 'string' ? body.split(/^## 下载\s*$/m, 1)[0].trim().slice(0, 24_000) : ''
+  if (!format) {
+    if (tag !== version && tag !== `v${version}`) throw new Error('GitHub 返回了无法识别的发布信息。')
+    return { status: 'available', update: { version, tag, notes, bytes: 0, hash: '' } }
+  }
   const asset = assets.map(record).find((entry) => entry.name === packageName(version, format) && entry.state === 'uploaded')
   const update = readPendingUpdate({
-    version, tag, notes: typeof body === 'string' ? body.split(/^## 下载\s*$/m, 1)[0].trim() : '',
+    version, tag, notes,
     bytes: asset?.size,
     hash: typeof asset?.digest === 'string' && asset.digest.startsWith('sha256:') ? asset.digest.slice(7) : undefined
   }, current)
@@ -68,7 +73,7 @@ export class GitHubReleases {
 
   constructor(private readonly fetch: Fetch) {}
 
-  async latest(current: string, format: PackageFormat): Promise<ReleaseResult> {
+  async latest(current: string, format?: PackageFormat): Promise<ReleaseResult> {
     if (Date.now() < this.retryAfter) throw new Error('GitHub 请求受限，请稍后再检查。')
     const headers: Record<string, string> = {
       Accept: 'application/vnd.github+json',

@@ -306,7 +306,7 @@ async function run(): Promise<void> {
         @drop="onDropDirs('left', $event)"
       >
         <template #append>
-          <el-button :icon="FolderOpened" @click="pick('left')" />
+          <el-button size="small" :icon="FolderOpened" @click="pick('left')" />
         </template>
       </el-input>
       <span class="vs">⇄</span>
@@ -322,7 +322,7 @@ async function run(): Promise<void> {
         @drop="onDropDirs('right', $event)"
       >
         <template #append>
-          <el-button :icon="FolderOpened" @click="pick('right')" />
+          <el-button size="small" :icon="FolderOpened" @click="pick('right')" />
         </template>
       </el-input>
     </div>
@@ -461,33 +461,33 @@ function basename(p: string): string {
 }
 
 .folder-box {
-  background: #101418;
+  background: var(--el-bg-color-page);
   border: 1px solid var(--el-border-color-lighter);
   border-radius: 6px;
   font-size: 12px;
   max-height: 55vh;
   overflow: auto;
-  color: #cfd8dc;
+  color: var(--el-text-color-regular);
 }
 .frow {
   display: grid;
   grid-template-columns: 26px 1fr 1fr auto;
   align-items: center;
   gap: 6px;
-  padding: 2px 6px;
+  padding: 3px 8px;
 }
 .frow.fhead {
   position: sticky;
   top: 0;
-  background: #161b21;
+  background: var(--el-bg-color-overlay);
   z-index: 1;
   border-bottom: 1px solid var(--el-border-color-lighter);
   font-weight: 600;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--el-text-color-secondary);
 }
 .frow:hover {
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--el-fill-color-light);
 }
 .frow.checked {
   background: var(--el-color-primary-light-9);
@@ -519,12 +519,12 @@ function basename(p: string): string {
   color: var(--el-text-color-secondary);
 }
 .dir-count {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--el-text-color-secondary);
   margin-left: 6px;
 }
 .side-absent {
-  color: #3a4650;
+  color: var(--el-text-color-placeholder);
 }
 .isdir .f-name {
   font-weight: 600;

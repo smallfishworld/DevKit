@@ -710,7 +710,7 @@ function fmtTime(t: number): string {
 }
 
 .identity-bar {
-  margin-top: 10px;
+  margin-top: 12px;
 }
 
 .remote-bar {
@@ -718,7 +718,7 @@ function fmtTime(t: number): string {
 }
 
 .ch-table {
-  margin-top: 10px;
+  margin-top: 12px;
   width: 100%;
 }
 
@@ -736,13 +736,13 @@ function fmtTime(t: number): string {
   flex: 1;
   min-height: 140px;
   overflow-y: auto;
-  background: #101418;
+  background: var(--el-bg-color-page);
   border: 1px solid var(--el-border-color-lighter);
   border-radius: 6px;
-  padding: 8px 10px;
+  padding: 8px 12px;
   font-size: 12px;
   line-height: 1.55;
-  color: #cfd8dc;
+  color: var(--el-text-color-regular);
   white-space: pre-wrap;
   word-break: break-all;
 }
@@ -753,17 +753,17 @@ function fmtTime(t: number): string {
 }
 
 .log-time {
-  color: #546e7a;
-  font-size: 11px;
+  color: var(--el-text-color-placeholder);
+  font-size: 12px;
   flex-shrink: 0;
 }
 
 .log-line.is-error .log-text {
-  color: #ef9a9a;
+  color: var(--el-color-danger);
 }
 
 .log-line.is-info .log-text {
-  color: #78909c;
+  color: var(--el-text-color-secondary);
   font-style: italic;
 }
 

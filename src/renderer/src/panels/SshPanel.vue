@@ -381,7 +381,7 @@ async function pickKeyFile(): Promise<void> {
           </el-button>
         </template>
         <template v-else>
-          <el-tag type="success" size="default" class="host-badge mono" effect="dark">
+          <el-tag type="success" size="small" class="host-badge mono" effect="dark">
             {{ params.username }}@{{ params.host }}
           </el-tag>
           <el-button type="danger" size="small" :icon="CircleClose" @click="disconnect">
@@ -546,7 +546,7 @@ async function pickKeyFile(): Promise<void> {
 .conn-bar {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   flex-wrap: wrap;
 }
 

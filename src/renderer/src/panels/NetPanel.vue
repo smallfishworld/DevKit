@@ -305,7 +305,7 @@ async function persistConfig(): Promise<void> {
           {{ params.mode === 'tcp-client' ? '连接' : '启动' }}
         </el-button>
         <el-button v-else type="danger" size="small" @click="stop">停止</el-button>
-        <el-tag :type="running ? 'success' : 'info'">
+        <el-tag size="small" :type="running ? 'success' : 'info'">
           {{ running ? `${modeLabel} 运行中` : '已停止' }}
         </el-tag>
         <span class="counters">
@@ -436,49 +436,49 @@ async function persistConfig(): Promise<void> {
   flex: 1;
   min-height: 240px;
   overflow-y: auto;
-  background: #101418;
+  background: var(--el-bg-color-page);
   border: 1px solid var(--el-border-color-lighter);
   border-radius: 6px;
-  padding: 8px 10px;
+  padding: 8px 12px;
   font-size: 12px;
   line-height: 1.55;
-  color: #cfd8dc;
+  color: var(--el-text-color-regular);
   white-space: pre-wrap;
   word-break: break-all;
 }
 
 .term-line.is-tx .term-text {
-  color: #ffd54f;
+  color: var(--el-color-warning);
 }
 
 .term-line.is-info .term-text {
-  color: #78909c;
+  color: var(--el-text-color-secondary);
   font-style: italic;
 }
 
 .term-time {
-  color: #546e7a;
+  color: var(--el-text-color-placeholder);
   margin-right: 8px;
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .term-arrow {
-  color: #ffb300;
+  color: var(--el-color-warning);
 }
 
 .term-dot {
-  color: #546e7a;
+  color: var(--el-text-color-placeholder);
 }
 
 .term-peer {
-  color: #7ba3cc;
-  font-size: 11px;
+  color: var(--el-color-primary);
+  font-size: 12px;
 }
 
 .send-bar {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   flex-wrap: wrap;
 }
 

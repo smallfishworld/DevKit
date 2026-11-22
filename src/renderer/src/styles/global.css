@@ -94,83 +94,6 @@ html[data-ui-theme] {
   background: var(--el-bg-color);
 }
 
-/* 顶栏（无边框窗口的自绘标题栏：整条可拖动，交互元素 no-drag） */
-.app-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  height: 32px;
-  padding: 0 0 0 8px;
-  background: var(--el-bg-color-page);
-  border-bottom: 1px solid var(--el-border-color-lighter);
-  flex-shrink: 0;
-  user-select: none;
-  -webkit-app-region: drag;
-}
-
-/* 左上角图标：点击弹版本信息 */
-.app-logo {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  border: none;
-  border-radius: 6px;
-  background: transparent;
-  cursor: pointer;
-  outline: none;
-  transition: background 0.15s ease;
-}
-
-.app-logo:hover {
-  background: var(--el-fill-color);
-}
-
-.app-title {
-  font-size: 13px;
-  font-weight: 600;
-  letter-spacing: 0.2px;
-}
-
-.header-spacer {
-  flex: 1;
-  align-self: stretch;
-}
-
-/* 窗口控制按钮（VS Code 风格：宽扁、悬停填充、关闭悬停红） */
-.win-controls {
-  display: flex;
-  align-self: stretch;
-}
-
-.win-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 46px;
-  height: 100%;
-  padding: 0;
-  border: none;
-  border-radius: 0;
-  background: transparent;
-  color: var(--el-text-color-regular);
-  cursor: pointer;
-  outline: none;
-  transition: background 0.15s ease, color 0.15s ease;
-}
-
-.win-btn:hover {
-  background: var(--el-fill-color-dark);
-  color: var(--el-text-color-primary);
-}
-
-.win-btn.close:hover {
-  background: #e81123;
-  color: #fff;
-}
-
 /* 标题栏版本信息弹层（el-popover 挂在 body 下，须全局样式） */
 .about-box {
   font-size: 12px;
@@ -204,80 +127,6 @@ html[data-ui-theme] {
   color: var(--el-text-color-secondary);
 }
 
-/* 标签栏 */
-.tab-bar {
-  display: flex;
-  align-items: flex-end;
-  gap: 2px;
-  height: 34px;
-  padding: 4px 8px 0;
-  background: var(--el-bg-color-page);
-  border-bottom: 1px solid var(--el-border-color-lighter);
-  overflow-x: auto;
-  flex-shrink: 0;
-  user-select: none;
-}
-
-.tab-bar::-webkit-scrollbar {
-  height: 0;
-}
-
-.tab-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  height: 30px;
-  padding: 0 13px;
-  border: 1px solid transparent;
-  border-bottom: none;
-  border-radius: 7px 7px 0 0;
-  font-size: 13px;
-  color: var(--el-text-color-regular);
-  cursor: pointer;
-  white-space: nowrap;
-  transition: background 0.15s ease, color 0.15s ease;
-}
-
-.tab-item:hover {
-  background: var(--el-fill-color-light);
-}
-
-.tab-item.active {
-  background: var(--el-bg-color);
-  border-color: var(--el-border-color-lighter);
-  color: var(--el-color-primary);
-  font-weight: 600;
-}
-
-/* 拖拽换位反馈：被拖标签半透明，悬停目标左右浮现指示边 */
-.tab-item.dragging {
-  opacity: 0.4;
-}
-
-.tab-item.drop-target {
-  box-shadow: inset 2px 0 0 var(--el-color-primary);
-}
-
-.tab-item .tab-close {
-  display: inline-flex;
-  border-radius: 3px;
-  padding: 1px;
-  color: var(--el-text-color-secondary);
-  transition: background 0.15s ease, color 0.15s ease;
-}
-
-.tab-item .tab-title {
-  max-width: 180px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.tab-item .tab-close:hover {
-  background: var(--el-fill-color-dark);
-  color: var(--el-text-color-primary);
-}
-
 /* 内容区：所有打开的面板常驻（v-show 切换），保住工具运行状态 */
 .app-body {
   flex: 1;
@@ -293,7 +142,7 @@ html[data-ui-theme] {
 
 /* 状态栏 */
 .app-status {
-  height: 24px;
+  height: 26px;
   display: flex;
   align-items: center;
   padding: 0 12px;
@@ -351,10 +200,10 @@ html[data-ui-theme] {
 
 /* Layout shared by the two conversion workspaces. */
 .converter-page {
-  max-width: 1120px;
+  max-width: 1360px;
   margin-inline: auto;
   container-type: inline-size;
-  gap: 14px;
+  gap: 16px;
 }
 
 .converter-head {
@@ -365,7 +214,7 @@ html[data-ui-theme] {
   gap: 8px 12px;
 }
 
-.converter-head h1 { margin: 0; font-size: 19px; }
+.converter-head h1 { margin: 0; font-size: 20px; font-weight: 600; }
 .converter-head p { margin: 4px 0 0; font-size: 12px; color: var(--el-text-color-secondary); }
 .converter-split { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 14px; align-items: start; }
 .converter-split.equal { grid-template-columns: repeat(2, minmax(0, 1fr)); }

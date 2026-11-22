@@ -155,7 +155,7 @@ const shownRows = computed<HexRow[]>(() => {
         @drop="onDropFiles('left', $event)"
       >
         <template #append>
-          <el-button :icon="FolderOpened" @click="open('left')" />
+          <el-button size="small" :icon="FolderOpened" @click="open('left')" />
         </template>
       </el-input>
       <span class="vs">⇄</span>
@@ -172,7 +172,7 @@ const shownRows = computed<HexRow[]>(() => {
         @drop="onDropFiles('right', $event)"
       >
         <template #append>
-          <el-button :icon="FolderOpened" @click="open('right')" />
+          <el-button size="small" :icon="FolderOpened" @click="open('right')" />
         </template>
       </el-input>
     </div>
@@ -265,15 +265,15 @@ const shownRows = computed<HexRow[]>(() => {
 }
 
 .hex-box {
-  background: #101418;
+  background: var(--el-bg-color-page);
   border: 1px solid var(--el-border-color-lighter);
   border-radius: 6px;
   font-size: 12px;
   line-height: 1.7;
   max-height: 480px;
   overflow: auto;
-  color: #cfd8dc;
-  padding: 4px 6px;
+  color: var(--el-text-color-regular);
+  padding: 6px 8px;
 }
 .hex-head,
 .hex-row {
@@ -283,16 +283,16 @@ const shownRows = computed<HexRow[]>(() => {
 }
 .h-off {
   flex: 0 0 70px;
-  color: #78909c;
+  color: var(--el-text-color-secondary);
 }
 .h-side {
   flex: 0 0 246px;
-  color: #546e7a;
+  color: var(--el-text-color-secondary);
   text-align: center;
 }
 .h-asc {
   flex: 0 0 120px;
-  color: #90a4ae;
+  color: var(--el-text-color-secondary);
   letter-spacing: 2px;
 }
 .h-bytes {
@@ -304,7 +304,7 @@ const shownRows = computed<HexRow[]>(() => {
   text-align: center;
 }
 .byte.same {
-  color: #a5d6a7;
+  color: var(--el-color-success);
 }
 .byte.diff {
   color: var(--dk-st-differ);
@@ -322,10 +322,10 @@ const shownRows = computed<HexRow[]>(() => {
   border-radius: 2px;
 }
 .byte.dash {
-  color: #37474f;
+  color: var(--el-text-color-placeholder);
   background: transparent;
 }
 .hex-row:hover {
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--el-fill-color-light);
 }
 </style>

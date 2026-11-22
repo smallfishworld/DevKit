@@ -93,124 +93,138 @@ function loadHistory(item: HistoryItem): void {
 </script>
 
 <template>
-  <div class="panel calc-panel">
-    <div class="calc-main">
-      <!-- 输入区 -->
-      <div class="panel-section">
-        <div class="panel-row" style="margin-bottom: 10px">
-          <el-radio-group v-model="width" size="small">
-            <el-radio-button :value="8">8 bit</el-radio-button>
-            <el-radio-button :value="16">16 bit</el-radio-button>
-            <el-radio-button :value="32">32 bit</el-radio-button>
-            <el-radio-button :value="64">64 bit</el-radio-button>
-          </el-radio-group>
-          <span class="hint">输入表达式，回车存入历史；支持 0x/0o/0b 前缀</span>
-        </div>
-        <el-input
-          v-model="expr"
-          class="expr-input"
-          placeholder="例：0x1F & ~(1<<3) | (1<<5)"
-          autofocus
-          @keydown.enter="evaluate"
-        >
-          <template #prepend>表达式</template>
-        </el-input>
-        <div class="op-row">
-          <el-button
-            v-for="op in OP_BUTTONS"
-            :key="op"
-            size="small"
-            class="op-btn"
-            @click="insertOp(op)"
+  <div class="panel converter-page calc-page">
+    <header class="converter-head">
+      <div>
+        <h1>程序员计算器</h1>
+        <p>多进制实时转换、位运算表达式与 64 位 Bit 翻转</p>
+      </div>
+    </header>
+
+    <div class="calc-layout">
+      <div class="calc-main">
+        <!-- 输入区 -->
+        <div class="panel-section">
+          <div class="panel-row mb-12">
+            <el-radio-group v-model="width" size="small">
+              <el-radio-button :value="8">8 bit</el-radio-button>
+              <el-radio-button :value="16">16 bit</el-radio-button>
+              <el-radio-button :value="32">32 bit</el-radio-button>
+              <el-radio-button :value="64">64 bit</el-radio-button>
+            </el-radio-group>
+            <span class="hint">输入表达式，回车存入历史；支持 0x/0o/0b 前缀</span>
+          </div>
+          <el-input
+            v-model="expr"
+            class="expr-input"
+            placeholder="例：0x1F & ~(1<<3) | (1<<5)"
+            autofocus
+            @keydown.enter="evaluate"
           >
-            {{ op }}
-          </el-button>
-          <el-button size="small" type="primary" @click="evaluate">存入历史</el-button>
-        </div>
-        <div v-if="error" class="err-line">{{ error }}</div>
-        <div v-else-if="truncated" class="warn-line">
-          结果超出 {{ width }} 位，已按位宽截断
-        </div>
-      </div>
-
-      <!-- 进制显示 -->
-      <div class="panel-section">
-        <h3>数值显示</h3>
-        <div class="base-grid">
-          <div class="base-card">
-            <div class="base-label">HEX 十六进制</div>
-            <div class="base-value mono">{{ hexStr }}</div>
-          </div>
-          <div class="base-card">
-            <div class="base-label">DEC 无符号 / 有符号</div>
-            <div class="base-value mono">
-              {{ decUnsigned }} <span class="dec-signed">/ {{ decSigned }}</span>
-            </div>
-          </div>
-          <div class="base-card">
-            <div class="base-label">OCT 八进制</div>
-            <div class="base-value mono">{{ octStr }}</div>
-          </div>
-          <div class="base-card base-card-wide">
-            <div class="base-label">BIN 二进制（4 位分组）</div>
-            <div class="base-value mono bin">{{ binStr }}</div>
-          </div>
-        </div>
-      </div>
-
-      <!-- bit 编辑器 -->
-      <div class="panel-section">
-        <h3>Bit 编辑器（点击翻转）</h3>
-        <div class="bit-editor">
-          <div v-for="(bit, i) in bits" :key="bit.index" class="bit-cell-wrap">
-            <div
-              class="bit-cell mono"
-              :class="{ on: bit.on, gap: i % 8 === 7 && i !== bits.length - 1 }"
-              :title="'bit ' + bit.index"
-              @click="toggleBit(bit.index)"
+            <template #prepend>表达式</template>
+          </el-input>
+          <div class="op-row">
+            <el-button
+              v-for="op in OP_BUTTONS"
+              :key="op"
+              size="small"
+              class="op-btn"
+              @click="insertOp(op)"
             >
-              {{ bit.on ? 1 : 0 }}
+              {{ op }}
+            </el-button>
+            <el-button size="small" type="primary" @click="evaluate">存入历史</el-button>
+          </div>
+          <div v-if="error" class="err-line">{{ error }}</div>
+          <div v-else-if="truncated" class="warn-line">
+            结果超出 {{ width }} 位，已按位宽截断
+          </div>
+        </div>
+
+        <!-- 进制显示 -->
+        <div class="panel-section">
+          <h3>数值显示</h3>
+          <div class="base-grid">
+            <div class="base-card">
+              <div class="base-label">HEX 十六进制</div>
+              <div class="base-value mono">{{ hexStr }}</div>
             </div>
-            <div v-if="bit.index % 4 === 0" class="bit-idx">{{ bit.index }}</div>
-            <div v-else class="bit-idx-placeholder">&nbsp;</div>
+            <div class="base-card">
+              <div class="base-label">DEC 无符号 / 有符号</div>
+              <div class="base-value mono">
+                {{ decUnsigned }} <span class="dec-signed">/ {{ decSigned }}</span>
+              </div>
+            </div>
+            <div class="base-card">
+              <div class="base-label">OCT 八进制</div>
+              <div class="base-value mono">{{ octStr }}</div>
+            </div>
+            <div class="base-card base-card-wide">
+              <div class="base-label">BIN 二进制（4 位分组）</div>
+              <div class="base-value mono bin">{{ binStr }}</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- bit 编辑器 -->
+        <div class="panel-section">
+          <h3>Bit 编辑器（点击翻转）</h3>
+          <div class="bit-editor">
+            <div
+              v-for="(bit, i) in bits"
+              :key="bit.index"
+              class="bit-cell-wrap"
+              :class="{ gap: i % 8 === 7 && i !== bits.length - 1 }"
+            >
+              <div
+                class="bit-cell mono"
+                :class="{ on: bit.on }"
+                :title="'bit ' + bit.index"
+                @click="toggleBit(bit.index)"
+              >
+                {{ bit.on ? 1 : 0 }}
+              </div>
+              <div v-if="bit.index % 4 === 0" class="bit-idx">{{ bit.index }}</div>
+              <div v-else class="bit-idx-placeholder">&nbsp;</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 字节布局 -->
+        <div class="panel-section">
+          <h3>内存字节布局（{{ width / 8 }} 字节）</h3>
+          <div class="panel-row mb-8">
+            <el-tag size="small">大端 BE</el-tag>
+            <span v-for="(b, i) in layout.be" :key="'be' + i" class="byte-chip mono">{{ b }}</span>
+          </div>
+          <div class="panel-row">
+            <el-tag size="small" type="warning">小端 LE</el-tag>
+            <span v-for="(b, i) in layout.le" :key="'le' + i" class="byte-chip mono">{{ b }}</span>
           </div>
         </div>
       </div>
 
-      <!-- 字节布局 -->
-      <div class="panel-section">
-        <h3>内存字节布局（{{ width / 8 }} 字节）</h3>
-        <div class="panel-row" style="margin-bottom: 8px">
-          <el-tag size="small">大端 BE</el-tag>
-          <span v-for="(b, i) in layout.be" :key="'be' + i" class="byte-chip mono">{{ b }}</span>
+      <!-- 历史 -->
+      <div class="panel-section calc-history">
+        <h3>历史记录</h3>
+        <el-empty v-if="history.length === 0" description="无历史" :image-size="60" />
+        <div
+          v-for="(item, i) in history"
+          :key="i"
+          class="history-item"
+          @click="loadHistory(item)"
+        >
+          <div class="mono history-expr">{{ item.expr }}</div>
+          <div class="mono history-result">{{ item.hex }} · {{ item.dec }}</div>
         </div>
-        <div class="panel-row">
-          <el-tag size="small" type="warning">小端 LE</el-tag>
-          <span v-for="(b, i) in layout.le" :key="'le' + i" class="byte-chip mono">{{ b }}</span>
-        </div>
-      </div>
-    </div>
-
-    <!-- 历史 -->
-    <div class="panel-section calc-history">
-      <h3>历史记录</h3>
-      <el-empty v-if="history.length === 0" description="无历史" :image-size="60" />
-      <div
-        v-for="(item, i) in history"
-        :key="i"
-        class="history-item"
-        @click="loadHistory(item)"
-      >
-        <div class="mono history-expr">{{ item.expr }}</div>
-        <div class="mono history-result">{{ item.hex }} · {{ item.dec }}</div>
       </div>
     </div>
   </div>
 </template>
 
 <style scoped>
-.calc-panel {
-  flex-direction: row;
+.calc-layout {
+  display: flex;
   gap: 16px;
   align-items: flex-start;
 }
@@ -221,6 +235,14 @@ function loadHistory(item: HistoryItem): void {
   flex-direction: column;
   gap: 16px;
   min-width: 0;
+}
+
+.mb-12 {
+  margin-bottom: 12px;
+}
+
+.mb-8 {
+  margin-bottom: 8px;
 }
 
 .mono {
@@ -234,11 +256,11 @@ function loadHistory(item: HistoryItem): void {
 
 .expr-input :deep(.el-input__inner) {
   font-family: var(--font-mono);
-  font-size: 15px;
+  font-size: 14px;
 }
 
 .op-row {
-  margin-top: 10px;
+  margin-top: 12px;
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
@@ -246,7 +268,7 @@ function loadHistory(item: HistoryItem): void {
 
 .op-btn {
   font-family: var(--font-mono);
-  min-width: 42px;
+  min-width: 40px;
   margin: 0 !important;
 }
 
@@ -265,7 +287,7 @@ function loadHistory(item: HistoryItem): void {
 .base-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 10px;
+  gap: 12px;
 }
 
 .base-card {
@@ -301,21 +323,22 @@ function loadHistory(item: HistoryItem): void {
 .bit-editor {
   display: flex;
   flex-wrap: wrap;
-  row-gap: 2px;
+  row-gap: 4px;
 }
 
 .bit-cell-wrap {
   width: 30px;
-  margin-right: 2px;
+  margin-right: 4px;
 }
 
-.bit-cell.gap {
+/* 8 位字节分组间距加在外层容器，避免挤压每组最后 1 个 bit 格子宽度 */
+.bit-cell-wrap.gap {
   margin-right: 12px;
 }
 
 .bit-cell {
   height: 28px;
-  line-height: 28px;
+  line-height: 26px;
   text-align: center;
   border: 1px solid var(--el-border-color);
   border-radius: 4px;
@@ -336,8 +359,11 @@ function loadHistory(item: HistoryItem): void {
   font-weight: 700;
 }
 
-.bit-idx {
-  font-size: 10px;
+.bit-idx,
+.bit-idx-placeholder {
+  margin-top: 2px;
+  font-size: 11px;
+  line-height: 14px;
   text-align: center;
   color: var(--el-text-color-secondary);
 }
@@ -350,12 +376,13 @@ function loadHistory(item: HistoryItem): void {
   border: 1px solid var(--el-border-color);
   border-radius: 4px;
   background: var(--el-fill-color-light);
+  font-size: 12px;
 }
 
 .calc-history {
-  width: 280px;
+  width: 300px;
   flex-shrink: 0;
-  max-height: calc(100vh - 160px);
+  max-height: calc(100vh - 180px);
   overflow-y: auto;
 }
 
@@ -380,5 +407,16 @@ function loadHistory(item: HistoryItem): void {
   font-size: 12px;
   color: var(--el-text-color-secondary);
   margin-top: 4px;
+}
+
+@container (max-width: 860px) {
+  .calc-layout {
+    flex-direction: column;
+  }
+
+  .calc-history {
+    width: 100%;
+    max-height: 260px;
+  }
 }
 </style>

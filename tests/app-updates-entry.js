@@ -101,3 +101,12 @@ test('update entry exposes notices for a newer version and verified download', (
   assert.match(updateNotice({ phase: 'ready', release: update }), /已下载/)
   assert.equal(updateNotice({ phase: 'idle' }), '')
 })
+
+test('read-only release check works without Windows package format', () => {
+  const result = parseRelease({ ...release, assets: [] }, '0.9.0')
+  assert.equal(result.status, 'available')
+  assert.equal(result.update.version, '0.12.0')
+  assert.equal(result.update.notes, '## 更新内容\n\n- Windows 修复')
+  assert.equal(result.update.bytes, 0)
+  assert.equal(parseRelease({ ...release, assets: [] }, '0.12.0').status, 'current')
+})

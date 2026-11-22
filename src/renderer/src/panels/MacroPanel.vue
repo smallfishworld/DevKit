@@ -551,6 +551,7 @@ async function saveSettings(): Promise<void> {
       <div class="toolbar">
         <el-button
           v-if="!recording"
+          size="small"
           type="danger"
           :icon="Microphone"
           :disabled="playing"
@@ -558,10 +559,11 @@ async function saveSettings(): Promise<void> {
         >
           开始录制 ({{ settings?.hotkeyRecord ?? 'F9' }})
         </el-button>
-        <el-button v-else type="warning" :icon="SwitchButton" @click="stopRecord">
+        <el-button v-else size="small" type="warning" :icon="SwitchButton" @click="stopRecord">
           停止录制（已捕获 {{ recordCount }} 事件）
         </el-button>
         <el-button
+          size="small"
           type="primary"
           :icon="VideoPlay"
           :disabled="recording || playing || !current || current.steps.length === 0"
@@ -569,7 +571,7 @@ async function saveSettings(): Promise<void> {
         >
           回放当前 ({{ settings?.hotkeyPlay ?? 'F10' }})
         </el-button>
-        <el-button :icon="VideoPause" :disabled="!playing" @click="stopPlay">
+        <el-button size="small" :icon="VideoPause" :disabled="!playing" @click="stopPlay">
           停止回放 ({{ settings?.hotkeyStop ?? 'F11' }})
         </el-button>
         <el-divider direction="vertical" />
@@ -594,12 +596,12 @@ async function saveSettings(): Promise<void> {
         />
         <el-tag v-if="loops === 0" size="small" type="info">∞ 无限</el-tag>
         <el-divider direction="vertical" />
-        <el-button :icon="Setting" :disabled="recording || playing" @click="openSettings">
+        <el-button size="small" :icon="Setting" :disabled="recording || playing" @click="openSettings">
           设置
         </el-button>
-        <el-tag v-if="recording" type="danger" effect="dark">● 录制中</el-tag>
-        <el-tag v-else-if="playing" type="success" effect="dark">▶ 回放中</el-tag>
-        <el-tag v-else type="info">空闲</el-tag>
+        <el-tag v-if="recording" size="small" type="danger" effect="dark">● 录制中</el-tag>
+        <el-tag v-else-if="playing" size="small" type="success" effect="dark">▶ 回放中</el-tag>
+        <el-tag v-else size="small" type="info">空闲</el-tag>
       </div>
       <el-progress
         v-if="playing && progress"
@@ -952,6 +954,8 @@ async function saveSettings(): Promise<void> {
   display: flex;
   flex-direction: column;
   height: 100%;
+  max-width: 1480px;
+  margin-inline: auto;
   overflow: auto;
 }
 

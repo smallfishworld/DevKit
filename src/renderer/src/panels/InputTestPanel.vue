@@ -121,42 +121,49 @@ async function doInject(action: string, payload: unknown, label: string): Promis
 </script>
 
 <template>
-  <div class="panel">
+  <div class="panel converter-page">
+    <header class="converter-head">
+      <div>
+        <h1>键鼠输入测试</h1>
+        <p>全局键鼠事件捕获与 SendInput 注入自检</p>
+      </div>
+    </header>
+
     <div class="panel-section">
       <h3>原生模块状态</h3>
       <div v-if="selfTest" class="panel-row">
-        <el-tag :type="selfTest.koffiLoaded ? 'success' : 'danger'">
+        <el-tag size="small" :type="selfTest.koffiLoaded ? 'success' : 'danger'">
           koffi {{ selfTest.koffiLoaded ? '加载正常' : '加载失败' }}
         </el-tag>
-        <el-tag :type="selfTest.sendInputResolved ? 'success' : 'danger'">
+        <el-tag size="small" :type="selfTest.sendInputResolved ? 'success' : 'danger'">
           SendInput {{ selfTest.sendInputResolved ? '可用' : '不可用' }}
         </el-tag>
-        <el-tag :type="selfTest.inputStructSize === 40 ? 'success' : 'warning'">
+        <el-tag size="small" :type="selfTest.inputStructSize === 40 ? 'success' : 'warning'">
           sizeof(INPUT) = {{ selfTest.inputStructSize }}（x64 应为 40）
         </el-tag>
-        <el-tag :type="selfTest.uiohookLoaded ? 'success' : 'danger'">
+        <el-tag size="small" :type="selfTest.uiohookLoaded ? 'success' : 'danger'">
           uiohook {{ selfTest.uiohookLoaded ? '加载正常' : '加载失败' }}
         </el-tag>
-        <span v-if="selfTest.error" style="color: var(--el-color-danger)">
+        <span v-if="selfTest.error" class="err-text">
           {{ selfTest.error }}
         </span>
       </div>
-      <el-skeleton v-else :rows="1" animated style="width: 400px" />
+      <el-skeleton v-else :rows="1" animated class="skeleton-bar" />
     </div>
 
     <div class="panel-section">
       <h3>全局事件捕获</h3>
-      <div class="panel-row" style="margin-bottom: 10px">
-        <el-button v-if="!capturing" type="primary" @click="startCapture">开始捕获</el-button>
-        <el-button v-else type="danger" @click="stopCapture">停止捕获</el-button>
-        <el-checkbox v-model="ignoreMoves">忽略鼠标移动（只记录点击/按键）</el-checkbox>
-        <el-button text @click="clearEvents">清空</el-button>
-        <el-tag>累计 {{ total }} 个事件</el-tag>
-        <span v-if="capturing" style="color: var(--el-color-warning); font-size: 12px">
+      <div class="panel-row mb-12">
+        <el-button v-if="!capturing" size="small" type="primary" @click="startCapture">开始捕获</el-button>
+        <el-button v-else size="small" type="danger" @click="stopCapture">停止捕获</el-button>
+        <el-checkbox v-model="ignoreMoves" size="small">忽略鼠标移动（只记录点击/按键）</el-checkbox>
+        <el-button size="small" text @click="clearEvents">清空</el-button>
+        <el-tag size="small">累计 {{ total }} 个事件</el-tag>
+        <span v-if="capturing" class="warn-hint">
           正在捕获全局键鼠，切到任意窗口按键盘试试
         </span>
       </div>
-      <el-table :data="events" height="300" size="small" style="width: 100%">
+      <el-table :data="events" height="300" size="small" class="full-w">
         <el-table-column prop="seq" label="#" width="70" />
         <el-table-column prop="kind" label="类型" width="90" />
         <el-table-column prop="desc" label="事件" min-width="280" />
@@ -166,13 +173,13 @@ async function doInject(action: string, payload: unknown, label: string): Promis
 
     <div class="panel-section">
       <h3>事件注入</h3>
-      <div style="font-size: 12px; color: var(--el-text-color-secondary); margin-bottom: 10px">
+      <div class="hint mb-12">
         注入目标是当前拥有焦点的窗口。建议先打开一个记事本，再把本窗口摆在旁边点击按钮。
       </div>
-      <div class="panel-row" style="margin-bottom: 8px">
-        <span>X</span>
+      <div class="panel-row mb-8">
+        <span class="lbl">X</span>
         <el-input-number v-model="injX" :min="0" :max="7680" size="small" />
-        <span>Y</span>
+        <span class="lbl">Y</span>
         <el-input-number v-model="injY" :min="0" :max="4320" size="small" />
         <el-button size="small" @click="doInject('inject:move', { x: injX, y: injY }, '移动光标')">
           移动光标
@@ -192,18 +199,65 @@ async function doInject(action: string, payload: unknown, label: string): Promis
         </el-button>
       </div>
       <div class="panel-row">
-        <el-select v-model="injVk" size="small" style="width: 110px">
+        <el-select v-model="injVk" size="small" class="vk-select">
           <el-option v-for="opt in VK_OPTIONS" :key="opt.value" :label="opt.label" :value="opt.value" />
         </el-select>
         <el-button size="small" @click="doInject('inject:key', { vk: injVk }, '轻敲按键')">
           轻敲按键
         </el-button>
-        <el-input v-model="injText" size="small" style="width: 240px" />
+        <el-input v-model="injText" size="small" class="text-input" />
         <el-button size="small" @click="doInject('inject:text', { text: injText }, '注入文本')">
           打字
         </el-button>
-        <span v-if="lastResult" style="font-size: 12px; margin-left: 8px">{{ lastResult }}</span>
+        <span v-if="lastResult" class="result-text">{{ lastResult }}</span>
       </div>
     </div>
   </div>
 </template>
+
+<style scoped>
+.mb-12 {
+  margin-bottom: 12px;
+}
+
+.mb-8 {
+  margin-bottom: 8px;
+}
+
+.full-w {
+  width: 100%;
+}
+
+.skeleton-bar {
+  width: 400px;
+}
+
+.lbl,
+.hint {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+
+.warn-hint {
+  font-size: 12px;
+  color: var(--el-color-warning);
+}
+
+.err-text {
+  font-size: 12px;
+  color: var(--el-color-danger);
+}
+
+.vk-select {
+  width: 110px;
+}
+
+.text-input {
+  width: 240px;
+}
+
+.result-text {
+  font-size: 12px;
+  margin-left: 8px;
+}
+</style>

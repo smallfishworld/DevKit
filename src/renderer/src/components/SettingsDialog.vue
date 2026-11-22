@@ -103,16 +103,16 @@ h2 { margin:0; font-size:14px; }
 
 .follow-row { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:8px 10px; border:1px solid var(--el-border-color-lighter); border-radius:8px; background:var(--el-fill-color-lighter); cursor:pointer; }
 .follow-row strong { display:block; font-size:13px; }
-.follow-row small { display:block; margin-top:2px; font-size:11px; line-height:1.45; color:var(--el-text-color-secondary); }
+.follow-row small { display:block; margin-top:2px; font-size:12px; line-height:1.45; color:var(--el-text-color-secondary); }
 
 .theme-filter :deep(.el-input) { width:100%; }
 
 .theme-scroll { display:flex; flex-direction:column; gap:8px; max-height:min(56vh, 460px); overflow-y:auto; padding-right:2px; }
 
 /* 三列平铺：18 套配色一屏可见大半，滚动条只负责收尾；不用分组标题占高度 */
-.theme-grid { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:6px; }
+.theme-grid { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:8px; }
 /* 每个配色一块：色板条（背景 + 主色点 + 光标位）直观展示观感，不必再单开一个大预览框 */
-.theme-tile { position:relative; display:flex; flex-direction:column; align-items:stretch; gap:5px; min-width:0; padding:5px; border:1px solid var(--el-border-color); border-radius:8px; background:var(--el-bg-color); color:inherit; font:inherit; cursor:pointer; transition:border-color .15s ease, background .15s ease; }
+.theme-tile { position:relative; display:flex; flex-direction:column; align-items:stretch; gap:6px; min-width:0; padding:6px; border:1px solid var(--el-border-color); border-radius:8px; background:var(--el-bg-color); color:inherit; font:inherit; cursor:pointer; transition:border-color .15s ease, background .15s ease; }
 .theme-tile:hover { border-color:var(--el-color-primary-light-5); background:var(--el-fill-color-light); }
 .theme-tile[aria-pressed="true"] { border-color:var(--el-color-primary); background:var(--el-color-primary-light-9); }
 .theme-tile:focus-visible { outline:2px solid var(--el-color-primary); outline-offset:1px; }
@@ -121,12 +121,12 @@ h2 { margin:0; font-size:14px; }
 .swatch i { width:5px; height:10px; border-radius:1px; }
 .swatch em { width:4px; height:12px; margin-inline-start:auto; border-radius:1px; }
 
-.tile-name { min-width:0; padding:0 2px; overflow:hidden; font-size:11px; line-height:1.35; text-align:start; text-overflow:ellipsis; white-space:nowrap; }
-/* 选中勾落在色板右上角，不挤占名称文字宽度 */
-.tile-check { position:absolute; top:2px; right:2px; padding:1px; border-radius:999px; font-size:11px; color:var(--el-color-primary); background:var(--el-bg-color); }
+.tile-name { min-width:0; padding:0 2px; overflow:hidden; font-size:12px; line-height:1.35; text-align:start; text-overflow:ellipsis; white-space:nowrap; }
+/* 选中勾内缩至色板右上角内侧，不压边也不挤占名称宽度 */
+.tile-check { position:absolute; top:6px; right:6px; padding:2px; border-radius:999px; font-size:11px; color:var(--el-color-primary); background:var(--el-bg-color); }
 
 .empty { margin:4px 0; font-size:12px; color:var(--el-text-color-secondary); }
 
-footer { display:flex; align-items:center; justify-content:space-between; gap:8px; padding-top:8px; border-top:1px solid var(--el-border-color-lighter); font-size:11px; color:var(--el-text-color-secondary); }
+footer { display:flex; align-items:center; justify-content:space-between; gap:8px; padding-top:8px; border-top:1px solid var(--el-border-color-lighter); font-size:12px; color:var(--el-text-color-secondary); }
 .current { display:inline-flex; align-items:center; gap:5px; color:var(--el-text-color-regular); }
 </style>

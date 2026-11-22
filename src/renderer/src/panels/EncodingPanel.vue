@@ -133,7 +133,14 @@ async function copy(text: string): Promise<void> {
 </script>
 
 <template>
-  <div class="panel enc-panel">
+  <div class="panel converter-page enc-panel">
+    <header class="converter-head">
+      <div>
+        <h1>编码转换</h1>
+        <p>UTF-8 / GBK / UTF-16BE / Base64 / URL 实时互转</p>
+      </div>
+    </header>
+
     <div class="panel-section">
       <h3>文本 → 字节编码</h3>
       <el-input
@@ -142,11 +149,13 @@ async function copy(text: string): Promise<void> {
         :rows="3"
         placeholder="输入文本，下方实时显示各编码结果"
       />
-      <el-descriptions :column="2" border size="small" style="margin-top: 10px">
+      <el-descriptions :column="2" border size="small" class="enc-desc">
         <el-descriptions-item v-for="e in encodings" :key="e.name" :label="e.name">
-          <span class="mono wrap">{{ e.text }}</span>
-          <span class="hint" style="margin-left: 8px">{{ e.len }}</span>
-          <el-button size="small" text :icon="CopyDocument" @click="copy(e.text)" />
+          <div class="desc-cell">
+            <span class="mono wrap flex-1">{{ e.text }}</span>
+            <span v-if="e.len" class="hint">{{ e.len }}</span>
+            <el-button size="small" text :icon="CopyDocument" @click="copy(e.text)" />
+          </div>
         </el-descriptions-item>
       </el-descriptions>
     </div>
@@ -160,8 +169,8 @@ async function copy(text: string): Promise<void> {
         </el-radio-group>
         <el-input
           v-model="hexInput"
-          class="mono"
-          style="flex: 1"
+          size="small"
+          class="mono flex-1"
           placeholder="如 E5 B5 8C（空格/逗号/连续写法均可）"
           clearable
         />
@@ -170,38 +179,39 @@ async function copy(text: string): Promise<void> {
         v-if="hexInput && decoded.ok"
         type="success"
         :closable="false"
-        class="mono"
+        class="mono result-alert"
         :title="decoded.text || '(空)'"
-        style="margin-top: 10px"
       />
       <el-alert
         v-else-if="hexInput"
         type="error"
         :closable="false"
+        class="result-alert"
         title="HEX 格式非法或长度不是偶数"
-        style="margin-top: 10px"
       />
     </div>
 
-    <div class="panel-section">
-      <h3>Base64</h3>
-      <div class="row">
-        <span class="lbl">编码</span>
-        <span class="mono wrap" style="flex: 1">{{ b64 }}</span>
-        <el-button size="small" text :icon="CopyDocument" @click="copy(b64)" />
+    <div class="converter-split equal">
+      <div class="panel-section">
+        <h3>Base64</h3>
+        <div class="row">
+          <span class="lbl">编码</span>
+          <span class="mono wrap flex-1">{{ b64 }}</span>
+          <el-button size="small" text :icon="CopyDocument" @click="copy(b64)" />
+        </div>
+        <div class="row mt-8">
+          <span class="lbl">解码</span>
+          <el-input v-model="b64Input" size="small" class="mono flex-1" placeholder="粘贴 Base64" clearable />
+        </div>
+        <div v-if="b64Input" class="b64-out mono wrap">{{ b64Decoded ?? '(无效 Base64)' }}</div>
       </div>
-      <div class="row" style="margin-top: 8px">
-        <span class="lbl">解码</span>
-        <el-input v-model="b64Input" class="mono" style="flex: 1" placeholder="粘贴 Base64" clearable />
-        <span v-if="b64Input" class="mono wrap">{{ b64Decoded ?? '(无效 Base64)' }}</span>
-      </div>
-    </div>
 
-    <div class="panel-section">
-      <h3>URL 编码还原</h3>
-      <div class="row">
-        <span class="mono wrap" style="flex: 1">{{ urlDecoded ?? '(无效转义)' }}</span>
-        <el-button size="small" text :icon="CopyDocument" @click="copy(urlDecoded ?? '')" />
+      <div class="panel-section">
+        <h3>URL 编码还原</h3>
+        <div class="row">
+          <span class="mono wrap flex-1">{{ urlDecoded ?? '(无效转义)' }}</span>
+          <el-button size="small" text :icon="CopyDocument" @click="copy(urlDecoded ?? '')" />
+        </div>
       </div>
     </div>
   </div>
@@ -221,19 +231,51 @@ async function copy(text: string): Promise<void> {
   white-space: pre-wrap;
 }
 
+.flex-1 {
+  flex: 1;
+  min-width: 0;
+}
+
+.enc-desc {
+  margin-top: 12px;
+}
+
+.desc-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .row {
   display: flex;
   align-items: center;
   gap: 8px;
 }
 
+.mt-8 {
+  margin-top: 8px;
+}
+
+.result-alert {
+  margin-top: 12px;
+}
+
+.b64-out {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--el-fill-color-light);
+  font-size: 12px;
+}
+
 .lbl {
   font-size: 12px;
   color: var(--el-text-color-secondary);
-  flex: 0 0 34px;
+  flex: 0 0 36px;
 }
 
 .hint {
+  flex: none;
   font-size: 12px;
   color: var(--el-text-color-secondary);
 }

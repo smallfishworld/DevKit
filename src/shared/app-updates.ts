@@ -9,7 +9,7 @@ export interface UpdateRelease {
 
 export type UpdateState =
   | { phase: 'disabled' | 'idle' | 'checking' | 'current' | 'publishing' }
-  | { phase: 'available' | 'ready' | 'preparing'; release: UpdateRelease; message?: string }
+  | { phase: 'available' | 'ready' | 'preparing'; release: UpdateRelease; message?: string; installable?: boolean }
   | { phase: 'downloading'; release: UpdateRelease; received: number }
   | { phase: 'check-failed'; message: string }
 

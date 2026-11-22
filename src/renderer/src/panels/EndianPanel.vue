@@ -143,6 +143,7 @@ async function copy(text: string): Promise<void> {
       </div>
       <el-input
         v-model="bytesInput"
+        size="small"
         aria-label="HEX 字节序列"
         class="mono"
         placeholder="输入 HEX 字节，如 01 02 03 04（空格/逗号/连续写法均可）"
@@ -219,12 +220,11 @@ async function copy(text: string): Promise<void> {
       <div class="row">
         <el-input
           v-model="numInput"
-          class="mono"
-          style="width: 260px"
+          size="small"
+          class="mono fixed-input"
           aria-label="待编码数值" placeholder="十进制（支持负数补码）或 0x 十六进制"
           clearable
         />
-
       </div>
       <div class="converter-row">
         <el-button v-for="[label, value] in integerExamples" :key="label" size="small" @click="numInput = value">{{ label }}</el-button>
@@ -245,8 +245,8 @@ async function copy(text: string): Promise<void> {
       <div class="row">
         <el-input
           v-model="swapInput"
-          class="mono"
-          style="width: 260px"
+          size="small"
+          class="mono fixed-input"
           placeholder="HEX 值，如 12345678"
           clearable
         />
@@ -284,11 +284,11 @@ async function copy(text: string): Promise<void> {
 </template>
 
 <style scoped>
-.encoded-result { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:6px; margin-top:9px; }
-.encoded-result button { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:4px; padding:7px; border:1px solid var(--el-border-color-lighter); border-radius:6px; background:var(--el-bg-color-page); color:inherit; cursor:pointer; text-align:start; }
+.encoded-result { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:8px; margin-top:12px; }
+.encoded-result button { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:4px; padding:8px; border:1px solid var(--el-border-color-lighter); border-radius:6px; background:var(--el-bg-color-page); color:inherit; cursor:pointer; text-align:start; }
 .encoded-result button:hover { border-color:var(--el-color-primary); }
 .encoded-result span { grid-column:1/-1; font-size:12px; color:var(--el-text-color-secondary); }
-.encoded-result code { overflow-wrap:anywhere; }
+.encoded-result code { overflow-wrap:anywhere; font-size:12px; }
 .endian-panel {
   overflow: auto;
 }
@@ -297,10 +297,14 @@ async function copy(text: string): Promise<void> {
   font-family: var(--font-mono);
 }
 
+.fixed-input {
+  width: min(280px, 100%);
+}
+
 .tbl-title {
   font-size: 13px;
   font-weight: 600;
-  margin: 12px 0 6px;
+  margin: 12px 0 8px;
 }
 
 .row {
@@ -313,15 +317,15 @@ async function copy(text: string): Promise<void> {
   font-size: 12px;
   color: var(--el-text-color-secondary);
 }
-.byte-table { min-width:0; overflow:auto; border:1px solid var(--el-border-color-lighter); border-radius:7px; }
+.byte-table { min-width:0; overflow:auto; border:1px solid var(--el-border-color-lighter); border-radius:8px; }
 .byte-table table { width:100%; border-collapse:collapse; font-size:12px; }
-.byte-table :is(th, td) { padding:7px 9px; text-align:start; white-space:nowrap; border-bottom:1px solid var(--el-border-color-lighter); }
+.byte-table :is(th, td) { padding:8px 10px; text-align:start; white-space:nowrap; border-bottom:1px solid var(--el-border-color-lighter); }
 .byte-table th { background:var(--el-bg-color-page); color:var(--el-text-color-secondary); font-weight:600; }
 .byte-table tbody tr:last-child td { border-bottom:0; }
 .byte-table tbody tr:hover { background:var(--el-fill-color-light); }
-.byte-table .el-button { min-height:22px; margin-inline-start:3px; padding:2px 4px; }
-.byte-lane { display:flex; align-items:center; flex-wrap:wrap; gap:4px; margin:10px 0; padding:8px; background:var(--el-bg-color-page); border:1px solid var(--el-border-color-lighter); border-radius:7px; }
-.byte-lane > span { display:grid; justify-items:center; min-width:30px; padding:3px; border-radius:5px; background:var(--el-fill-color-light); }
-.byte-lane small { font-size:10px; color:var(--el-text-color-secondary); }
+.byte-table .el-button { min-height:22px; margin-inline-start:4px; padding:2px 4px; vertical-align:middle; }
+.byte-lane { display:flex; align-items:center; flex-wrap:wrap; gap:4px; margin:12px 0; padding:8px; background:var(--el-bg-color-page); border:1px solid var(--el-border-color-lighter); border-radius:8px; }
+.byte-lane > span { display:grid; justify-items:center; min-width:32px; padding:4px; border-radius:6px; background:var(--el-fill-color-light); }
+.byte-lane small { font-size:11px; color:var(--el-text-color-secondary); }
 .byte-lane > .highlighted { background:var(--el-color-primary-light-8); color:var(--el-color-primary); }
 </style>

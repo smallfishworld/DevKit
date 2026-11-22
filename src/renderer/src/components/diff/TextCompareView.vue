@@ -518,7 +518,7 @@ onMounted(() => void consumePending())
         @drop="onDropFiles('left', $event)"
       >
         <template #append>
-          <el-button :icon="FolderOpened" @click="openFile('left')" />
+          <el-button size="small" :icon="FolderOpened" @click="openFile('left')" />
         </template>
       </el-input>
       <el-button size="small" text title="交换左右" @click="swapSides">⇄</el-button>
@@ -535,7 +535,7 @@ onMounted(() => void consumePending())
         @drop="onDropFiles('right', $event)"
       >
         <template #append>
-          <el-button :icon="FolderOpened" @click="openFile('right')" />
+          <el-button size="small" :icon="FolderOpened" @click="openFile('right')" />
         </template>
       </el-input>
     </div>
@@ -698,7 +698,7 @@ onMounted(() => void consumePending())
   margin-top: 8px;
 }
 .sbs-box {
-  background: #101418;
+  background: var(--el-bg-color-page);
   border: 1px solid var(--el-border-color-lighter);
   border-radius: 6px 6px 0 0;
   max-height: 60vh;
@@ -706,7 +706,7 @@ onMounted(() => void consumePending())
   font-family: var(--font-mono);
   font-size: 12px;
   line-height: 1.6;
-  color: #cfd8dc;
+  color: var(--el-text-color-regular);
 }
 .sbs-row {
   display: grid;
@@ -717,7 +717,7 @@ onMounted(() => void consumePending())
   min-height: 1.6em;
 }
 .c-no {
-  color: #546e7a;
+  color: var(--el-text-color-placeholder);
   text-align: right;
   padding: 0 6px;
   user-select: none;
@@ -768,20 +768,20 @@ onMounted(() => void consumePending())
 /* 中缝复制按钮：悬停行出现 */
 .c-gap {
   position: relative;
-  border-left: 1px solid #232b34;
-  border-right: 1px solid #232b34;
+  border-left: 1px solid var(--el-border-color-lighter);
+  border-right: 1px solid var(--el-border-color-lighter);
 }
 .cp {
   position: absolute;
   top: 1px;
-  width: 17px;
-  height: 17px;
-  line-height: 15px;
+  width: 18px;
+  height: 18px;
+  line-height: 16px;
   text-align: center;
   background: var(--el-color-primary);
   color: #fff;
   border-radius: 4px;
-  font-size: 10px;
+  font-size: 11px;
   cursor: pointer;
   display: none;
   z-index: 3;
@@ -805,10 +805,10 @@ onMounted(() => void consumePending())
   border-top: 1px solid var(--el-border-color-lighter);
   border-bottom: 1px solid var(--el-border-color-lighter);
   font-family: var(--el-font-family, sans-serif);
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--el-text-color-secondary);
   align-items: center;
-  min-height: 24px;
+  min-height: 26px;
   user-select: none;
 }
 .h-title {
@@ -826,14 +826,14 @@ onMounted(() => void consumePending())
   background: none;
   border: 1px solid var(--el-border-color);
   color: var(--el-text-color-secondary);
-  font-size: 11px;
+  font-size: 12px;
   border-radius: 4px;
-  padding: 1px 8px;
+  padding: 2px 8px;
   cursor: pointer;
 }
 .h-btn:hover {
   border-color: var(--el-color-primary);
-  color: #fff;
+  color: var(--el-color-primary);
 }
 
 /* 折叠相同区 */
@@ -844,8 +844,8 @@ onMounted(() => void consumePending())
 }
 .fold-pill {
   display: inline-block;
-  padding: 1px 14px;
-  font-size: 11.5px;
+  padding: 2px 12px;
+  font-size: 12px;
   color: var(--el-text-color-secondary);
   background: var(--el-fill-color-light);
   border: 1px solid var(--el-border-color-lighter);

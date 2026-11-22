@@ -152,14 +152,20 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="panel">
+  <div class="panel converter-page">
+    <header class="converter-head">
+      <div>
+        <h1>TFTP 服务器</h1>
+        <p>RFC1350 固件传输服务，支持多实例独立端口与网卡绑定</p>
+      </div>
+    </header>
     <!-- 配置区 -->
     <div class="panel-section">
       <h3>服务器配置</h3>
       <div class="panel-row">
-        <span>端口</span>
+        <span class="lbl">端口</span>
         <el-input-number v-model="port" :min="1" :max="65535" :disabled="running" size="small" />
-        <span>本机 IP</span>
+        <span class="lbl">本机 IP</span>
         <el-select v-model="address" :disabled="running" size="small" style="width: 210px">
           <el-option value="0.0.0.0" label="全部网卡 (0.0.0.0)" />
           <el-option
@@ -169,7 +175,7 @@ onUnmounted(() => {
             :label="`${ip.address}（${ip.name}）`"
           />
         </el-select>
-        <span>根目录</span>
+        <span class="lbl">根目录</span>
         <el-input
           v-model="root"
           size="small"
@@ -191,7 +197,7 @@ onUnmounted(() => {
           启动
         </el-button>
         <el-button v-else type="danger" size="small" @click="stopServer">停止</el-button>
-        <el-tag :type="running ? 'success' : 'info'">
+        <el-tag size="small" :type="running ? 'success' : 'info'">
           {{ running ? `运行中 ${address}:${port}` : '已停止' }}
         </el-tag>
       </div>
@@ -221,7 +227,7 @@ onUnmounted(() => {
       <el-alert
         type="info"
         :closable="false"
-        style="margin-top: 10px"
+        class="fw-alert"
         title="防火墙提示"
         :description="FIREWALL_HINT"
       />
@@ -284,12 +290,21 @@ onUnmounted(() => {
   font-family: var(--font-mono);
 }
 
+.lbl {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+
+.fw-alert {
+  margin-top: 12px;
+}
+
 .server-ip-row {
-  margin-top: 10px;
+  margin-top: 12px;
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 8px;
   font-size: 12px;
   color: var(--el-text-color-regular);
 }

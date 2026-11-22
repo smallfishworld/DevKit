@@ -177,7 +177,7 @@ function shiftTimestamp(delta: number): void {
     <div class="converter-split">
       <section class="panel-section">
         <h3>时间戳 → 日期时间</h3>
-        <el-input v-model="tsInput" class="mono" aria-label="输入时间戳" placeholder="输入时间戳或日期字符串" clearable />
+        <el-input v-model="tsInput" size="small" class="mono" aria-label="输入时间戳" placeholder="输入时间戳或日期字符串" clearable />
         <div class="converter-row">
           <el-button size="small" @click="useNowSec">当前秒</el-button>
           <el-button size="small" @click="useNow">当前毫秒</el-button>
@@ -228,18 +228,18 @@ function shiftTimestamp(delta: number): void {
 
 <style scoped>
 .mono, code { font-family:var(--font-mono); }
-.calendar-fields { display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; }
+.calendar-fields { display:flex; flex-wrap:wrap; gap:8px; margin-top:12px; }
 .calendar-fields label { display:grid; gap:4px; font-size:12px; color:var(--el-text-color-secondary); }
-.calendar-fields input { color:var(--el-text-color-primary); background:var(--el-fill-color-blank); border:1px solid var(--el-border-color); border-radius:5px; font:inherit; padding:5px 8px; }
-.calendar-fields input[type="number"] { width:80px; }
+.calendar-fields input { height:28px; color:var(--el-text-color-primary); background:var(--el-fill-color-blank); border:1px solid var(--el-border-color); border-radius:6px; font:inherit; padding:4px 8px; }
+.calendar-fields input[type="number"] { width:84px; }
 .calendar-error { color:var(--el-color-danger); font-size:12px; }
-.clock-strip { display:flex; align-items:center; flex-wrap:wrap; gap:8px; padding:9px 12px; background:var(--el-bg-color-overlay); border:1px solid var(--el-border-color-lighter); border-radius:8px; font-size:12px; }
+.clock-strip { display:flex; align-items:center; flex-wrap:wrap; gap:8px; padding:10px 12px; background:var(--el-bg-color-overlay); border:1px solid var(--el-border-color-lighter); border-radius:8px; font-size:12px; }
 .clock-strip .el-button { margin:0; }
 .clock-state { color:var(--el-color-success); }
-.clock-actions { display:flex; gap:5px; margin-inline-start:auto; }
+.clock-actions { display:flex; gap:8px; margin-inline-start:auto; }
 .clock-local { color:var(--el-text-color-secondary); }
-.result-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(160px, 1fr)); gap:8px; margin-top:10px; }
-.result-item { display:grid; gap:4px 10px; grid-template-columns:minmax(0,1fr) auto; padding:8px 10px; border:1px solid var(--el-border-color-lighter); border-radius:7px; background:var(--el-bg-color-page); color:inherit; text-align:start; cursor:pointer; }
+.result-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(168px, 1fr)); gap:8px; margin-top:12px; }
+.result-item { display:grid; align-items:center; gap:4px 8px; grid-template-columns:minmax(0,1fr) auto; padding:8px 10px; border:1px solid var(--el-border-color-lighter); border-radius:8px; background:var(--el-bg-color-page); color:inherit; text-align:start; cursor:pointer; }
 .result-item:hover { border-color:var(--el-color-primary); }
 .result-item span { grid-column:1/-1; color:var(--el-text-color-secondary); font-size:12px; }
 .result-item code { overflow-wrap:anywhere; }

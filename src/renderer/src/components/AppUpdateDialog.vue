@@ -1,19 +1,27 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { APP_UPDATES, APP_UPDATES_PANEL, updateNotice, type UpdateState } from '../../../shared/app-updates'
 
 defineProps<{ currentVersion: string }>()
 
-const state = ref<UpdateState>({ phase: 'disabled' })
+const emit = defineEmits<{
+  (e: 'state-change', state: UpdateState): void
+}>()
+
+const state = ref<UpdateState>({ phase: 'idle' })
 const dialog = ref<HTMLDialogElement>()
 const invocationError = ref('')
 const release = computed(() => 'release' in state.value ? state.value.release : undefined)
+const installable = computed(() =>
+  state.value.phase === 'available' ? state.value.installable !== false : true
+)
 const activity = computed(() => ['checking', 'downloading', 'preparing'].includes(state.value.phase))
 const highlighted = computed(() => state.value.phase === 'available' || state.value.phase === 'ready')
 const notice = computed(() => updateNotice(state.value))
 const message = computed(() => invocationError.value || ('message' in state.value ? state.value.message : ''))
-const buttonLabel = computed(() => highlighted.value ? notice.value : '应用更新')
 let unsubscribe: (() => void) | undefined
+
+watch(state, (val) => emit('state-change', val), { immediate: true })
 
 onMounted(async () => {
   let receivedEvent = false
@@ -25,7 +33,7 @@ onMounted(async () => {
     const initial = await window.api.invoke(APP_UPDATES, 'state', APP_UPDATES_PANEL) as UpdateState
     if (!receivedEvent) state.value = initial
   } catch {
-    // An older or development backend may not expose the service.
+    // 兼容旧版或未挂载更新服务的后端
   }
 })
 onUnmounted(() => unsubscribe?.())
@@ -42,85 +50,72 @@ async function run(action: 'check' | 'download' | 'restart' | 'save' | 'release'
   }
 }
 
-function show(): void {
+function show(autoCheck = true): void {
   dialog.value?.showModal()
-  if (state.value.phase === 'idle') void run('check')
+  if (autoCheck && (state.value.phase === 'idle' || state.value.phase === 'current' || state.value.phase === 'check-failed')) {
+    void run('check')
+  }
 }
+
+defineExpose({ show, run })
 </script>
 
 <template>
-  <button
-    v-if="state.phase !== 'disabled'"
-    type="button"
-    class="update-entry"
-    :class="{ 'has-update': highlighted }"
-    aria-haspopup="dialog"
-    @click="show"
-  >
-    <span role="status">{{ buttonLabel }}</span>
-  </button>
+  <Teleport to="body">
+    <dialog ref="dialog" class="update-dialog" aria-labelledby="app-update-title">
+      <h2 id="app-update-title">DevKit 应用更新</h2>
+      <p class="update-version">当前版本 v{{ currentVersion || '…' }}</p>
+      <p class="update-status" role="status">{{ notice || '点击下方按钮检查 GitHub 最新稳定版本。' }}</p>
 
-  <dialog ref="dialog" class="update-dialog" aria-labelledby="app-update-title">
-    <h2 id="app-update-title">DevKit 应用更新</h2>
-    <p class="update-version">当前版本 {{ currentVersion || '…' }}</p>
-    <p class="update-status" role="status">{{ notice }}</p>
+      <section v-if="release" aria-labelledby="app-update-notes">
+        <h3 id="app-update-notes">v{{ release.version }} 更新内容</h3>
+        <p class="update-notes" tabindex="0">{{ release.notes || '此版本未提供更新说明。' }}</p>
+        <button type="button" class="update-link" @click="run('release')">在 GitHub 查看发布说明</button>
+      </section>
 
-    <section v-if="release" aria-labelledby="app-update-notes">
-      <h3 id="app-update-notes">v{{ release.version }} 更新内容</h3>
-      <p class="update-notes" tabindex="0">{{ release.notes || '此版本未提供更新说明。' }}</p>
-      <button type="button" class="update-link" @click="run('release')">在 GitHub 查看发布说明</button>
-    </section>
+      <progress
+        v-if="state.phase === 'downloading'"
+        :value="state.received"
+        :max="state.release.bytes"
+        aria-label="更新包下载进度"
+      />
+      <p v-if="state.phase === 'ready'" class="update-restart-note">
+        重启会结束当前的串口、SSH 和传输会话。
+      </p>
+      <p v-else-if="state.phase === 'available' && !installable" class="update-restart-note">
+        当前运行环境仅支持检查版本，请前往 GitHub Releases 下载对应安装包。
+      </p>
+      <p class="update-message" role="status">{{ message && message !== notice ? message : '' }}</p>
 
-    <progress
-      v-if="state.phase === 'downloading'"
-      :value="state.received"
-      :max="state.release.bytes"
-      aria-label="更新包下载进度"
-    />
-    <p v-if="state.phase === 'ready'" class="update-restart-note">
-      重启会结束当前的串口、SSH 和传输会话。
-    </p>
-    <p class="update-message" role="status">{{ message && message !== notice ? message : '' }}</p>
-
-    <div class="update-actions">
-      <form method="dialog">
-        <button type="submit" autofocus>{{ highlighted || activity ? '稍后' : '关闭' }}</button>
-      </form>
-      <button v-if="state.phase === 'ready'" type="button" @click="run('save')">另存更新包</button>
-      <button v-if="state.phase === 'ready'" type="button" class="primary" @click="run('restart')">重启并更新</button>
-      <button v-else-if="state.phase === 'available'" type="button" class="primary" @click="run('download')">
-        下载更新 <span class="update-size">{{ (state.release.bytes / 1024 ** 2).toFixed(1) }} MB</span>
-      </button>
-      <button v-else type="button" class="primary" :disabled="activity" @click="run('check')">检查更新</button>
-    </div>
-  </dialog>
+      <div class="update-actions">
+        <form method="dialog">
+          <button type="submit" autofocus>{{ highlighted || activity ? '稍后' : '关闭' }}</button>
+        </form>
+        <button v-if="state.phase === 'ready'" type="button" @click="run('save')">另存更新包</button>
+        <button v-if="state.phase === 'ready'" type="button" class="primary" @click="run('restart')">重启并更新</button>
+        <button
+          v-else-if="state.phase === 'available' && installable"
+          type="button"
+          class="primary"
+          @click="run('download')"
+        >
+          下载更新 <span class="update-size">{{ (state.release.bytes / 1024 ** 2).toFixed(1) }} MB</span>
+        </button>
+        <button
+          v-else-if="state.phase === 'available' && !installable"
+          type="button"
+          class="primary"
+          @click="run('release')"
+        >
+          前往 GitHub 下载
+        </button>
+        <button v-else type="button" class="primary" :disabled="activity" @click="run('check')">检查更新</button>
+      </div>
+    </dialog>
+  </Teleport>
 </template>
 
 <style scoped>
-.update-entry {
-  -webkit-app-region: no-drag;
-  align-self: center;
-  flex: none;
-  min-height: 30px;
-  padding: 4px 8px;
-  color: var(--el-text-color-secondary);
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.update-entry:hover {
-  background: var(--el-fill-color);
-}
-
-.update-entry.has-update {
-  color: var(--el-color-warning);
-  border-color: var(--el-color-warning-light-5);
-  background: var(--el-color-warning-light-9);
-}
-
 .update-dialog {
   width: min(560px, calc(100vw - 48px));
   max-height: calc(100dvh - 64px);
@@ -142,12 +137,14 @@ function show(): void {
 
 .update-dialog h2 {
   margin: 0 0 8px;
-  font-size: 19px;
+  font-size: 20px;
+  font-weight: 600;
 }
 
 .update-dialog h3 {
-  margin: 18px 0 6px;
+  margin: 16px 0 8px;
   font-size: 14px;
+  font-weight: 600;
 }
 
 .update-version,
@@ -159,6 +156,7 @@ function show(): void {
 
 .update-status {
   margin: 12px 0;
+  font-size: 13px;
 }
 
 .update-notes {
@@ -170,6 +168,7 @@ function show(): void {
   overflow-wrap: anywhere;
   border: 1px solid var(--el-border-color);
   border-radius: 6px;
+  font-size: 13px;
   line-height: 1.6;
 }
 
@@ -182,6 +181,7 @@ function show(): void {
 .update-message:not(:empty) {
   color: var(--el-text-color-primary);
   margin: 10px 0 0;
+  font-size: 13px;
 }
 
 .update-message:empty {
@@ -204,6 +204,7 @@ function show(): void {
   border-radius: 6px;
   color: var(--el-text-color-primary);
   background: var(--el-bg-color);
+  font-size: 13px;
   cursor: pointer;
 }
 
@@ -222,7 +223,7 @@ function show(): void {
   border-color: transparent;
   background: transparent;
   padding-inline: 0;
-  margin-bottom: 10px;
+  margin-bottom: 8px;
   text-decoration: underline;
   color: var(--el-text-color-secondary);
 }
@@ -232,7 +233,6 @@ function show(): void {
   font-size: 12px;
 }
 
-.update-entry:focus-visible,
 .update-dialog :focus-visible {
   outline: 2px solid var(--el-color-primary);
   outline-offset: 2px;

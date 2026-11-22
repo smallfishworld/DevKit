@@ -20,7 +20,7 @@ export class AppUpdateService implements ToolService {
     private readonly target: InstallTarget | undefined = getInstallTarget(),
     private readonly feed = new GitHubReleases(fetch)
   ) {
-    this.state = { phase: target ? 'idle' : 'disabled' }
+    this.state = { phase: 'idle' }
     this.initialized = this.restore()
   }
 
@@ -93,14 +93,14 @@ export class AppUpdateService implements ToolService {
 
   private async check(): Promise<UpdateState> {
     await this.initialized
-    if (!this.target || this.busy || this.state.phase === 'ready' || this.state.phase === 'preparing') return this.state
+    if (this.busy || this.state.phase === 'ready' || this.state.phase === 'preparing') return this.state
     this.busy = true
     this.setState({ phase: 'checking' })
     try {
-      const result = await this.feed.latest(this.current, this.target.format)
+      const result = await this.feed.latest(this.current, this.target?.format)
       this.candidate = result.status === 'available' ? result.update : undefined
       this.setState(result.status === 'available'
-        ? { phase: 'available', release: result.update }
+        ? { phase: 'available', release: result.update, installable: Boolean(this.target) }
         : { phase: result.status })
     } catch (error) {
       const message = error instanceof Error && error.message.startsWith('GitHub') ? error.message : '无法连接 GitHub，请稍后重试。'

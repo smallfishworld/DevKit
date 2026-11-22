@@ -48,7 +48,8 @@ async function onSearchKey(event: KeyboardEvent): Promise<void> {
 }
 
 function onShortcut(event: KeyboardEvent): void {
-  if (!event.ctrlKey || event.altKey || event.shiftKey || event.metaKey || event.isComposing || event.key.toLowerCase() !== 'k') return
+  const mod = event.ctrlKey || event.metaKey
+  if (!mod || event.altKey || event.shiftKey || event.isComposing || event.key.toLowerCase() !== 'k') return
   if (document.querySelector('dialog[open], .el-overlay-dialog:not([aria-hidden="true"]) .el-dialog') && !dialog.value?.open) {
     const active = document.activeElement
     if (active?.closest('.el-dialog, dialog[open]')) return

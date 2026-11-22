@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue'
-import { Brush } from '@element-plus/icons-vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { Brush, Download, Refresh } from '@element-plus/icons-vue'
 import brandMark from '../../../resources/branding/mark.svg'
 import { PLUGIN_CATALOG_PANEL, useDevicePlugins } from '@renderer/stores/devicePlugins'
 import type { PluginLogEntry, PluginRuntimeStatus } from '../../shared/plugins'
+import { updateNotice, type UpdateState } from '../../shared/app-updates'
 import { useTabStore } from '@renderer/stores/tabs'
 import { useAppearanceStore } from '@renderer/stores/appearance'
 import { toolById, type ToolDef } from '@renderer/tools/registry'
@@ -16,6 +17,32 @@ import type { WinInfo } from '../../shared/types'
 
 const tabs = useTabStore()
 const devicePlugins = useDevicePlugins()
+const tabBarRef = ref<InstanceType<typeof TabBar>>()
+const updateDialogRef = ref<InstanceType<typeof AppUpdateDialog>>()
+const aboutOpen = ref(false)
+const updateState = ref<UpdateState>({ phase: 'idle' })
+
+const hasUpdateHighlight = computed(
+  () => updateState.value.phase === 'available' || updateState.value.phase === 'ready'
+)
+
+const updateStatusLabel = computed(() => {
+  const s = updateState.value
+  if (s.phase === 'ready') return `v${s.release.version} 已下载 · 重启更新`
+  if (s.phase === 'available') return `发现新版本 v${s.release.version}`
+  if (s.phase === 'checking') return '检查更新中…'
+  if (s.phase === 'downloading') return '下载更新中…'
+  if (s.phase === 'preparing') return '准备更新…'
+  return winInfo.value.version ? `v${winInfo.value.version}` : '检查更新'
+})
+
+const aboutUpdateHint = computed(() => updateNotice(updateState.value) || '检查 GitHub 最新版本')
+
+function openUpdateDialog(): void {
+  aboutOpen.value = false
+  updateDialogRef.value?.show()
+}
+
 let pluginSubscriptions: (() => void)[] = []
 let pluginRefreshTimer: ReturnType<typeof setTimeout> | undefined
 
@@ -31,12 +58,33 @@ onUnmounted(() => {
   pluginSubscriptions.forEach((stop) => stop())
   clearTimeout(pluginRefreshTimer)
 })
+
 const appearance = useAppearanceStore()
 const settingsOpen = ref(false)
 const extensions: ToolDef = {
-  id: 'extensions', name: '扩展中心', icon: 'Box', description: '内置模块目录',
-  component: ExtensionCenter, singleton: true, phase: '', ready: true
+  id: 'extensions',
+  name: '扩展中心',
+  icon: 'Box',
+  description: '内置模块目录',
+  component: ExtensionCenter,
+  singleton: true,
+  phase: '',
+  ready: true
 }
+
+const activeConnectionsText = computed(() => {
+  const list = tabs.connectedSessions
+  if (!list.length) return ''
+  const labels: Record<string, string> = { serial: '串口', ssh: 'SSH', 'local-terminal': '终端' }
+  const counts = new Map<string, number>()
+  for (const tab of list) {
+    const label = labels[tab.toolId] ?? tab.toolId
+    counts.set(label, (counts.get(label) ?? 0) + 1)
+  }
+  return Array.from(counts.entries())
+    .map(([name, count]) => `${name} ${count}`)
+    .join(' · ')
+})
 
 function compFor(toolId: string) {
   if (toolId === 'home') return HomePanel
@@ -76,11 +124,12 @@ onMounted(() => {
   <div class="app-shell">
     <!-- 无边框标题栏：整条可拖动，交互元素 no-drag；Windows 下双击拖动区原生最大化/还原 -->
     <header class="app-header">
-      <el-popover placement="bottom-start" :width="264" trigger="click">
+      <el-popover v-model:visible="aboutOpen" placement="bottom-start" :width="276" trigger="click">
         <template #reference>
-          <button class="app-logo" title="版本信息">
-            <img :src="brandMark" class="app-brand-mark" width="24" height="20" alt="" aria-hidden="true" draggable="false" />
+          <button class="app-logo" :title="hasUpdateHighlight ? updateStatusLabel : '版本信息与检查更新'">
+            <img :src="brandMark" class="app-brand-mark" width="22" height="18" alt="" aria-hidden="true" draggable="false" />
             <span>DevKit</span>
+            <span v-if="hasUpdateHighlight" class="logo-update-dot" aria-label="有可用更新" />
           </button>
         </template>
         <div class="about-box">
@@ -91,15 +140,33 @@ onMounted(() => {
           <div class="about-row"><span>Chromium</span><span class="mono">{{ winInfo.chrome }}</span></div>
           <div class="about-row"><span>Node.js</span><span class="mono">{{ winInfo.node }}</span></div>
           <el-divider style="margin: 10px 0" />
-          <div class="about-copy">{{ winInfo.platform }} · 离线可用</div>
+          <div class="about-update-row">
+            <span class="about-copy" :class="{ 'is-highlight': hasUpdateHighlight }">{{ aboutUpdateHint }}</span>
+            <el-button size="small" :type="hasUpdateHighlight ? 'primary' : undefined" @click="openUpdateDialog">
+              {{ hasUpdateHighlight ? '查看更新' : '检查更新' }}
+            </el-button>
+          </div>
         </div>
       </el-popover>
-      <AppUpdateDialog :current-version="winInfo.version" />
       <span class="header-divider" aria-hidden="true"></span>
-      <TabBar />
-      <button class="header-action" title="扩展中心" @click="tabs.openTool(extensions)">
+      <TabBar ref="tabBarRef" />
+      <button
+        v-if="hasUpdateHighlight"
+        type="button"
+        class="header-action header-update"
+        :title="updateStatusLabel"
+        @click="openUpdateDialog"
+      >
+        <el-icon><Refresh v-if="updateState.phase === 'ready'" /><Download v-else /></el-icon>
+        <span>{{ updateState.phase === 'ready' ? '重启更新' : '有新版本' }}</span>
+      </button>
+      <button
+        class="header-action"
+        :class="{ active: tabs.active?.toolId === extensions.id }"
+        title="扩展中心"
+        @click="tabs.openTool(extensions)"
+      >
         <el-icon><Box /></el-icon><span>扩展</span>
-
       </button>
       <SettingsDialog v-model="settingsOpen">
         <button class="header-action" title="外观与终端配色" :aria-expanded="settingsOpen">
@@ -119,7 +186,6 @@ onMounted(() => {
       </div>
     </header>
 
-
     <main class="app-body">
       <section
         v-for="tab in tabs.tabs"
@@ -132,18 +198,111 @@ onMounted(() => {
     </main>
 
     <footer v-if="tabs.active?.toolId !== 'serial'" class="app-status">
-      {{ tabs.active?.title ?? 'DevKit' }}
+      <div class="status-left">
+        <span class="status-title">{{ tabs.active?.title ?? 'DevKit' }}</span>
+        <span v-if="activeConnectionsText" class="status-pill">
+          <i class="status-dot" aria-hidden="true"></i>
+          {{ activeConnectionsText }}
+        </span>
+      </div>
+      <div class="status-right">
+        <button type="button" class="status-btn" title="快速打开工具或切换会话" @click="tabBarRef?.openLauncher()">
+          <kbd>Ctrl+K</kbd> 快速切换
+        </button>
+        <button type="button" class="status-btn" title="切换外观与终端配色" @click="settingsOpen = !settingsOpen">
+          {{ appearance.terminalTheme.name }}
+        </button>
+        <button
+          type="button"
+          class="status-btn status-version update-entry"
+          :class="{ 'has-update': hasUpdateHighlight }"
+          :title="hasUpdateHighlight ? updateStatusLabel : '点击检查应用更新'"
+          @click="openUpdateDialog"
+        >
+          {{ updateStatusLabel }}
+        </button>
+      </div>
     </footer>
 
+    <AppUpdateDialog
+      ref="updateDialogRef"
+      :current-version="winInfo.version"
+      @state-change="updateState = $event"
+    />
   </div>
 </template>
 
 <style scoped>
+.app-header {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+  height: 42px;
+  padding: 0 0 0 10px;
+  background: var(--el-bg-color-page);
+  border-bottom: 1px solid var(--el-border-color-lighter);
+  flex-shrink: 0;
+  user-select: none;
+  -webkit-app-region: drag;
+}
+
 .app-logo,
 .header-action,
-:deep(.tab-bar),
 .win-controls {
   -webkit-app-region: no-drag;
+}
+
+/* 标签栏顶部留白 6px、标签高 36px（中轴距顶 24px）；左右按钮微沉 3px 与标签文字严格齐平 */
+.app-logo {
+  position: relative;
+  align-self: center;
+  margin-top: 3px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 28px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  outline: none;
+  transition: background 0.15s ease;
+}
+
+.app-logo:hover {
+  background: var(--el-fill-color);
+}
+
+.logo-update-dot {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--el-color-warning);
+}
+
+.app-brand-mark {
+  display: block;
+  width: 22px;
+  height: 18px;
+  flex: none;
+  object-fit: contain;
+}
+
+.header-divider {
+  align-self: center;
+  margin-top: 3px;
+  width: 1px;
+  height: 16px;
+  margin-inline: 2px 4px;
+  background: var(--el-border-color);
 }
 
 .header-action {
@@ -151,9 +310,10 @@ onMounted(() => {
   align-items: center;
   justify-content: center;
   gap: 6px;
-  min-height: 30px;
+  height: 28px;
   align-self: center;
-  padding: 5px 10px;
+  margin-top: 3px;
+  padding: 0 10px;
   font-size: 12px;
   border-radius: 6px;
   border: none;
@@ -164,22 +324,150 @@ onMounted(() => {
   transition: background 0.15s ease, color 0.15s ease;
 }
 
-.header-action:hover {
+.header-action:hover,
+.header-action.active,
+.header-action[aria-expanded="true"] {
   background: var(--el-fill-color-dark);
   color: var(--el-color-primary);
 }
-/* 顶栏留出更多呼吸空间：标签 38px 高，上下各留 8px，不再贴着窗口边缘 */
-.app-header { height:46px; align-items:stretch; gap:6px; padding:8px 0 0 10px; }
-/* 图标与文字统一对齐到标签行的光学中心（8px 顶留白 + 38px 标签行 = 27px），
-   不再靠 margin-bottom 把 DevKit 字样顶高 4px、和标签页错开 */
-.app-logo { align-self:center; width:auto; height:30px; gap:7px; padding:5px 10px; color:inherit; font-size:13px; font-weight:700; }
-.app-brand-mark { display:block; width:24px; height:20px; flex:none; object-fit:contain; }
-.header-divider { align-self:center; width:1px; height:18px; margin:0 6px 0 2px; background:var(--el-border-color); }
-:deep(.tab-bar) { flex:1; min-width:0; height:auto; padding:0; gap:5px; border:0; background:transparent; }
-:deep(.tab-item) { height:38px; border-radius:9px 9px 0 0; }
-:deep(.tab-item.active) { background:var(--el-bg-color-overlay); }
-/* 窗口按钮贴满标题栏高度（抵消 header 的 padding-top，与最小化/关闭的悬停底色齐边）；
-   图标用等量 padding-top 下移，和标签页同一水平中轴 */
-.win-controls { margin-top:-8px; }
-.win-btn { width:40px; padding-top:8px; }
+
+.header-update {
+  color: var(--el-color-warning);
+  background: var(--el-color-warning-light-9);
+  border: 1px solid color-mix(in srgb, var(--el-color-warning) 35%, transparent);
+  font-weight: 600;
+}
+
+.header-update:hover {
+  color: var(--el-color-warning);
+  background: color-mix(in srgb, var(--el-color-warning) 20%, transparent);
+}
+
+.win-controls {
+  display: flex;
+  align-self: stretch;
+}
+
+.win-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 100%;
+  padding: 2px 0 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: var(--el-text-color-regular);
+  cursor: pointer;
+  outline: none;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.win-btn:hover {
+  background: var(--el-fill-color-dark);
+  color: var(--el-text-color-primary);
+}
+
+.win-btn.close:hover {
+  background: #e81123;
+  color: #fff;
+}
+
+.app-status {
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.status-left,
+.status-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.status-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1;
+}
+
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--el-fill-color);
+  color: var(--el-text-color-regular);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--el-color-success);
+}
+
+.status-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 20px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--el-text-color-secondary);
+  font: inherit;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.status-btn:hover {
+  background: var(--el-fill-color);
+  color: var(--el-text-color-primary);
+}
+
+.status-btn.has-update {
+  color: var(--el-color-warning);
+  background: var(--el-color-warning-light-9);
+  font-weight: 600;
+}
+
+.status-btn.has-update:hover {
+  color: var(--el-color-warning);
+  background: color-mix(in srgb, var(--el-color-warning) 20%, transparent);
+}
+
+.status-btn kbd {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 5px;
+  border: 1px solid var(--el-border-color);
+  border-radius: 3px;
+  background: var(--el-fill-color-light);
+  font-size: 11px;
+  line-height: 14px;
+  font-family: inherit;
+}
+</style>
+
+<style>
+.about-box .about-update-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.about-box .about-copy.is-highlight {
+  color: var(--el-color-warning);
+  font-weight: 600;
+}
 </style>

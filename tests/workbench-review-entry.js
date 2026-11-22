@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { encodeInteger, parseCalendarTime } from '../src/shared/converter-workbench'
 import { DEFAULT_SERIAL_PARAMS, normalizeSerialParams } from '../src/shared/serial'
-import { launcherIndex, matchesTool } from '../src/renderer/src/components/workbench-navigation'
+import { cycleTabId, launcherIndex, matchesTool, reorderTabIds, tabIdByDigit } from '../src/renderer/src/components/workbench-navigation'
 
 assert.deepEqual(encodeInteger(-100n, 4), { le: '9C FF FF FF', be: 'FF FF FF 9C', truncated: false })
 assert.deepEqual(encodeInteger(-32768n, 2), { le: '00 80', be: '80 00', truncated: false })
@@ -25,4 +25,20 @@ assert.equal(launcherIndex(3, 1, 4), 0)
 assert.equal(launcherIndex(0, 1, 0), 0)
 assert.equal(matchesTool('COM3 serial', 'COM3', 'serial'), true)
 assert.equal(matchesTool('ssh', '大小端', 'endian'), false)
-console.log('PASS 串口草稿验证、工具启动器导航、负数补码与时区毫秒反查')
+
+// 标签拖拽排序（含拖到队尾与 home 保护）
+const sampleTabs = ['home', 'serial#1', 'ssh#2', 'net#3']
+assert.deepEqual(reorderTabIds(sampleTabs, 'serial#1', 'net#3', 'after'), ['home', 'ssh#2', 'net#3', 'serial#1'])
+assert.deepEqual(reorderTabIds(sampleTabs, 'net#3', 'serial#1', 'before'), ['home', 'net#3', 'serial#1', 'ssh#2'])
+assert.deepEqual(reorderTabIds(sampleTabs, 'home', 'net#3', 'after'), sampleTabs)
+assert.deepEqual(reorderTabIds(sampleTabs, 'net#3', 'home', 'before'), sampleTabs)
+
+// 标签快捷键循环与数字直达
+assert.equal(cycleTabId(sampleTabs, 'home', -1), 'net#3')
+assert.equal(cycleTabId(sampleTabs, 'net#3', 1), 'home')
+assert.equal(tabIdByDigit(sampleTabs, 1), 'home')
+assert.equal(tabIdByDigit(sampleTabs, 2), 'serial#1')
+assert.equal(tabIdByDigit(sampleTabs, 9), 'net#3')
+assert.equal(tabIdByDigit(sampleTabs, 6), undefined)
+
+console.log('PASS 串口草稿验证、工具启动器导航、标签排序/快捷键、负数补码与时区毫秒反查')
