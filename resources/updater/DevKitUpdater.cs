@@ -13,8 +13,20 @@ internal static class DevKitUpdater
     private const string Inventory = "resources/devkit-update-files.txt";
     private const long MaxExpandedBytes = 2L * 1024 * 1024 * 1024;
     private static readonly StringComparer PathComparer = StringComparer.OrdinalIgnoreCase;
+    private static readonly HashSet<string> IgnoredSystemFiles = new HashSet<string>(PathComparer)
+    {
+        "desktop.ini",
+        "thumbs.db"
+    };
 
-    private sealed class DirectoryChanged : Exception { }
+    private sealed class DirectoryChanged : Exception
+    {
+        public readonly string Detail;
+        public DirectoryChanged(string detail = null) : base(detail ?? "Managed directory changed.")
+        {
+            Detail = detail;
+        }
+    }
 
     private static int Main(string[] args)
     {
@@ -69,7 +81,12 @@ internal static class DevKitUpdater
         {
             TryWriteSignal(handoff, "error", error.ToString());
             if (!applying)
-                TryWriteSignal(handoff, "ready", error is DirectoryChanged ? "directory" : "failed");
+            {
+                var dirError = error as DirectoryChanged;
+                if (dirError != null && !string.IsNullOrEmpty(dirError.Detail))
+                    TryWriteSignal(handoff, "directory-detail", dirError.Detail);
+                TryWriteSignal(handoff, "ready", dirError != null ? "directory" : "failed");
+            }
             bool committed = File.Exists(Path.Combine(handoff, "apply"));
             if (committed)
             {
@@ -246,11 +263,27 @@ internal static class DevKitUpdater
             if (!File.Exists(Path.Combine(root, "DevKit.exe")) ||
                 !File.Exists(Path.Combine(root, "resources", "app.asar")) ||
                 (File.GetAttributes(inventory) & FileAttributes.ReparsePoint) != 0)
-                throw new DirectoryChanged();
+                throw new DirectoryChanged("缺少核心程序文件或清单异常");
             var expected = new HashSet<string>(File.ReadAllLines(inventory), PathComparer);
             expected.Add(Inventory);
-            VerifyDirectory(root, "", expected);
-            if (expected.Count != 0) throw new DirectoryChanged();
+            var unexpected = new List<string>();
+            VerifyDirectory(root, "", expected, existing, unexpected);
+            if (unexpected.Count > 0 || expected.Count > 0)
+            {
+                var parts = new List<string>();
+                if (unexpected.Count > 0) parts.Add("多出: " + string.Join(", ", unexpected));
+                if (expected.Count > 0)
+                {
+                    var missing = new List<string>();
+                    foreach (string item in expected)
+                    {
+                        missing.Add(item);
+                        if (missing.Count == 3) break;
+                    }
+                    parts.Add("缺失: " + string.Join(", ", missing));
+                }
+                throw new DirectoryChanged(string.Join("; ", parts));
+            }
         }
         catch (IOException)
         {
@@ -259,27 +292,34 @@ internal static class DevKitUpdater
         }
     }
 
-    private static void VerifyDirectory(string root, string prefix, HashSet<string> expected)
+    private static void VerifyDirectory(string root, string prefix, HashSet<string> expected, bool existing, List<string> unexpected)
     {
         foreach (string path in Directory.EnumerateFileSystemEntries(root))
         {
-            string relative = prefix + Path.GetFileName(path);
+            string name = Path.GetFileName(path);
+            string relative = prefix + name;
             var attributes = File.GetAttributes(path);
-            if ((attributes & FileAttributes.ReparsePoint) != 0) throw new DirectoryChanged();
+            if ((attributes & FileAttributes.ReparsePoint) != 0) throw new DirectoryChanged("符号链接: " + relative);
             if ((attributes & FileAttributes.Directory) == 0)
             {
-                if (!expected.Remove(relative)) throw new DirectoryChanged();
+                if (existing && IgnoredSystemFiles.Contains(name)) continue;
+                if (!expected.Remove(relative) && unexpected.Count < 3) unexpected.Add(relative);
             }
             else
             {
-                if (!expected.Remove(relative + "/")) throw new DirectoryChanged();
-                VerifyDirectory(path, relative + "/", expected);
+                if (!expected.Remove(relative + "/"))
+                {
+                    if (unexpected.Count < 3) unexpected.Add(relative + "/");
+                    continue;
+                }
+                VerifyDirectory(path, relative + "/", expected, existing, unexpected);
             }
         }
     }
 
     private static void ReplaceWithRetry(bool portable, string stage, string target, string backup)
     {
+        // 最多重试 48 次（约 12 秒），兼容 Windows Defender 扫描或文件索引器短暂占锁
         for (int attempt = 0; ; attempt++)
         {
             try
@@ -292,9 +332,10 @@ internal static class DevKitUpdater
                 }
                 return;
             }
-            catch (IOException)
+            catch (Exception ex)
             {
-                if (attempt == 19 || File.Exists(backup) || Directory.Exists(backup)) throw;
+                if (!(ex is IOException || ex is UnauthorizedAccessException)) throw;
+                if (attempt == 47 || File.Exists(backup) || Directory.Exists(backup)) throw;
                 Thread.Sleep(250);
             }
         }
@@ -302,15 +343,28 @@ internal static class DevKitUpdater
 
     private static void RestoreBackup(bool portable, string target, string backup, string stage)
     {
-        if (portable && File.Exists(backup))
+        for (int attempt = 0; ; attempt++)
         {
-            if (File.Exists(target)) File.Replace(backup, target, null);
-            else File.Move(backup, target);
-        }
-        if (!portable && Directory.Exists(backup))
-        {
-            if (Directory.Exists(target)) Directory.Move(target, stage);
-            Directory.Move(backup, target);
+            try
+            {
+                if (portable && File.Exists(backup))
+                {
+                    if (File.Exists(target)) File.Replace(backup, target, null);
+                    else File.Move(backup, target);
+                }
+                if (!portable && Directory.Exists(backup))
+                {
+                    if (Directory.Exists(target)) Directory.Move(target, stage);
+                    Directory.Move(backup, target);
+                }
+                return;
+            }
+            catch (Exception ex)
+            {
+                if (!(ex is IOException || ex is UnauthorizedAccessException)) throw;
+                if (attempt == 19) throw;
+                Thread.Sleep(250);
+            }
         }
     }
 

@@ -1,4 +1,4 @@
-import { app, dialog, shell } from 'electron'
+import { app, dialog, net, shell } from 'electron'
 import { copyFile, mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { APP_UPDATES, APP_UPDATES_PANEL, type UpdateState } from '../../../shared/app-updates'
@@ -18,7 +18,7 @@ export class AppUpdateService implements ToolService {
 
   constructor(
     private readonly target: InstallTarget | undefined = getInstallTarget(),
-    private readonly feed = new GitHubReleases(fetch)
+    private readonly feed = new GitHubReleases((url, init) => net.fetch(url, init))
   ) {
     this.state = { phase: 'idle' }
     this.initialized = this.restore()

@@ -174,5 +174,9 @@ app.on('before-quit', (event) => {
   event.preventDefault()
   if (shuttingDown) return
   shuttingDown = true
-  void disposeAllPanels().finally(() => { shutdownComplete = true; app.quit() })
+  const timeout = new Promise<void>((resolve) => setTimeout(resolve, 5000))
+  void Promise.race([disposeAllPanels(), timeout]).finally(() => {
+    shutdownComplete = true
+    app.quit()
+  })
 })

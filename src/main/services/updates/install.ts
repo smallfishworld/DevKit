@@ -77,7 +77,11 @@ export async function prepareUpdate(target: InstallTarget, path: string, update:
         await writeFile(join(handoff, 'apply'), '', { flag: 'wx' })
         return
       }
-      if (ready === 'directory') throw new Error('解压目录包含其他文件或已被修改。请将更新包另存并解压到新目录。')
+      if (ready === 'directory') {
+        const detail = (await readFile(join(handoff, 'directory-detail'), 'utf8').catch(() => '')).trim()
+        const suffix = detail ? `（${detail}）` : ''
+        throw new Error(`解压目录包含其他文件或已被修改${suffix}。请将更新包另存并解压到新目录。`)
+      }
       if (ready === 'failed' || child.exitCode !== null) break
       await delay(125)
     } while (Date.now() < deadline)
