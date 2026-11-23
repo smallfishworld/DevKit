@@ -15,7 +15,6 @@ export interface TabItem {
   shell?: { profileId: string; cwd: string }
 }
 
-const sessionTools = ['serial', 'ssh', 'local-terminal']
 const RECENT_STORAGE_KEY = 'devkit:recent-sessions:v1'
 const PINNED_STORAGE_KEY = 'devkit:pinned-tools:v1'
 
@@ -50,7 +49,7 @@ function sanitizeRecent(raw: unknown): TabItem[] {
     if (!item || typeof item !== 'object') continue
     const rec = item as Partial<TabItem>
     if (typeof rec.id !== 'string' || typeof rec.toolId !== 'string' || typeof rec.title !== 'string') continue
-    if (!sessionTools.includes(rec.toolId)) continue
+    if (rec.toolId === 'home') continue
     result.push({
       id: rec.id,
       toolId: rec.toolId,
@@ -140,7 +139,7 @@ export const useTabStore = defineStore('tabs', {
       this.remember(tab)
     },
     remember(tab: TabItem): void {
-      if (!sessionTools.includes(tab.toolId)) return
+      if (tab.toolId === 'home') return
       const key = sessionIdentity(tab)
       // 同身份（同串口/主机/目录）只留一条，且以最新一次的参数与 tab id 为准
       this.recent = [
@@ -201,12 +200,8 @@ export const useTabStore = defineStore('tabs', {
       const idx = this.tabs.findIndex((t) => t.id === id)
       if (idx < 0 || id === 'home') return
       const [tab] = this.tabs.splice(idx, 1)
-      if (tab.serialParams || tab.sshParams || tab.shell) {
-        this.remember({ ...tab, connection: 'disconnected' })
-      } else {
-        this.recent = this.recent.filter((entry) => entry.id !== id)
-        persistRecent(this.recent)
-      }
+      // 任何工具关闭都记入最近使用（非会话工具无连接概念，恒为 disconnected）
+      this.remember({ ...tab, connection: tab.serialParams || tab.sshParams || tab.shell ? 'disconnected' : undefined })
       // 通知主进程清理该面板资源（停止钩子、关闭端口等）
       window.api?.invoke(tab.toolId, 'dispose', tab.id).catch(() => {})
       if (this.activeId === id) {

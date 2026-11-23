@@ -53,9 +53,6 @@ function createWindow(): void {
     height: 900,
     minWidth: 960,
     minHeight: 600,
-    title: 'DevKit 嵌入式开发套件',
-    icon: getWindowIconPath(),
-    backgroundColor: '#141414',
     show: false,
     frame: false, // VS Code 风格：无边框，标题栏由渲染端自绘
     webPreferences: {
@@ -67,6 +64,9 @@ function createWindow(): void {
   })
 
   applyWindowsAppDetails(mainWindow)
+
+  // 默认以最大化启动（占满工作区，任务栏外全屏）
+  mainWindow.maximize()
 
   // 最大化状态推给渲染端，用于切换 最大化/还原 按钮图标
   mainWindow.on('maximize', () => {

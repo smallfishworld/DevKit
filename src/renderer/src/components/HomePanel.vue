@@ -41,8 +41,10 @@ function sessionDotState(tab: TabItem): string {
   return tab.connection ?? 'open'
 }
 
+const SESSION_TOOLS = new Set(['serial', 'ssh', 'local-terminal'])
+
 function sessionLabel(tab: TabItem): string {
-  if (!isSessionOpen(tab)) return '历史'
+  if (!isSessionOpen(tab)) return SESSION_TOOLS.has(tab.toolId) ? '历史' : '最近'
   if (tab.toolId === 'local-terminal' && tab.connection === 'connected') return '运行中'
   return tab.connection ? connectionLabels[tab.connection] : '已打开'
 }
@@ -58,7 +60,7 @@ function sessionTooltip(tab: TabItem): string {
   } else if (tab.shell?.cwd) {
     details.push(tab.shell.cwd)
   }
-  details.push(isSessionOpen(tab) ? '点击切换到该标签' : '点击重新打开会话')
+  details.push(isSessionOpen(tab) ? '点击切换到该标签' : SESSION_TOOLS.has(tab.toolId) ? '点击重新打开会话' : '点击打开工具')
   return details.join('\n')
 }
 
