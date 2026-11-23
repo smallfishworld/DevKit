@@ -53,6 +53,9 @@ function createWindow(): void {
     height: 900,
     minWidth: 960,
     minHeight: 600,
+    title: 'DevKit 嵌入式开发套件',
+    icon: getWindowIconPath(),
+    backgroundColor: '#141414',
     show: false,
     frame: false, // VS Code 风格：无边框，标题栏由渲染端自绘
     webPreferences: {
