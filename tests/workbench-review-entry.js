@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { encodeInteger, parseCalendarTime } from '../src/shared/converter-workbench'
 import { DEFAULT_SERIAL_PARAMS, normalizeSerialParams } from '../src/shared/serial'
 import { cycleTabId, launcherIndex, matchesTool, reorderTabIds, tabIdByDigit } from '../src/renderer/src/components/workbench-navigation'
+import { dedupeRecent, sessionIdentity } from '../src/renderer/src/components/session-identity'
 
 assert.deepEqual(encodeInteger(-100n, 4), { le: '9C FF FF FF', be: 'FF FF FF 9C', truncated: false })
 assert.deepEqual(encodeInteger(-32768n, 2), { le: '00 80', be: '80 00', truncated: false })
@@ -41,4 +42,20 @@ assert.equal(tabIdByDigit(sampleTabs, 2), 'serial#1')
 assert.equal(tabIdByDigit(sampleTabs, 9), 'net#3')
 assert.equal(tabIdByDigit(sampleTabs, 6), undefined)
 
-console.log('PASS 串口草稿验证、工具启动器导航、标签排序/快捷键、负数补码与时区毫秒反查')
+// 最近会话身份去重：同串口/主机/目录视为同一会话，tab id 不同也不重复
+const serialA = { id: 'serial#1', toolId: 'serial', title: 'COM1', serialParams: { ...DEFAULT_SERIAL_PARAMS, path: 'COM1' } }
+const serialA2 = { id: 'serial#2', toolId: 'serial', title: 'COM1', serialParams: { ...DEFAULT_SERIAL_PARAMS, path: 'COM1' } }
+const serialB = { id: 'serial#3', toolId: 'serial', title: 'COM3', serialParams: { ...DEFAULT_SERIAL_PARAMS, path: 'COM3' } }
+const sshX = { id: 'ssh#4', toolId: 'ssh', title: 'root@10.0.0.1', sshParams: { host: '10.0.0.1', username: 'root', port: 22 } }
+const shellY = { id: 'local-terminal#5', toolId: 'local-terminal', title: 'PowerShell', shell: { profileId: 'pwsh', cwd: 'D:\\code' } }
+
+assert.equal(sessionIdentity(serialA), sessionIdentity(serialA2))           // 同串口同参数 → 同身份
+assert.notEqual(sessionIdentity(serialA), sessionIdentity(serialB))         // 不同串口
+assert.equal(sessionIdentity(sshX), 'ssh:root@10.0.0.1:22')
+assert.equal(sessionIdentity(shellY), 'shell:local-terminal:D:\\code')
+
+assert.equal(dedupeRecent([serialA2, serialA, serialB, sshX, shellY]).length, 4) // 旧版残留同身份 COM1 清洗
+assert.equal(dedupeRecent([serialA, serialB, sshX, shellY]).length, 4)          // 无重复原样保留
+assert.deepEqual(dedupeRecent([serialA, serialB, serialA]), [serialA, serialB]) // 保序、保首条
+
+console.log('PASS 串口草稿验证、工具启动器导航、标签排序/快捷键、负数补码与时区毫秒反查、最近会话身份去重')

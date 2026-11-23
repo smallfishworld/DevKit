@@ -11,6 +11,9 @@ const tabs = useTabStore()
 const keyword = ref('')
 const searchInputRef = ref<{ focus: () => void }>()
 
+// 已打开的会话标签数（首页标签不计）
+const openSessionCount = computed(() => tabs.tabs.filter((t) => t.id !== 'home').length)
+
 type GroupTone = 'primary' | 'info' | 'warning' | 'success'
 
 interface GroupDef {
@@ -150,10 +153,11 @@ onUnmounted(() => window.removeEventListener('keydown', onSlashFocus))
 
     <!-- 最近会话置顶展示：一键跳转已打开会话或恢复历史会话 -->
     <section v-if="tabs.recent.length" class="recent-sessions" aria-label="最近会话">
-      <div class="recent-head">
+      <header class="group-head recent-head tone-recent">
         <h2>最近会话</h2>
+        <span class="group-count">{{ tabs.recent.length }}</span>
         <button type="button" class="recent-clear" @click="tabs.clearRecent()">清空</button>
-      </div>
+      </header>
       <div class="recent-list">
         <div v-for="tab in tabs.recent" :key="tab.id" class="recent-chip-wrap">
           <button
@@ -164,9 +168,9 @@ onUnmounted(() => window.removeEventListener('keydown', onSlashFocus))
             @click="reopen(tab)"
           >
             <span class="session-dot" :data-state="sessionDotState(tab)" aria-hidden="true" />
-            <el-icon :size="14"><component :is="toolById(tab.toolId)?.icon ?? 'Connection'" /></el-icon>
+            <span class="recent-icon"><el-icon :size="14"><component :is="toolById(tab.toolId)?.icon ?? 'Connection'" /></el-icon></span>
             <span class="recent-title">{{ tab.title }}</span>
-            <small :data-state="sessionDotState(tab)">{{ sessionLabel(tab) }}</small>
+            <small class="recent-state" :data-state="sessionDotState(tab)">{{ sessionLabel(tab) }}</small>
           </button>
           <button
             type="button"
@@ -266,25 +270,41 @@ onUnmounted(() => window.removeEventListener('keydown', onSlashFocus))
     </div>
 
     <p v-if="!filtered.length" class="muted empty-tip">未找到匹配工具，请换个关键词或按 Esc 清空。</p>
+
+    <footer class="page-foot">
+      <span class="muted">DevKit 嵌入式开发工具箱</span>
+      <span class="foot-sep" aria-hidden="true">·</span>
+      <span class="muted">{{ TOOLS.length }} 个工具</span>
+      <template v-if="openSessionCount > 0">
+        <span class="foot-sep" aria-hidden="true">·</span>
+        <span class="muted">{{ openSessionCount }} 个会话</span>
+      </template>
+      <template v-if="tabs.pinnedTools.length > 0">
+        <span class="foot-sep" aria-hidden="true">·</span>
+        <span class="muted">{{ tabs.pinnedTools.length }} 个置顶</span>
+      </template>
+      <span class="foot-spacer" />
+    </footer>
   </section>
 </template>
 
 <style scoped>
-/* 宽屏放宽至 1400px，配合 4 列栅格既舒展又不会过度留白 */
+/* 全屏吃满宽度：卡片定宽、auto-fill 随容器增减列数，宽屏无大留白 */
 .toolbox {
-  max-width: 1400px;
+  max-width: 2560px;
   margin: 0 auto;
-  padding: clamp(20px, 2.4vw, 32px);
+  padding: clamp(20px, 2.4vw, 48px);
   container-type: inline-size;
 }
 
 .page-head {
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  align-items: flex-end;
   flex-wrap: wrap;
   gap: 12px 16px;
-  margin-bottom: 20px;
+  /* 与最近会话区的下边距统一为 24px，整页按 4 的倍数走 */
+  margin-bottom: 24px;
 }
 
 .page-title h1 {
@@ -317,31 +337,19 @@ kbd {
   white-space: nowrap;
 }
 
-/* 最近会话置顶区 */
+/* 最近会话：不再包卡片盒子，与工具分组标题同节奏（色条 + 标题 + 计数） */
+/* 最近会话：与工具分组标题同节奏（色条 + 标题 + 计数） */
 .recent-sessions {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 12px 16px;
-  margin-bottom: 20px;
-  border: 1px solid var(--el-border-color-lighter);
-  border-radius: 10px;
-  background: var(--el-bg-color-page);
+  margin-bottom: 0;
 }
 
 .recent-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+  margin-top: 0;
 }
 
-.recent-head h2 {
-  margin: 0;
-  font-size: 13px;
-  font-weight: 600;
-  line-height: 18px;
-  color: var(--el-text-color-secondary);
+/* “清空”推到行尾，与分组计数并排 */
+.recent-head .recent-clear {
+  margin-left: auto;
 }
 
 .recent-clear {
@@ -361,25 +369,32 @@ kbd {
 }
 
 .recent-list {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
+  /* 与工具栅格同款列宽：chip 与工具卡同宽对齐，页面左右边缘齐平 */
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  margin-top: 12px;
+  /* 与工具分组之间的 22px 区块间距一致（首个分组标题 first-child 上距为 0） */
+  margin-bottom: 22px;
 }
 
 .recent-chip-wrap {
-  position: relative;
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  max-width: 260px;
+  max-width: 100%;
+  min-width: 0;
 }
 
 .recent-chip {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
+  flex: 1;
   max-width: 100%;
-  padding: 6px 26px 6px 10px;
+  min-width: 0;
+  /* 高度约为工具卡（~64px）的 2/3 */
+  min-height: 38px;
+  padding: 7px 14px;
   border-radius: 8px;
   border: 1px solid var(--el-border-color-lighter);
   background: var(--el-bg-color-overlay);
@@ -399,27 +414,7 @@ kbd {
   background: var(--el-fill-color-light);
 }
 
-.recent-title {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-weight: 500;
-}
-
-.recent-chip small {
-  flex: none;
-  font-size: 11px;
-  color: var(--el-text-color-secondary);
-}
-
-.recent-chip small[data-state="connected"] {
-  color: var(--el-color-success);
-}
-
-.recent-chip small[data-state="connecting"] {
-  color: var(--el-color-warning);
-}
-
+/* 状态点与图标纵向光学对齐 */
 .session-dot {
   flex: none;
   width: 6px;
@@ -445,27 +440,62 @@ kbd {
   border: 1px solid var(--el-text-color-placeholder);
 }
 
+.recent-icon {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  color: var(--el-text-color-secondary);
+}
+
+.recent-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+  line-height: 18px;
+}
+
+/* 状态标签：与标题间加分隔点，弱化视觉竞争 */
+.recent-state {
+  flex: none;
+  padding-left: 8px;
+  border-left: 1px solid var(--el-border-color-lighter);
+  font-size: 11px;
+  line-height: 18px;
+  color: var(--el-text-color-secondary);
+}
+
+.recent-state[data-state="connected"] {
+  color: var(--el-color-success);
+}
+
+.recent-state[data-state="connecting"] {
+  color: var(--el-color-warning);
+}
+
+/* 移除键在 chip 外侧，hover 时展开占位，避免绝对定位压住文字 */
 .recent-remove {
-  position: absolute;
-  right: 5px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 18px;
   height: 18px;
+  width: 0;
+  margin-left: 2px;
   padding: 0;
   border: 0;
   border-radius: 4px;
   background: transparent;
   color: var(--el-text-color-secondary);
   opacity: 0;
+  overflow: hidden;
   cursor: pointer;
-  transition: opacity 0.12s ease, background 0.15s ease, color 0.15s ease;
+  transition: opacity 0.15s ease, width 0.15s ease, background 0.15s ease, color 0.15s ease;
 }
 
 .recent-chip-wrap:hover .recent-remove,
 .recent-remove:focus-visible {
   opacity: 1;
+  width: 18px;
 }
 
 .recent-remove:hover {
@@ -479,11 +509,14 @@ kbd {
 .tone-warning { --group-accent: var(--el-color-warning); }
 .tone-success { --group-accent: var(--el-color-success); }
 .tone-pin { --group-accent: var(--el-color-warning); }
+/* 最近会话专属紫（固定色值，两组分类色未占用），与背景轻微混合保证深浅主题均成立 */
+.tone-recent { --group-accent: color-mix(in srgb, #9d7bea 88%, var(--el-bg-color) 12%); }
 
 .tool-lists {
   display: grid;
-  gap: 12px;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+  /* 卡片最小 280px 自动填充列数：约 800px 起 2 列，2K 屏 6 列，4K(150%缩放) 7 列 */
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
 }
 
 .group-head {
@@ -491,7 +524,8 @@ kbd {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-top: 16px;
+  /* 分组标题与上一组卡片隔一档（首个分组由 grid 自带 14px，与最近会话→标题间距一致） */
+  margin-top: 22px;
 }
 
 .group-head:first-child {
@@ -648,21 +682,21 @@ kbd {
   margin-top: 16px;
 }
 
-@container (max-width: 1100px) {
-  .tool-lists {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
+/* 页脚：全屏时内容不足一屏，把提示性文字推到底部收尾，避免下方大片空白 */
+.page-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid var(--el-border-color-lighter);
+  font-size: 12px;
 }
 
-@container (max-width: 760px) {
-  .tool-lists {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
+/* 中缝撑开：左侧品牌信息、右侧版本号各贴一边 */
+.foot-spacer {
+  flex: 1;
 }
 
-@container (max-width: 560px) {
-  .tool-lists {
-    grid-template-columns: minmax(0, 1fr);
-  }
-}
+
 </style>

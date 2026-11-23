@@ -3,6 +3,7 @@ import type { SshParams } from '../../../shared/ssh'
 import type { SerialParams } from '../../../shared/serial'
 import type { ToolDef } from '@renderer/tools/registry'
 import { reorderTabIds } from '@renderer/components/workbench-navigation'
+import { dedupeRecent, sessionIdentity } from '@renderer/components/session-identity'
 
 export interface TabItem {
   id: string
@@ -61,7 +62,8 @@ function sanitizeRecent(raw: unknown): TabItem[] {
     })
     if (result.length >= 8) break
   }
-  return result
+  // 历史数据可能因旧版按 tab id 去重而含重复身份（如同名 COM1），按身份去重清洗
+  return dedupeRecent(result)
 }
 
 function sanitizePinned(raw: unknown): string[] {
@@ -139,7 +141,12 @@ export const useTabStore = defineStore('tabs', {
     },
     remember(tab: TabItem): void {
       if (!sessionTools.includes(tab.toolId)) return
-      this.recent = [{ ...tab }, ...this.recent.filter((entry) => entry.id !== tab.id)].slice(0, 8)
+      const key = sessionIdentity(tab)
+      // 同身份（同串口/主机/目录）只留一条，且以最新一次的参数与 tab id 为准
+      this.recent = [
+        { ...tab },
+        ...this.recent.filter((entry) => entry.id !== tab.id && sessionIdentity(entry) !== key)
+      ].slice(0, 8)
       persistRecent(this.recent)
     },
     removeRecent(id: string): void {

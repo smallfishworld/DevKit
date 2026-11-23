@@ -49,8 +49,8 @@ function registerWindowIpc(): void {
 
 function createWindow(): void {
   mainWindow = new BrowserWindow({
-    width: 1280,
-    height: 820,
+    width: 1440,
+    height: 900,
     minWidth: 960,
     minHeight: 600,
     title: 'DevKit 嵌入式开发套件',
