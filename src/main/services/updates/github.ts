@@ -20,7 +20,13 @@ export interface UpdatePackage extends UpdateRelease {
 }
 
 const RELEASE_LATEST = `${RELEASE_HOME}/latest`
-const TAG_PATH = /\/releases\/tag\/([^/?#]+)/
+/**
+ * tag 页里的版本提取：`releases/latest` 跳转后的页面（canonical / og:url 均带 /releases/tag/<tag>）。
+ * Electron 的 net.fetch 以 redirect:'manual' 请求时拿不到 302 的 Location（直接取消跳转），
+ * 只能 follow 到 tag 页再从 HTML 里解析；版本段后禁止再出现字母数字连字符，避免把
+ * `v0.12.0-beta.1` 截成 `v0.12.0`。
+ */
+const TAG_IN_PAGE = /releases\/tag\/(v?(?:0|[1-9]\d{0,14})\.(?:0|[1-9]\d{0,14})\.(?:0|[1-9]\d{0,14}))(?=[^0-9A-Za-z._-]|$)/
 
 /** API 匿名配额耗尽时，更新信息改走发布页回退通道（github.com 网页端点无 API 配额限制） */
 const FALLBACK_NOTES = 'GitHub API 暂时限流，本次更新信息通过发布页回退通道获取。'
@@ -112,25 +118,23 @@ export class GitHubReleases {
   }
 
   /**
-   * API 被限时的零配额回退通道：
-   * 1. `releases/latest` 的 302 跳转 Location 解析最新稳定版 tag（github.com 网页端点，无 API 配额）；
+   * API 被限时的零配额回退通道（全程 github.com 网页端点，无 API 配额；跳转一律 follow）：
+   * 1. `releases/latest` follow 到最新稳定版 tag 页，从页面里的 `/releases/tag/<tag>` 解析版本；
    * 2. 包大小取自发布直链响应的 Content-Length；
    * 3. SHA-256 取自随包上传的 `<包名>.sha256` 边车附件（CI 发布时生成）。
-   * 旧版本发布没有边车、或拿不到包大小时返回 undefined，调用方提示手动下载。
+   * 拿不到页面、包大小或边车哈希时返回 undefined，调用方提示手动下载。
    */
   async fallbackLatest(current: string, format?: PackageFormat): Promise<ReleaseResult | undefined> {
     const response = await this.fetch(RELEASE_LATEST, {
-      headers: { 'User-Agent': `DevKit/${current}` }, redirect: 'manual', signal: AbortSignal.timeout(12_000)
+      headers: { 'User-Agent': `DevKit/${current}` }, redirect: 'follow', signal: AbortSignal.timeout(12_000)
     })
-    const to = response.status >= 300 && response.status < 400 ? response.headers.get('location') : null
-    await response.body?.cancel()
-    // 无跳转（仓库还没有稳定发布）→ 视为已是最新；其余异常一律放弃回退
-    if (!to) return response.ok ? { status: 'current' } : undefined
-    const target = new URL(to, RELEASE_LATEST)
-    if (target.protocol !== 'https:' || target.hostname !== 'github.com') return undefined
-    const tag = TAG_PATH.exec(target.pathname)?.[1]
-    const version = tag ? decodeURIComponent(tag).replace(/^v/, '') : ''
-    if (!tag || !VERSION.test(version)) return undefined
+    if (!response.ok) {
+      await response.body?.cancel()
+      return undefined
+    }
+    const tag = TAG_IN_PAGE.exec(await response.text())?.[1]
+    const version = tag?.replace(/^v/, '')
+    if (!version || !VERSION.test(version)) return undefined
     if (!isNewerVersion(version, current)) return { status: 'current' }
     const normalizedTag = `v${version}`
     if (!format) {
@@ -195,20 +199,16 @@ export class GitHubReleases {
     }
   }
 
+  /**
+   * GET 发布资产（直链会跳到 GitHub CDN，跟随跳转；入口 URL 只能由本模块用校验过的
+   * 版本号拼出，下载完成后另有字节与哈希双重校验兜底）。
+   */
   private async fetchAsset(url: string, signal: AbortSignal): Promise<Response> {
-    let next = new URL(url)
-    for (let redirects = 0; redirects <= 4; redirects++) {
-      if (next.protocol !== 'https:' || next.username || next.password || next.port ||
-          !['github.com', 'release-assets.githubusercontent.com', 'objects.githubusercontent.com'].includes(next.hostname)) {
-        throw new Error('GitHub 返回了无效的更新包地址。')
-      }
-      const response = await this.fetch(next.href, { redirect: 'manual', signal })
-      if (![301, 302, 303, 307, 308].includes(response.status)) return response
-      const target = response.headers.get('location')
-      await response.body?.cancel()
-      if (!target) break
-      next = new URL(target, next)
+    const target = new URL(url)
+    if (target.protocol !== 'https:' || target.username || target.password || target.port ||
+        target.hostname !== 'github.com') {
+      throw new Error('GitHub 返回了无效的更新包地址。')
     }
-    throw new Error('GitHub 更新包跳转失败。')
+    return this.fetch(url, { redirect: 'follow', signal })
   }
 }

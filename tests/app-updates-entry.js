@@ -71,13 +71,14 @@ test('conditional GitHub checks, partially published release and rate limit', as
 
 test('asset download follows the GitHub CDN and verifies all bytes', async () => {
   const temp = await mkdtemp(join(tmpdir(), 'devkit-update-unit-'))
-  const remote = 'https://release-assets.githubusercontent.com/fixture'
+  // Electron 的 net.fetch 跟随跳转（manual 跳转会直接取消），注入的 fetch 只见到入口 URL，
+  // 直接返回跳转后的 CDN 最终响应
+  const entry = 'https://github.com/smallfishworld/DevKit/releases/download/v0.12.0/DevKit-0.12.0-win-x64.zip'
   try {
     const fetch = async (url, init) => {
-      assert.equal(init.redirect, 'manual')
-      if (url === remote) return new Response(data)
-      assert.equal(url, 'https://github.com/smallfishworld/DevKit/releases/download/v0.12.0/DevKit-0.12.0-win-x64.zip')
-      return new Response(null, { status: 302, headers: { location: remote } })
+      assert.equal(init.redirect, 'follow')
+      assert.equal(url, entry)
+      return new Response(data)
     }
     const client = new GitHubReleases(fetch)
     const target = join(temp, 'valid.part')
@@ -88,9 +89,6 @@ test('asset download follows the GitHub CDN and verifies all bytes', async () =>
     await assert.rejects(client.download({ ...update, hash: '0'.repeat(64) }, 'zip', join(temp, 'hash.part'), () => {}), /校验/)
     await assert.rejects(client.download({ ...update, bytes: data.length + 1 }, 'zip', join(temp, 'short.part'), () => {}), /校验/)
     await assert.rejects(client.download({ ...update, bytes: data.length - 1 }, 'zip', join(temp, 'long.part'), () => {}), /大小/)
-    const unsafe = new GitHubReleases(async () =>
-      new Response(null, { status: 302, headers: { location: 'https://example.test/not-github' } }))
-    await assert.rejects(unsafe.download(update, 'zip', join(temp, 'unsafe.part'), () => {}), /无效/)
   } finally {
     await rm(temp, { force: true, recursive: true })
   }
@@ -106,16 +104,18 @@ test('rate-limited API falls back to the quota-free release page channel', async
   const api = 'https://api.github.com/repos/smallfishworld/DevKit/releases/latest'
   const page = 'https://github.com/smallfishworld/DevKit/releases/latest'
   const downloadUrl = 'https://github.com/smallfishworld/DevKit/releases/download/v0.12.0/DevKit-0.12.0-win-x64.zip'
-  const remote = 'https://release-assets.githubusercontent.com/fixture'
+  // release/latest 跳转后的 tag 页：canonical 与 og:url 都带 /releases/tag/<tag>（Electron 里跳转只能 follow，不能读 302）
+  const tagPage = (tag) => `<html><head><link rel="canonical" href="https://github.com/smallfishworld/DevKit/releases/tag/${tag}">` +
+    `<meta property="og:url" content="https://github.com/smallfishworld/DevKit/releases/tag/${tag}"></head><body>…</body></html>`
   // sidecar: undefined=正常边车 / null=404（旧版本发布）/ 其他字符串=损坏内容
   const makeStub = ({ sidecar, tag } = {}) => async (url, init) => {
     if (url === api) return new Response(null, { status: 403, headers: { 'x-ratelimit-reset': '1795485219' } })
-    assert.equal(init.redirect, 'manual')
     if (url === page) {
-      return new Response(null, { status: 302, headers: { location: `https://github.com/smallfishworld/DevKit/releases/tag/${tag ?? 'v0.12.0'}` } })
+      assert.equal(init.redirect, 'follow')
+      return new Response(tagPage(tag ?? 'v0.12.0'), { headers: { 'content-type': 'text/html' } })
     }
-    if (url === remote) return new Response(data, { headers: { 'content-length': String(data.length) } })
-    if (url === downloadUrl) return new Response(null, { status: 302, headers: { location: remote } })
+    assert.equal(init.redirect, 'follow')
+    if (url === downloadUrl) return new Response(data, { headers: { 'content-length': String(data.length) } })
     if (url === downloadUrl + '.sha256') {
       if (sidecar === null) return new Response(null, { status: 404 })
       return new Response(sidecar ?? `${hash}  DevKit-0.12.0-win-x64.zip\n`)

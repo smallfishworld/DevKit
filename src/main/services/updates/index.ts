@@ -104,7 +104,7 @@ export class AppUpdateService implements ToolService {
       } catch {
         // 回退通道网络失败 → 走统一限流提示
       }
-      throw new Error('GitHub API 受限，且此版本发布未附带校验文件，无法在应用内直接更新；可到发布页手动下载。')
+      throw new Error('GitHub API 受限，且发布页回退通道未取到可校验的更新信息；可到发布页手动下载。')
     }
   }
 
