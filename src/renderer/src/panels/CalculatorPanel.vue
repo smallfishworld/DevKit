@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { ElMessage } from 'element-plus'
+import { usePanelMessage } from '@renderer/composables/panelOverlays'
 import {
   evalExpr,
   fmtBin,
@@ -10,6 +10,8 @@ import {
   byteLayout,
   type Width
 } from '@renderer/tools/calc/engine'
+
+const ElMessage = usePanelMessage()
 
 const expr = ref('0xDEAD & 0xFF')
 const width = ref<Width>(32)

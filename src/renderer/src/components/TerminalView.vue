@@ -19,6 +19,7 @@ import { fmtStamp, stampLines } from '../../../shared/logtext'
 import { VtGuard, reopenResetSequence, type VtGuardStats } from '../../../shared/vtguard'
 import { useAppearanceStore } from '@renderer/stores/appearance'
 import { toXtermTheme } from '@renderer/theme'
+import { usePanelDocument } from '../composables/usePanelWindow'
 
 const props = withDefaults(
   defineProps<{
@@ -49,6 +50,7 @@ const props = withDefaults(
 )
 
 const appearance = useAppearanceStore()
+const panelDocument = usePanelDocument()
 
 const emit = defineEmits<{
   /** 键盘原始输入（Enter 为 \r），由父组件决定发到哪 */
@@ -118,14 +120,35 @@ function fitVisibleTerminal(): void {
 
 /** 窗口最小化/隐藏时 Windows 会丢失 GPU 上下文，回到可见时重建 WebGL 渲染器避免花屏 */
 function onVisibilityChange(): void {
-  if (document.hidden) {
+  if (panelDocument.value.hidden) {
     webglAddon?.dispose()
     webglAddon = null
   } else if (term) {
-    recreateWebgl()
+    if (!webglAddon) recreateWebgl()
     fitVisibleTerminal()
   }
 }
+
+function listenIn(doc: Document): void {
+  doc.addEventListener('visibilitychange', onVisibilityChange)
+  doc.defaultView?.addEventListener('keydown', onGlobalKeydown, true)
+}
+
+function stopListeningIn(doc: Document): void {
+  doc.removeEventListener('visibilitychange', onVisibilityChange)
+  doc.defaultView?.removeEventListener('keydown', onGlobalKeydown, true)
+}
+
+watch(panelDocument, (current, previous) => {
+  if (!term || !termBox.value) return
+  stopListeningIn(previous)
+  listenIn(current)
+  webglAddon?.dispose()
+  webglAddon = null
+  // xterm rebinds its owning window when open() is called after the DOM has moved.
+  term.open(termBox.value)
+  onVisibilityChange()
+}, { flush: 'post' })
 
 onMounted(() => {
   if (!termBox.value || term) return
@@ -167,7 +190,7 @@ onMounted(() => {
   // WebGL 渲染器：刷屏日志高吞吐下性能远优于默认 DOM 渲染器
   // （GPU 不可用时 addon 会告警并自动回退 DOM，不影响功能）
   recreateWebgl()
-  document.addEventListener('visibilitychange', onVisibilityChange)
+  listenIn(panelDocument.value)
   // 键盘直入：xterm 捕获按键后交给父组件发送
   term.onData((data) => {
     if (props.localEcho) {
@@ -264,15 +287,11 @@ onMounted(() => {
   // Ctrl+滚轮缩放（须非 passive 才能阻止默认滚动）
   termBox.value.addEventListener('wheel', onWheel, { passive: false })
   termBox.value.addEventListener('wheel', onHistoryWheel, { passive: false, capture: true })
-  // 全局捕获终端控制键：焦点不在输入框时，Ctrl+C/Z/D/\ 等直接发给终端
-  // （终端会话期间这些键始终作为终端输入）
-  window.addEventListener('keydown', onGlobalKeydown, true)
 })
 
 onUnmounted(() => {
   liveSearchRefresh.cancel()
-  window.removeEventListener('keydown', onGlobalKeydown, true)
-  document.removeEventListener('visibilitychange', onVisibilityChange)
+  stopListeningIn(panelDocument.value)
   termBox.value?.removeEventListener('wheel', onWheel)
   termBox.value?.removeEventListener('wheel', onHistoryWheel, true)
   termBox.value?.removeEventListener('mousedown', onMousedown, true)
@@ -350,6 +369,14 @@ function isEditableTarget(el: EventTarget | null): boolean {
 
 function onGlobalKeydown(e: KeyboardEvent): void {
   if (!term) return
+  const panel = termBox.value?.closest('.tab-page')
+  if (!panel || panel.getAttribute('data-slot') === 'hidden') return
+  const origin = e.target as Element | null
+  if (origin?.closest?.('.el-overlay')) return
+  const targetPanel = origin?.closest?.('.tab-page') ??
+    panel.parentElement?.querySelector('.tab-page.is-term-target:not([data-slot="hidden"])') ??
+    panel.parentElement?.querySelector('.tab-page:not([data-slot="hidden"]):has(.xterm)')
+  if (targetPanel !== panel) return
   const act = resolveGlobalKey({
     ctrlKey: e.ctrlKey,
     altKey: e.altKey,

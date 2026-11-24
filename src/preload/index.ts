@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { IpcRendererEvent } from 'electron'
-import type { ToolEvent, WinInfo } from '../shared/types'
+import type { TabWindowCommand, ToolEvent, WinInfo, WorkbenchVisibility } from '../shared/types'
 
 const api = {
   platform: process.platform,
@@ -41,6 +41,19 @@ const api = {
       const wrapped = (_e: IpcRendererEvent, maximized: boolean): void => cb(maximized)
       ipcRenderer.on('win:maximized', wrapped as never)
       return () => ipcRenderer.removeListener('win:maximized', wrapped as never)
+    },
+    tabWindow(name: string, command: TabWindowCommand): void {
+      ipcRenderer.send('win:tab-window', name, command)
+    },
+    onTabWindowClosed(cb: (name: string, closeWorkbench: boolean) => void): () => void {
+      const wrapped = (_e: IpcRendererEvent, name: string, closeWorkbench: boolean): void => cb(name, closeWorkbench)
+      ipcRenderer.on('win:tab-window-closed', wrapped)
+      return () => ipcRenderer.removeListener('win:tab-window-closed', wrapped)
+    },
+    onWorkbenchVisibility(cb: (visibility: WorkbenchVisibility) => void): () => void {
+      const wrapped = (_e: IpcRendererEvent, visibility: WorkbenchVisibility): void => cb(visibility)
+      ipcRenderer.on('win:workbench-visibility', wrapped)
+      return () => ipcRenderer.removeListener('win:workbench-visibility', wrapped)
     },
     readClipboard(): Promise<string> {
       return ipcRenderer.invoke('win:clipboard-read')

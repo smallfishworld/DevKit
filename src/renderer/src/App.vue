@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, shallowRef } from 'vue'
 import { Brush, Download, Refresh } from '@element-plus/icons-vue'
 import brandMark from '../../../resources/branding/mark.svg'
 import { PLUGIN_CATALOG_PANEL, useDevicePlugins } from '@renderer/stores/devicePlugins'
@@ -8,10 +8,13 @@ import { updateNotice, type UpdateState } from '../../shared/app-updates'
 import { useTabStore, tabIsSplit } from '@renderer/stores/tabs'
 import { useAppearanceStore } from '@renderer/stores/appearance'
 import { toolById, type ToolDef } from '@renderer/tools/registry'
-import { hostSharesQuickCmds, hostSlot, readStoredSplitPct, splitGridColumns, splitPctAtPointer, writeStoredSplitPct, type HostSlot } from './components/split-tab'
+import { hostSharesQuickCmds, type HostSlot } from './components/split-tab'
 import { pickTermMacroTarget } from './composables/useTermMacroTargets'
 import TabBar from './components/TabBar.vue'
-import SplitQuickCmds from './components/SplitQuickCmds.vue'
+import DetachedTabWindow from './components/DetachedTabWindow.vue'
+import WorkbenchBody from './components/WorkbenchBody.vue'
+import WorkbenchPanel from './components/WorkbenchPanel.vue'
+import { useDetachedTabs } from './composables/useDetachedTabs'
 import HomePanel from './components/HomePanel.vue'
 import ExtensionCenter from './components/ExtensionCenter.vue'
 import SettingsDialog from './components/SettingsDialog.vue'
@@ -24,33 +27,31 @@ const tabBarRef = ref<InstanceType<typeof TabBar>>()
 const updateDialogRef = ref<InstanceType<typeof AppUpdateDialog>>()
 const aboutOpen = ref(false)
 const updateState = ref<UpdateState>({ phase: 'idle' })
-
-// ---------- 合并分屏（两个面板并排共用一个标签） ----------
-/** 左成员占比（分隔条拖拽调整，localStorage 记忆，范围 20–80；没有记忆值时均分） */
-const splitPct = ref(readStoredSplitPct())
-/** 内容区恒为四列网格：共享快捷命令栏 | 左成员 | 分隔条 | 右成员；非分屏条目的面板横跨整行 */
-const splitGridStyle = computed(() => ({ gridTemplateColumns: splitGridColumns(splitPct.value) }))
-/** 当前激活的分屏条目（分隔条只为它渲染） */
-const activeSplit = computed(() => {
-  const active = tabs.active
-  return active && tabIsSplit(active) ? active : undefined
+const mainBody = shallowRef<HTMLElement>()
+const { windows, workbenchAvailable, detachTab, attachTab, previewTab, hidePreview, windowMounted } = useDetachedTabs()
+const detachedEntries = computed(() => tabs.tabs.flatMap((tab) => {
+  const entry = windows.get(tab.id)
+  return entry ? [{ tab, window: entry }] : []
+}))
+const activeSplit = computed(() => tabs.active && tabIsSplit(tabs.active) ? tabs.active : undefined)
+const renderedPanels = computed(() => {
+  const main = mainBody.value
+  if (!main) return []
+  return tabs.tabs.flatMap((tab) => {
+    const detached = tabs.detachedIds.includes(tab.id) ? windows.get(tab.id)?.mount : undefined
+    const target = detached ?? main
+    const visible = Boolean(detached) || tab.id === tabs.activeId
+    if (!tabIsSplit(tab)) return [{ item: tab, target, slot: (visible ? 'full' : 'hidden') as HostSlot, termTarget: false }]
+    const termTarget = hostSharesQuickCmds(tab) ? pickTermMacroTarget(tab.members.map((member) => member.id))?.panelId : undefined
+    return tab.members.map((item, index) => ({
+      item, target, slot: (visible ? (index === 0 ? 'left' : 'right') : 'hidden') as HostSlot,
+      termTarget: item.id === termTarget
+    }))
+  })
 })
-/** 当前分屏的两个成员都是终端：共用一条快捷命令栏（各终端自带的不再显示） */
-const sharedCmdsMembers = computed(() => {
-  const split = activeSplit.value
-  return split && hostSharesQuickCmds(split) ? split.members : undefined
-})
-/** 共享快捷命令栏的发送目标（最后点进去的终端）：该面板顶部亮一条主色线；栏收起时不标 */
-const sharedCmdsHidden = ref(false)
-const targetPanelId = computed(() =>
-  sharedCmdsMembers.value && !sharedCmdsHidden.value
-    ? pickTermMacroTarget(sharedCmdsMembers.value.map((m) => m.id))?.panelId
-    : undefined
-)
 
-/** 面板在内容区的落位：面板常驻，合并/拆分只改落位，不重建实例 */
-function panelSlot(panelId: string): HostSlot {
-  return hostSlot(tabs.tabs, tabs.activeId, panelId)
+function attachAt(id: string, x: number, y: number): boolean {
+  return workbenchAvailable.value && (tabBarRef.value?.attachAt(id, x, y) ?? false)
 }
 
 /** 串口面板自带状态栏，避免与全局状态栏重复 */
@@ -60,33 +61,6 @@ const isSerialActive = computed(() => {
   const list = tabIsSplit(active) ? active.members : [active]
   return list.some((m) => m.toolId === 'serial')
 })
-
-let dividerDrag = false
-function onDividerPointerdown(e: PointerEvent): void {
-  // 只响应主键，避免右键/中键在分隔条上误触发拖拽
-  if (e.button !== 0) return
-  dividerDrag = true
-  ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
-}
-function onDividerPointermove(e: PointerEvent): void {
-  if (!dividerDrag) return
-  // 捕获丢失（切窗、系统打断）后不会再有 pointerup：主键已松开就顺手结束，避免悬停即改比例
-  if (!(e.buttons & 1)) {
-    finishDividerDrag()
-    return
-  }
-  const container = (e.currentTarget as HTMLElement).parentElement
-  if (!container) return
-  const rect = container.getBoundingClientRect()
-  // 左侧的共享快捷命令栏不参与两个成员的宽度分配
-  const leading = container.querySelector('.split-cmds')?.getBoundingClientRect().width ?? 0
-  splitPct.value = splitPctAtPointer(e.clientX - rect.left, rect.width, leading)
-}
-function finishDividerDrag(): void {
-  if (!dividerDrag) return
-  dividerDrag = false
-  writeStoredSplitPct(splitPct.value)
-}
 
 const hasUpdateHighlight = computed(
   () => updateState.value.phase === 'available' || updateState.value.phase === 'ready'
@@ -215,7 +189,13 @@ onMounted(() => {
         </div>
       </el-popover>
       <span class="header-divider" aria-hidden="true"></span>
-      <TabBar ref="tabBarRef" />
+      <TabBar
+        ref="tabBarRef"
+        @detach="detachTab"
+        @preview="previewTab"
+        @hide-preview="hidePreview"
+        @cancel-preview="attachTab($event, false)"
+      />
       <button
         v-if="hasUpdateHighlight"
         type="button"
@@ -252,35 +232,27 @@ onMounted(() => {
       </div>
     </header>
 
-    <!-- 面板常驻为内容区网格项：合并/拆分只改落位（data-slot），组件实例（连接、终端回滚、输入状态）原样保留 -->
-    <main class="app-body" :style="splitGridStyle">
-      <!-- 两个终端的分屏：共用一条快捷命令栏，命令发给当前选中的终端 -->
-      <SplitQuickCmds v-if="sharedCmdsMembers" :members="sharedCmdsMembers" @hidden-change="sharedCmdsHidden = $event" />
-      <section
-        v-for="panel in tabs.panelHosts"
-        :key="panel.id"
-        class="tab-page"
-        :class="{ 'is-term-target': panel.id === targetPanelId }"
-        :data-slot="panelSlot(panel.id)"
-      >
-        <component :is="compFor(panel.toolId)" :panel-id="panel.id" @open-extensions="tabs.openTool(extensions)" />
-      </section>
-      <!-- 分隔条（CSS 显式落在第 1 行第 3 列）与中央把手 -->
-      <div
-        v-if="activeSplit"
-        class="split-divider"
-        role="separator"
-        aria-orientation="vertical"
-        aria-label="调整分屏宽度"
-        @pointerdown="onDividerPointerdown"
-        @pointermove="onDividerPointermove"
-        @pointerup="finishDividerDrag"
-        @pointercancel="finishDividerDrag"
-        @lostpointercapture="finishDividerDrag"
-      >
-        <span class="split-grip" aria-hidden="true"></span>
-      </div>
-    </main>
+    <WorkbenchBody :split="activeSplit" @ready="mainBody = $event" />
+
+    <DetachedTabWindow
+      v-for="entry in detachedEntries"
+      :key="entry.tab.id"
+      :entry="entry.window"
+      :tab="entry.tab"
+      :attach-at="attachAt"
+      @attach="attachTab(entry.tab.id)"
+      @ready="entry.window.mount = $event; windowMounted(entry.window)"
+    />
+
+    <WorkbenchPanel
+      v-for="panel in renderedPanels"
+      :key="panel.item.id"
+      :target="panel.target"
+      :slot-name="panel.slot"
+      :term-target="panel.termTarget"
+    >
+      <component :is="compFor(panel.item.toolId)" :panel-id="panel.item.id" @open-extensions="tabs.openTool(extensions)" />
+    </WorkbenchPanel>
 
     <footer v-if="!isSerialActive" class="app-status">
       <div class="status-left">
@@ -457,67 +429,6 @@ onMounted(() => {
 .win-btn.close:hover {
   background: #e81123;
   color: #fff;
-}
-
-/* ---------- 合并分屏（两个面板并排共用一个标签） ---------- */
-/* 面板所在网格与落位规则见 global.css 的 .app-body / .tab-page */
-
-/* 分隔条：显式落在第 1 行第 3 列、占满整行高度。必须显式落位——它在 DOM 里排在
-   右侧面板之后，靠自动放置会掉到第二行。z-index 1 压过两侧面板整棵子树 */
-.split-divider {
-  grid-area: 1 / 3;
-  position: relative;
-  z-index: 1;
-  cursor: col-resize;
-  touch-action: none;
-  user-select: none;
-}
-
-/* 拖拽热区延伸进两侧面板（不占布局）：命中、光标与悬停反馈都落在它上面 */
-.split-divider::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: -6px;
-  right: -6px;
-  background: transparent;
-  transition: background 0.15s ease;
-}
-
-.split-divider:hover::before,
-.split-divider:active::before {
-  background: color-mix(in srgb, var(--el-color-primary) 25%, transparent);
-}
-
-.split-divider::after {
-  content: '';
-  position: absolute;
-  left: 50%;
-  top: 0;
-  bottom: 0;
-  width: 1px;
-  transform: translateX(-50%);
-  background: var(--el-border-color);
-}
-
-/* 中央把手：常驻可见，标出「这里可以拖」；悬停/拖拽时转为主色（盖住细线） */
-.split-grip {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  z-index: 1;
-  width: 4px;
-  height: 28px;
-  transform: translate(-50%, -50%);
-  border-radius: 2px;
-  background: var(--el-text-color-placeholder);
-  transition: background 0.15s ease;
-}
-
-.split-divider:hover .split-grip,
-.split-divider:active .split-grip {
-  background: var(--el-color-primary);
 }
 
 .app-status {

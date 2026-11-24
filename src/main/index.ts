@@ -16,6 +16,7 @@ import { localTerminalService } from './services/localTerminal'
 import { AppUpdateService } from './services/updates'
 import { confirmUpdatedLaunch } from './services/updates/install'
 import { APP_UPDATES } from '../shared/app-updates'
+import { registerTabWindows } from './tab-windows'
 
 let mainWindow: BrowserWindow | null = null
 
@@ -67,6 +68,7 @@ function createWindow(): void {
   })
 
   applyWindowsAppDetails(mainWindow)
+  registerTabWindows(mainWindow, () => shuttingDown)
 
   // 默认以最大化启动（占满工作区，任务栏外全屏）
   mainWindow.maximize()
@@ -105,7 +107,7 @@ function createWindow(): void {
 app.on('second-instance', () => {
   if (mainWindow) {
     if (mainWindow.isMinimized()) mainWindow.restore()
-    mainWindow.focus()
+    mainWindow.show()
   }
 })
 

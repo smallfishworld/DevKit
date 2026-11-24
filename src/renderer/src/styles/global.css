@@ -141,6 +141,10 @@ html[data-ui-theme] {
   grid-template-rows: minmax(0, 1fr);
 }
 
+.tab-pages {
+  display: contents;
+}
+
 .tab-page {
   position: relative;
   /* 层叠上下文：面板内部任意 z-index 元素都被困在自己格内，不会盖住分隔条热区 */
@@ -168,7 +172,7 @@ html[data-ui-theme] {
 }
 
 /* 共享快捷命令栏的发送目标（最后点进去的终端）：面板顶部亮一条主色线 */
-.tab-page.is-term-target::after {
+.show-term-target > .tab-pages > .tab-page.is-term-target::after {
   content: '';
   position: absolute;
   top: 0;

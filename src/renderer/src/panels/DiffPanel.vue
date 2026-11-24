@@ -5,11 +5,13 @@
  * 目标视图载入双文件并自动对比。
  */
 import { ref, shallowRef } from 'vue'
-import { ElMessage } from 'element-plus'
+import { usePanelMessage } from '@renderer/composables/panelOverlays'
 import TextCompareView from '../components/diff/TextCompareView.vue'
 import HexCompareView from '../components/diff/HexCompareView.vue'
 import FolderCompareView from '../components/diff/FolderCompareView.vue'
 import { useDiff } from '../composables/useDiff'
+
+const ElMessage = usePanelMessage()
 
 type Mode = 'text' | 'hex' | 'folder'
 const mode = ref<Mode>('text')

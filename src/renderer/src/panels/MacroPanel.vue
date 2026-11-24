@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { usePanelMessage, usePanelMessageBox } from '@renderer/composables/panelOverlays'
 import type { CheckboxValueType } from 'element-plus'
 import {
   Aim,
@@ -24,6 +24,9 @@ import type {
 } from '../../../shared/macro'
 import type { InputEventData, KeyEventData, MouseEventData, WheelEventData } from '../../../shared/types'
 import { vkName } from '../../../shared/keynames'
+
+const ElMessage = usePanelMessage()
+const ElMessageBox = usePanelMessageBox()
 
 const props = defineProps<{ panelId: string }>()
 

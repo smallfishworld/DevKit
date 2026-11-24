@@ -9,12 +9,14 @@
  * - 保存：按读入编码写回左右文件（复制只改内存，显式「保存」才落盘）
  */
 import { computed, nextTick, onMounted, ref, shallowRef, watch } from 'vue'
-import { ElMessage } from 'element-plus'
+import { usePanelMessage } from '@renderer/composables/panelOverlays'
 import { ArrowDown, ArrowUp, FolderOpened } from '@element-plus/icons-vue'
 import type { AlignRow, DiffEncoding, InlineSeg, TextDiffRes } from '../../../../shared/diff'
 import { textDiff } from '../../../../shared/textdiff'
 import { ENCODINGS, useDiff } from '../../composables/useDiff'
 import { useDropSides } from '../../composables/useDiffDrop'
+
+const ElMessage = usePanelMessage()
 
 const props = defineProps<{
   /** 父层（文件夹视图"对比文件"）传入的待比较文件；seq 递增防同路径不触发 */

@@ -3,7 +3,7 @@ import type { SshParams } from '../../../shared/ssh'
 import type { SerialParams } from '../../../shared/serial'
 import type { ToolDef } from '@renderer/tools/registry'
 import { dedupeRecent, sessionIdentity } from '@renderer/components/session-identity'
-import { hostSharesQuickCmds, planMerge, splitTabTitle, type MergePlan } from '@renderer/components/split-tab'
+import { hostSharesQuickCmds, planMerge, readStoredSplitPct, splitTabTitle, type MergePlan } from '@renderer/components/split-tab'
 import { reorderTabIds } from '@renderer/components/workbench-navigation'
 
 export interface TabItem {
@@ -21,6 +21,7 @@ export interface SplitTab {
   id: string
   kind: 'split'
   members: TabItem[]
+  splitPct: number
 }
 
 /** 标签条条目：普通工具标签 或 合并分屏标签 */
@@ -113,11 +114,18 @@ function findEntry(tabs: WorkTab[], id: string): { host: WorkTab; member?: TabIt
 export const useTabStore = defineStore('tabs', {
   state: () => ({
     tabs: [{ id: 'home', toolId: 'home', title: '工具箱' }] as WorkTab[],
+    detachedIds: [] as string[],
     activeId: 'home',
     recent: sanitizeRecent(readStorage(RECENT_STORAGE_KEY, [])),
     pinnedTools: sanitizePinned(readStorage(PINNED_STORAGE_KEY, []))
   }),
   getters: {
+    workbenchTabs(state): WorkTab[] {
+      return state.tabs.filter((tab) => !state.detachedIds.includes(tab.id))
+    },
+    hostId(state): (id: string) => string | undefined {
+      return (id: string) => findEntry(state.tabs, id)?.host.id
+    },
     active(state): WorkTab | undefined {
       return state.tabs.find((t) => t.id === state.activeId)
     },
@@ -138,7 +146,10 @@ export const useTabStore = defineStore('tabs', {
     },
     /** 该会话当前是否显示在内容区：自身条目激活，或所在分屏条目激活 */
     sessionVisible(state): (id: string) => boolean {
-      return (id: string) => findEntry(state.tabs, id)?.host.id === state.activeId
+      return (id: string) => {
+        const host = findEntry(state.tabs, id)?.host.id
+        return !!host && (host === state.activeId || state.detachedIds.includes(host))
+      }
     },
     /** 该面板是否处在「两个终端共用一条快捷命令栏」的分屏里（是则不再显示自带的命令栏） */
     sharesQuickCmds(state): (id: string) => boolean {
@@ -170,6 +181,17 @@ export const useTabStore = defineStore('tabs', {
     }
   },
   actions: {
+    markDetached(id: string): boolean {
+      const index = this.workbenchTabs.findIndex((tab) => tab.id === id)
+      if (id === 'home' || index < 0) return false
+      const next = this.workbenchTabs[index - 1] ?? this.workbenchTabs[index + 1]
+      this.detachedIds.push(id)
+      if (this.activeId === id) this.activeId = next?.id ?? 'home'
+      return true
+    },
+    markAttached(id: string): void {
+      this.detachedIds = this.detachedIds.filter((item) => item !== id)
+    },
     openTool(tool: ToolDef, previous?: TabItem): void {
       if (tool.singleton) {
         // 单例只此一份：已开实例即使正待在分屏里也复用（激活其所在条目）
@@ -199,12 +221,12 @@ export const useTabStore = defineStore('tabs', {
      * entry.tabId 指定已有会话；entry.tool 指定新开工具（单例复用已有实例）。
      */
     mergeIntoSplit(anchorId: string, entry: { tool?: ToolDef; tabId?: string }): boolean {
-      const anchor = this.tabs.find((t) => t.id === anchorId)
+      const anchor = this.workbenchTabs.find((t) => t.id === anchorId)
       if (!anchor || tabIsSplit(anchor) || anchor.id === 'home') return false
       let joiner: TabItem | undefined
       if (entry.tabId) {
         // 已开会话：独立标签或别的分屏里的成员都行（分屏条目自身不可并入）
-        joiner = findEntry(this.tabs, entry.tabId)?.member
+        joiner = findEntry(this.workbenchTabs, entry.tabId)?.member
         if (!joiner || joiner.id === 'home') return false
       } else if (entry.tool) {
         const tool = entry.tool
@@ -219,6 +241,11 @@ export const useTabStore = defineStore('tabs', {
         return false
       }
       if (!joiner || joiner.id === anchorId) return false
+      const hostId = this.hostId(joiner.id)
+      if (hostId && this.detachedIds.includes(hostId)) {
+        this.activate(joiner.id)
+        return false
+      }
       if (!this.tabs.some((t) => t.id === joiner!.id)) {
         // 目标还不是独立标签：新开实例插到锚点之后；别的分屏里的成员则从原分屏摘出，
         // 原分屏剩下的成员顶替它留在原位。两步之后才能走统一的合并计划
@@ -240,14 +267,19 @@ export const useTabStore = defineStore('tabs', {
       const second = plan.firstId === anchorId ? joiner : (anchor as TabItem)
       const rest = this.tabs.filter((t) => t.id !== anchorId && t.id !== joiner.id)
       seq += 1
-      const split: SplitTab = { id: `split#${seq}`, kind: 'split', members: [first, second] }
+      const split: SplitTab = { id: `split#${seq}`, kind: 'split', members: [first, second], splitPct: readStoredSplitPct() }
       rest.splice(Math.min(plan.index, rest.length), 0, split)
       this.tabs = rest
       this.activate(split.id)
       return true
     },
+    resizeSplit(id: string, pct: number): void {
+      const split = findEntry(this.tabs, id)?.host
+      if (split && tabIsSplit(split)) split.splitPct = pct
+    },
     /** 拆分：把分屏标签的成员还原为独立标签（不销毁面板与连接） */
     unsplit(splitId: string): boolean {
+      if (this.detachedIds.includes(splitId)) return false
       const idx = this.tabs.findIndex((t) => t.id === splitId)
       if (idx < 0) return false
       const tab = this.tabs[idx]
@@ -260,6 +292,7 @@ export const useTabStore = defineStore('tabs', {
     activate(id: string): void {
       const entry = findEntry(this.tabs, id)
       if (!entry) return
+      if (this.detachedIds.includes(entry.host.id)) return
       this.activeId = entry.host.id
       if (tabIsSplit(entry.host)) {
         entry.host.members.forEach((m) => this.remember(m))
@@ -340,10 +373,12 @@ export const useTabStore = defineStore('tabs', {
       const idx = this.tabs.findIndex((t) => t.id === id)
       if (idx < 0 || id === 'home') return
       const [tab] = this.tabs.splice(idx, 1)
+      this.markAttached(id)
       const members = tabIsSplit(tab) ? tab.members : [tab]
       members.forEach((m) => this.release(m))
       if (this.activeId === id) {
-        const fallback = this.tabs[idx - 1] ?? this.tabs[idx]
+        const visible = (item: WorkTab) => !this.detachedIds.includes(item.id)
+        const fallback = this.tabs.slice(0, idx).findLast(visible) ?? this.tabs.slice(idx).find(visible)
         this.activeId = fallback?.id ?? 'home'
       }
     },
@@ -352,6 +387,7 @@ export const useTabStore = defineStore('tabs', {
      * （面板与连接不受影响；分屏正显示时接着显示留下的一侧）。
      */
     closeSplitSide(id: string, side: 0 | 1): boolean {
+      if (this.detachedIds.includes(id)) return false
       const tab = this.tabs.find((t) => t.id === id)
       if (!tab || !tabIsSplit(tab)) return false
       const kept = tab.members[side === 0 ? 1 : 0]
@@ -362,18 +398,18 @@ export const useTabStore = defineStore('tabs', {
       return true
     },
     closeOthers(keepId: string): void {
-      const targets = this.tabs.filter((t) => t.id !== 'home' && t.id !== keepId).map((t) => t.id)
+      const targets = this.workbenchTabs.filter((t) => t.id !== 'home' && t.id !== keepId).map((t) => t.id)
       for (const id of targets) this.close(id)
       if (this.tabs.some((t) => t.id === keepId)) this.activate(keepId)
     },
     closeRight(anchorId: string): void {
-      const anchorIdx = this.tabs.findIndex((t) => t.id === anchorId)
+      const anchorIdx = this.workbenchTabs.findIndex((t) => t.id === anchorId)
       if (anchorIdx < 0) return
-      const targets = this.tabs.slice(anchorIdx + 1).filter((t) => t.id !== 'home').map((t) => t.id)
+      const targets = this.workbenchTabs.slice(anchorIdx + 1).map((t) => t.id)
       for (const id of targets) this.close(id)
     },
     closeAll(): void {
-      const targets = this.tabs.filter((t) => t.id !== 'home').map((t) => t.id)
+      const targets = this.workbenchTabs.filter((t) => t.id !== 'home').map((t) => t.id)
       for (const id of targets) this.close(id)
       this.activeId = 'home'
     },

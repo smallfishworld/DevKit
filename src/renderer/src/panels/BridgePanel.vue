@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { usePanelMessage, usePanelMessageBox } from '@renderer/composables/panelOverlays'
 import { Connection, Delete, Refresh, VideoPlay, VideoPause } from '@element-plus/icons-vue'
 import type {
   BridgeChannelStatus,
@@ -9,6 +9,9 @@ import type {
 } from '../../../shared/bridge-protocol'
 import { MAX_UI_LOG } from '../../../shared/bridge-protocol'
 import { useTabStore } from '@renderer/stores/tabs'
+
+const ElMessage = usePanelMessage()
+const ElMessageBox = usePanelMessageBox()
 
 const props = defineProps<{ panelId: string }>()
 const tabStore = useTabStore()

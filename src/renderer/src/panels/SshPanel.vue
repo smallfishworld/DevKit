@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
-import { ElMessage } from 'element-plus'
+import { usePanelMessage } from '@renderer/composables/panelOverlays'
 import {
   ArrowRight,
   CircleClose,
@@ -27,6 +27,8 @@ import { useTermMacros } from '../composables/useTermMacros'
 import { activateTermMacroTarget, registerTermMacroTarget } from '../composables/useTermMacroTargets'
 import { useSidebarDrag } from '../composables/useSidebarDrag'
 import { useTabStore } from '@renderer/stores/tabs'
+
+const ElMessage = usePanelMessage()
 
 const props = defineProps<{ panelId: string }>()
 const tabStore = useTabStore()

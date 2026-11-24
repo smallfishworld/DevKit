@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { usePanelMessage } from '@renderer/composables/panelOverlays'
 import { CopyDocument } from '@element-plus/icons-vue'
 import { encodeInteger, parseCalendarTime } from '../../../shared/converter-workbench'
+
+const ElMessage = usePanelMessage()
 
 /** 自动识别 s / ms / us / ns / 0xHEX 时间戳 */
 function parseTs(input: string): number | null {

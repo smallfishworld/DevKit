@@ -16,6 +16,12 @@ export interface ToolEvent {
   payload?: unknown
 }
 
+export type TabWindowCommand =
+  | { action: 'move'; offsetX: number; offsetY: number }
+  | { action: 'show' | 'hide' | 'focus' | 'minimize' | 'toggle-maximize' | 'attach' | 'close' }
+
+export type WorkbenchVisibility = 'shown' | 'minimized' | 'closed'
+
 /** 渲染进程暴露给面板的 API（由 preload 注入 window.api） */
 export interface DevKitApi {
   readonly platform: string
@@ -34,6 +40,9 @@ export interface DevKitApi {
     close(): void
     info(): Promise<WinInfo>
     onMaxChange(cb: (maximized: boolean) => void): () => void
+    tabWindow(name: string, command: TabWindowCommand): void
+    onTabWindowClosed(cb: (name: string, closeWorkbench: boolean) => void): () => void
+    onWorkbenchVisibility(cb: (visibility: WorkbenchVisibility) => void): () => void
     readClipboard(): Promise<string>
     writeClipboard(text: string): Promise<boolean>
   }

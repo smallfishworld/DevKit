@@ -4,13 +4,17 @@
  * 左侧列表 + 无弹窗录制 + 多步骤编辑（命令 / 延时 / 按键）
  * 宏库与录制状态为全局共享（composables/useTermMacros）
  */
-import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { ElMessage } from 'element-plus'
+import { computed, onMounted, reactive, ref, watch, watchEffect } from 'vue'
+import { usePanelMessage } from '@renderer/composables/panelOverlays'
+import { usePanelDocument } from '@renderer/composables/usePanelWindow'
 import { ArrowDown, ArrowRight, CopyDocument, Delete, EditPen, Plus, Timer, VideoCamera } from '@element-plus/icons-vue'
 import type { QuickCmd, QuickCmdStep, PluginActionReference, PluginMacroAction } from '../../../shared/term-macro'
 import { TERM_KEYS, keyName, stepPreview, resolveDropInsertion, validatePlayback } from '../../../shared/term-macro'
 import { useTermMacros } from '../composables/useTermMacros'
 import { pluginActionKey } from './plugin-config-form'
+
+const ElMessage = usePanelMessage()
+const ownerDocument = usePanelDocument()
 
 const props = defineProps<{
   /** 未连接时点击宏只提示不执行 */
@@ -384,9 +388,13 @@ async function onGrpDrop(before: string): Promise<void> {
   await onDrop(before)
 }
 
-// Esc 取消多选
-window.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && selected.value.size > 0) selected.value = new Set()
+watchEffect((onCleanup) => {
+  const owner = ownerDocument.value
+  const cancelSelection = (e: KeyboardEvent) => {
+    if (e.key === 'Escape' && selected.value.size > 0) selected.value = new Set()
+  }
+  owner.addEventListener('keydown', cancelSelection)
+  onCleanup(() => owner.removeEventListener('keydown', cancelSelection))
 })
 // ---------- 导入 / 导出 ----------
 async function onExport(): Promise<void> {

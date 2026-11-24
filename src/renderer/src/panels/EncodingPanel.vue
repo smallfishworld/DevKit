@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { ElMessage } from 'element-plus'
+import { usePanelMessage } from '@renderer/composables/panelOverlays'
 import { CopyDocument } from '@element-plus/icons-vue'
+
+const ElMessage = usePanelMessage()
 
 const CODEC_PANEL = 'codec#main'
 

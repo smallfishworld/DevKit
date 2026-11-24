@@ -1,13 +1,15 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { Coin, Download, TopRight } from '@element-plus/icons-vue'
-import { ElMessageBox } from 'element-plus'
+import { usePanelMessageBox } from '@renderer/composables/panelOverlays'
 import { useTabStore } from '@renderer/stores/tabs'
 import { pluginRequest, useDevicePlugins } from '@renderer/stores/devicePlugins'
 import { TOOLS } from '@renderer/tools/registry'
 import type { PluginDescriptor, PluginInstance } from '../../../shared/plugins'
 import DevicePluginEditor from './DevicePluginEditor.vue'
 import ExtensionSources from './ExtensionSources.vue'
+
+const ElMessageBox = usePanelMessageBox()
 
 const tabs = useTabStore()
 const plugins = useDevicePlugins()

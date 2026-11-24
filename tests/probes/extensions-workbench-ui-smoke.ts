@@ -6,6 +6,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { app, BrowserWindow, dialog, ipcMain } from 'electron'
 import { SerialPort } from 'serialport'
 import { disposeAllPanels, registerService, registerToolIpc, setMainWindow } from '../../src/main/ipc'
+import { registerTabWindows } from '../../src/main/tab-windows'
 import { setSection } from '../../src/main/services/macro/configStore'
 import { PluginService } from '../../src/main/services/plugins'
 import { PluginStore } from '../../src/main/services/plugins/store'
@@ -99,9 +100,10 @@ async function main(): Promise<void> {
 
   const win = new BrowserWindow({
     width: 1100, height: 820, show: false,
-    webPreferences: { preload: join(process.cwd(), 'out/preload/index.js'), contextIsolation: true, backgroundThrottling: false }
+    webPreferences: { preload: join(process.cwd(), 'out/preload/index.js'), contextIsolation: true, sandbox: false, backgroundThrottling: false }
   })
   setMainWindow(win)
+  registerTabWindows(win, () => false)
   const failures: string[] = []
   win.webContents.on('console-message', ({ message, level }) => {
     if (level === 'error' && !/WebGL|Autofill/.test(message)) failures.push(message)
@@ -328,8 +330,40 @@ async function main(): Promise<void> {
     await until(() => click('.recent-chip'), '从最近记录重新打开 COM3')
     await until(() => has('.conn-bar [aria-label="连接参数"]', '9600'), '重新打开时保留参数')
     assert.deepEqual(failures, [])
+
+    let detached: BrowserWindow | undefined
+    win.webContents.once('did-create-window', (child) => { detached = child })
+    await js(`document.querySelector('.tab-item.active .tab-select').dispatchEvent(
+      new MouseEvent('contextmenu', { bubbles: true, clientX: 180, clientY: 32 }))`)
+    await win.webContents.executeJavaScript(`
+      [...document.querySelectorAll('.tab-context-menu button')].find(button => button.textContent.trim() === '移至新窗口').click()
+    `, true)
+    await until(() => detached, '创建独立窗口')
+    const detachedJs = <T>(source: string): Promise<T> => detached!.webContents.executeJavaScript(source)
+    await until(() => detachedJs('!!document.querySelector(".serial-panel")'), '串口面板在独立窗口')
+    assert.equal(await detachedJs('!!document.querySelector(".toolbox")'), false)
+    await detachedJs('document.querySelector(".send-bar .el-select .el-select__wrapper").click()')
+    const selectOpen = () => detachedJs(`
+      [...document.querySelectorAll('.el-select__popper')].some(el => el.getClientRects().length > 0)
+    `)
+    await until(selectOpen, '独立窗口下拉框打开')
+    await detachedJs(`document.querySelector('.detached-header').dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))`)
+    await until(async () => !await selectOpen(), '在独立窗口点击下拉框外关闭')
+    await detachedJs(`[...document.querySelectorAll('.term-opts button')].find(el => el.textContent.trim() === '日志设置').click()`)
+    const dialogOpen = () => detachedJs('!!document.querySelector(".el-dialog__headerbtn")?.getClientRects().length')
+    await until(dialogOpen, '独立窗口日志设置弹窗打开')
+    await detachedJs(`document.activeElement.dispatchEvent(new KeyboardEvent('keydown',
+      { key: 'Escape', code: 'Escape', bubbles: true, cancelable: true }))`)
+    await until(async () => !await dialogOpen(), '在独立窗口按 Esc 关闭日志设置')
+    await detachedJs('document.querySelector(".detached-return").click()').catch((error) => {
+      if (!detached?.isDestroyed()) throw error
+    })
+    await until(() => detached?.isDestroyed(), '移回主窗口后独立窗口关闭')
+    await until(() => has('.conn-bar [aria-label="连接参数"]', '9600'), '移回时保留串口参数')
+    // Chromium can defer resize notifications by a frame when adopting live panel nodes.
+    assert.deepEqual(failures.filter((message) => message !== 'ResizeObserver loop completed with undelivered notifications.'), [])
     if (liveOfficial) console.log('DevKit 官方 HTTPS 索引 → 安装包校验 → 官方插件默认 PING/PONG 用例通过')
-    console.log('工作台 UI 通过：工具面板、补码、时区毫秒、换肤、连接草稿与重连、插件入口、传输取消、日志保留')
+    console.log('工作台 UI 通过：工具面板、补码、时区毫秒、换肤、连接草稿与重连、插件入口、传输取消、日志保留、独立窗口弹层与移回')
   } catch (error) {
     console.error(await win.webContents.executeJavaScript('document.body.innerText').catch(() => 'UI unavailable'))
     await writeFile(join(process.cwd(), 'out/extensions-smoke-failure.png'), (await win.capturePage()).toPNG()).catch(() => {})
