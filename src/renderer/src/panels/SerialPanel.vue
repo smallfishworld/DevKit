@@ -28,7 +28,7 @@ import { ByteCounterThrottle } from '../../../shared/terminal-stream'
 import QuickCmdManager from '@renderer/components/QuickCmdManager.vue'
 import type { SerialConfig, SerialEncoding, SerialParams, SerialTransferEvt, TransferProtocol } from '../../../shared/serial'
 import { BAUD_RATES, DEFAULT_SERIAL_PARAMS, normalizeSerialParams } from '../../../shared/serial'
-import { normalizePortPath, portRemark, portTabTitle } from '../../../shared/serial-title'
+import { normalizePortPath } from '../../../shared/serial-title'
 import type { VtGuardStats } from '../../../shared/vtguard'
 import type { QuickCmdStep, PluginActionReference, PluginMacroAction } from '../../../shared/term-macro'
 import { useTermMacros } from '../composables/useTermMacros'
@@ -38,7 +38,7 @@ import { useTabStore } from '@renderer/stores/tabs'
 const props = defineProps<{ panelId: string }>()
 const emit = defineEmits<{ openExtensions: [] }>()
 const tabStore = useTabStore()
-const initialSerialParams = tabStore.tabs.find((tab) => tab.id === props.panelId)?.serialParams
+const initialSerialParams = tabStore.sessionById(props.panelId)?.serialParams
 
 interface PortInfo {
   path: string
@@ -243,18 +243,11 @@ let unsubs: Array<() => void> = []
 let signalTimer: ReturnType<typeof setInterval> | null = null
 
 const sessions = computed(() => config.value?.sessions ?? [])
-/** 端口备注表（显式备注 → 预设名回退，见 shared/serial-title.ts） */
-const portLabels = computed(() => config.value?.portLabels ?? {})
-/** 顶栏标题：与标签页同源，但端口号本身就是标题时不重复拼 */
-const portHeading = computed(() => {
-  const path = displayedParams.value.path
-  if (!path) return '串口'
-  const remark = portRemark(path, portLabels.value, sessions.value)
-  return remark && remark !== normalizePortPath(path) ? `${remark} · ${normalizePortPath(path)}` : normalizePortPath(path)
-})
-/** 标签页标题：有备注时「备注 (COM1)」，否则裸端口号 */
+/** 顶栏标题：端口号（COM3）；未选端口时显示「串口」 */
+const portHeading = computed(() => normalizePortPath(displayedParams.value.path) || '串口')
+/** 标签页标题：显示端口号；未选端口时回退工具名 */
 function syncTabTitle(path: string): void {
-  if (path) tabStore.rename(props.panelId, portTabTitle(path, portLabels.value, sessions.value))
+  tabStore.rename(props.panelId, path ? normalizePortPath(path) : '串口助手')
 }
 
 // ---------- 快捷命令宏（全局共享，见 composables/useTermMacros） ----------
@@ -397,7 +390,7 @@ onMounted(async () => {
   sidebarHidden.value = config.value.sidebarHidden === true
   termView.value?.info('就绪。选择串口后点击「连接」，终端内可直接输入命令。')
   await refreshPorts()
-  // 恢复上次端口时标签页也要带上备注（refreshPorts 里已按最新配置重算）
+  // 恢复上次端口时标签标题同步为端口号
   syncTabTitle(params.path)
   await refreshPluginStatus()
 })
@@ -420,15 +413,13 @@ async function refreshPorts(): Promise<void> {
   if (params.path) syncTabTitle(params.path)
 }
 
-/** 连接参数编辑区里正在编辑的端口备注（随连接参数保存到 config.portLabels） */
-const connectionLabel = ref('')
+/** 连接参数草稿复位（不含备注，备注功能已移除） */
 function resetConnectionDraft(): void {
   Object.assign(connectionDraft, params)
   presetName.value = ''
   newPresetName.value = ''
   presetDeleteArmed.value = false
   connectionError.value = ''
-  connectionLabel.value = portLabels.value[normalizePortPath(connectionDraft.path)] ?? ''
 }
 
 /** 选中已存预设：把该预设的完整参数套进草稿（不直接连接） */
@@ -438,13 +429,7 @@ function applyPreset(name: string | undefined): void {
   if (!preset) return
   Object.assign(connectionDraft, preset.params)
   connectionError.value = ''
-  connectionLabel.value = portLabels.value[normalizePortPath(preset.params.path)] ?? ''
 }
-
-// 切换端口时带出该端口已记住的备注，避免把 A 口的备注写到 B 口上
-watch(() => connectionDraft.path, (path) => {
-  connectionLabel.value = portLabels.value[normalizePortPath(path)] ?? ''
-})
 
 async function saveConnection(reconnect: boolean): Promise<void> {
   if (connectionSaving.value || opening.value) return
@@ -456,21 +441,12 @@ async function saveConnection(reconnect: boolean): Promise<void> {
   connectionSaving.value = true
   connectionError.value = ''
   try {
-    // 端口备注随连接参数一起保存：标签页显示「备注 (COM1)」。键做归一化（com1 / \.\COM1 同口）
-    const labelKey = normalizePortPath(next.path)
-    if (config.value && labelKey) {
-      const labels = { ...(config.value.portLabels ?? {}) }
-      const label = connectionLabel.value.trim()
-      if (label && label !== labelKey) labels[labelKey] = label
-      else delete labels[labelKey]
-      config.value.portLabels = labels
-    }
     await persistConfig(next)
     Object.assign(params, next)
     if (reconnect && open.value) await closePort()
     connectionSettings.value = false
     if (reconnect) await openPort()
-    // 备注可能刚改过：不论连没连上都按新备注刷新标题
+    // 端口可能刚换过：按新端口刷新标签标题
     syncTabTitle(next.path)
   } catch (error) {
     connectionError.value = String(error)
@@ -509,7 +485,7 @@ async function openPort(): Promise<void> {
     await window.api.invoke('serial', 'dtr', props.panelId, { on: true }).catch(() => {})
     await window.api.invoke('serial', 'rts', props.panelId, { on: true }).catch(() => {})
     termView.value?.info(`已打开 ${params.path} @ ${params.baudRate}，终端内可直接输入`)
-    tabStore.rename(props.panelId, portTabTitle(params.path, portLabels.value, sessions.value))
+    syncTabTitle(params.path)
     void persistConfig().catch((error: unknown) => ElMessage.warning(String(error)))
     startSignalPoll()
     termView.value?.focus()
@@ -524,7 +500,7 @@ async function closePort(): Promise<void> {
   await window.api.invoke('serial', 'close', props.panelId)
   open.value = false
   activeParams.value = undefined
-  tabStore.rename(props.panelId, params.path ? portTabTitle(params.path, portLabels.value, sessions.value) : '串口助手')
+  syncTabTitle(params.path)
   termView.value?.info('已断开')
 }
 
@@ -717,9 +693,7 @@ async function persistConfig(nextParams: SerialParams = params): Promise<void> {
   await window.api.invoke('serial', 'config:set', props.panelId, JSON.parse(JSON.stringify(updated)))
 }
 
-/** 把连接参数浮层里的当前草稿存成预设：选中预设时直接覆盖，未选中时询问名字。
- *  预设名只作备注的「回退来源」（见 shared/serial-title.ts），不覆盖用户显式填写的备注名——
- *  否则保存预设会悄悄改掉用户已经设好的标签页标题。 */
+/** 把连接参数浮层里的当前草稿存成预设：选中预设时直接覆盖，未选中时询问名字。 */
 async function savePreset(): Promise<void> {
   if (!config.value) return
   const next = normalizeSerialParams(connectionDraft)
@@ -734,8 +708,6 @@ async function savePreset(): Promise<void> {
   presetName.value = name
   newPresetName.value = ''
   await persistConfig()
-  // 无显式备注时标题回退到最新预设名；有显式备注则保持不变
-  syncTabTitle(next.path)
   ElMessage.success(`预设「${name}」已保存`)
 }
 
@@ -756,8 +728,6 @@ async function deletePreset(): Promise<void> {
   config.value.sessions = config.value.sessions.filter((item) => item.name !== name)
   presetName.value = ''
   await persistConfig()
-  // 预设名可能是该端口的备注回退来源：删掉后标题要跟着回退
-  syncTabTitle(preset.params.path)
   ElMessage.success(`预设「${name}」已删除`)
 }
 
@@ -812,11 +782,6 @@ async function deletePreset(): Promise<void> {
                   </el-select>
                   <el-button size="small" :icon="Refresh" aria-label="刷新串口列表" @click="refreshPorts" />
                 </div>
-              </div>
-              <div class="conn-field"><span>备注名</span>
-                <el-input v-model="connectionLabel" size="small" maxlength="24" clearable
-                  :placeholder="`如：黑色串口板子（标签显示为「备注 (${connectionDraft.path || 'COM1'})」）`"
-                  aria-label="端口备注名" @keydown.enter.prevent />
               </div>
               <div class="conn-field"><span>波特率</span>
                 <el-select v-model="connectionDraft.baudRate" :teleported="false" aria-label="波特率" size="small"

@@ -4,17 +4,27 @@ import { Search } from '@element-plus/icons-vue'
 import { TOOLS } from '@renderer/tools/registry'
 import { useTabStore } from '@renderer/stores/tabs'
 import { launcherIndex, matchesTool } from './workbench-navigation'
+import { memberTabIds } from './split-tab'
+
+const props = defineProps<{ splitAnchorId?: string | null }>()
+const emit = defineEmits<{ closed: [] }>()
 
 const tabs = useTabStore()
 const dialog = ref<HTMLDialogElement>()
 const query = ref('')
 const selected = ref(0)
+// 会话条目排除「当前正在显示」的标签（含分屏成员）：选中它没有可见变化
+const visibleIds = computed(() => {
+  const active = tabs.active
+  return new Set(active ? memberTabIds(active) : [])
+})
 const entries = computed(() => [
-  ...tabs.tabs.flatMap((tab) => {
+  ...tabs.flatSessions.flatMap((tab) => {
     const tool = TOOLS.find((item) => item.id === tab.toolId)
-    return tool && ['serial', 'ssh', 'local-terminal'].includes(tool.id)
-      ? [{ key: tab.id, name: tab.title, tool, tabId: tab.id }]
-      : []
+    if (!tool || !['serial', 'ssh', 'local-terminal'].includes(tool.id)) return []
+    // 分屏模式：锚点自身不可再合并；普通模式：隐藏正在显示的会话
+    if (props.splitAnchorId) return tab.id === props.splitAnchorId ? [] : [{ key: tab.id, name: tab.title, tool, tabId: tab.id }]
+    return visibleIds.value.has(tab.id) ? [] : [{ key: tab.id, name: tab.title, tool, tabId: tab.id }]
   }),
   ...TOOLS.filter((tool) => tool.ready).map((tool) => ({ key: tool.id, name: tool.name, tool, tabId: '' }))
 ].filter(({ name, tool }) => matchesTool(query.value, name, tool.name, tool.id, tool.description)))
@@ -29,6 +39,12 @@ function open(): void {
 function activate(index: number): void {
   const entry = entries.value[index]
   if (!entry) return
+  if (props.splitAnchorId) {
+    // 分屏模式：选中即与锚点标签合并（已有会话直接并入；工具则新开实例后并入）
+    tabs.mergeIntoSplit(props.splitAnchorId, { tool: entry.tabId ? undefined : entry.tool, tabId: entry.tabId || undefined })
+    dialog.value?.close()
+    return
+  }
   dialog.value?.close()
   if (entry.tabId) tabs.activate(entry.tabId)
   else tabs.openTool(entry.tool)
@@ -66,7 +82,7 @@ defineExpose({ open })
 
 <template>
   <Teleport to="body">
-    <dialog ref="dialog" class="tool-launcher" aria-label="快速打开工具">
+    <dialog ref="dialog" class="tool-launcher" aria-label="快速打开工具" @close="emit('closed')">
       <div class="launcher-search">
         <el-icon aria-hidden="true"><Search /></el-icon>
         <input v-model="query" type="search" role="combobox" aria-expanded="true" aria-controls="launcher-tools"

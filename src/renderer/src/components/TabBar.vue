@@ -1,14 +1,19 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
-import { ArrowLeft, ArrowRight, Box, Close, CopyDocument, House, Plus } from '@element-plus/icons-vue'
-import { connectionLabels, useTabStore, type TabItem } from '@renderer/stores/tabs'
+import { ArrowLeft, ArrowRight, Box, Close, CopyDocument, House, Plus, Right } from '@element-plus/icons-vue'
+import { connectionLabels, useTabStore, tabIsSplit, type TabItem, type WorkTab } from '@renderer/stores/tabs'
 import { toolById } from '@renderer/tools/registry'
 import { cycleTabId, tabIdByDigit } from './workbench-navigation'
+import { memberTabIds, splitTabTitle } from './split-tab'
+import { draggingId, overId, overSide } from './tab-drag'
 import ToolLauncher from './ToolLauncher.vue'
 
 const tabs = useTabStore()
 const launcher = ref<InstanceType<typeof ToolLauncher>>()
 const stripRef = ref<HTMLElement>()
+
+/** 分屏模式锚点：非空时选择器选中即与该标签合并（选择器关闭后自动复位） */
+const splitAnchorId = ref<string | null>(null)
 
 // ---------- 溢出滚动状态 ----------
 const canScrollLeft = ref(false)
@@ -47,10 +52,24 @@ watch(
   { flush: 'post' }
 )
 
-// ---------- 拖拽排序（左右半区精准插入，支持拖到队尾） ----------
-const draggingId = ref<string | null>(null)
-const overId = ref<string | null>(null)
-const overSide = ref<'before' | 'after'>('before')
+// ---------- 合并分屏条目的模板辅助（避免模板内类型收窄） ----------
+
+function tabTitle(tab: WorkTab): string {
+  return tabIsSplit(tab) ? splitTabTitle(tab.members) : tab.id === 'home' ? '首页' : tab.title
+}
+
+/** 连接状态点：普通标签 0/1 个；分屏标签每个成员一个 */
+function tabDots(tab: WorkTab): { id: string; connection?: string }[] {
+  if (tabIsSplit(tab)) return tab.members.map((m) => ({ id: m.id, connection: m.connection }))
+  return tab.connection ? [{ id: tab.id, connection: tab.connection }] : []
+}
+
+function tabIcon(tab: WorkTab): unknown {
+  if (tabIsSplit(tab)) return toolById(tab.members[0]?.toolId ?? '')?.icon
+  return toolById(tab.toolId)?.icon
+}
+
+// ---------- 拖拽排序（左右半区精准插入，支持拖到队尾；分屏标签整体移动） ----------
 
 function onDragStart(id: string, e: DragEvent): void {
   if (id === 'home') {
@@ -88,16 +107,26 @@ function onDrop(toId: string): void {
 }
 
 // ---------- 右键上下文菜单 ----------
-const contextMenu = ref<{ tab: TabItem; x: number; y: number } | null>(null)
+const contextMenu = ref<{ tab: WorkTab; x: number; y: number } | null>(null)
 
 const menuTargetIndex = computed(() =>
   contextMenu.value ? tabs.tabs.findIndex((t) => t.id === contextMenu.value!.tab.id) : -1
 )
 const canDuplicateTarget = computed(() => {
   const tab = contextMenu.value?.tab
-  if (!tab || tab.id === 'home') return false
+  if (!tab || tab.id === 'home' || tabIsSplit(tab)) return false
   const tool = toolById(tab.toolId)
   return Boolean(tool && !tool.singleton)
+})
+/** 普通非 home 标签 → 可发起合并分屏 */
+const canSplitTarget = computed(() => {
+  const tab = contextMenu.value?.tab
+  return Boolean(tab && tab.id !== 'home' && !tabIsSplit(tab))
+})
+/** 分屏标签 → 可拆分回独立标签 */
+const isSplitTarget = computed(() => {
+  const tab = contextMenu.value?.tab
+  return Boolean(tab && tabIsSplit(tab))
 })
 const hasOtherClosable = computed(() =>
   contextMenu.value ? tabs.tabs.some((t) => t.id !== 'home' && t.id !== contextMenu.value!.tab.id) : false
@@ -107,10 +136,10 @@ const hasRightClosable = computed(() =>
 )
 const hasAnyClosable = computed(() => tabs.tabs.some((t) => t.id !== 'home'))
 
-function openContextMenu(tab: TabItem, e: MouseEvent): void {
+function openContextMenu(tab: WorkTab, e: MouseEvent): void {
   e.preventDefault()
   const menuW = 168
-  const menuH = 186
+  const menuH = 210
   const x = Math.min(e.clientX, window.innerWidth - menuW - 8)
   const y = Math.min(e.clientY, window.innerHeight - menuH - 8)
   contextMenu.value = { tab, x: Math.max(8, x), y: Math.max(8, y) }
@@ -120,7 +149,8 @@ function closeContextMenu(): void {
   contextMenu.value = null
 }
 
-function duplicateTab(tab: TabItem): void {
+function duplicateTab(tab: WorkTab): void {
+  if (tabIsSplit(tab) || tab.id === 'home') return
   const tool = toolById(tab.toolId)
   if (!tool) return
   tabs.openTool(tool, {
@@ -128,6 +158,22 @@ function duplicateTab(tab: TabItem): void {
     title: tab.title,
     connection: undefined
   })
+  closeContextMenu()
+}
+
+/** 菜单动作：发起合并分屏（选择器选中即并入） / 拆分为独立标签 */
+function splitTargetRight(): void {
+  const tab = contextMenu.value?.tab
+  if (tab && tab.id !== 'home' && !tabIsSplit(tab)) {
+    splitAnchorId.value = tab.id
+    launcher.value?.open()
+  }
+  closeContextMenu()
+}
+
+function unsplitTarget(): void {
+  const tab = contextMenu.value?.tab
+  if (tab && tabIsSplit(tab)) tabs.unsplit(tab.id)
   closeContextMenu()
 }
 
@@ -149,15 +195,25 @@ function onGlobalKeydown(e: KeyboardEvent): void {
 
   const key = e.key.toLowerCase()
 
-  // Ctrl+Tab / Ctrl+Shift+Tab 轮切标签
+  // Ctrl+Tab / Ctrl+Shift+Tab 轮切标签（分屏标签作为单个条目参与）
   if (e.key === 'Tab') {
     e.preventDefault()
-    const next = cycleTabId(
-      tabs.tabs.map((t) => t.id),
-      tabs.activeId,
-      e.shiftKey ? -1 : 1
-    )
+    const ids = tabs.tabs.map((t) => t.id)
+    const next = cycleTabId(ids, tabs.activeId, e.shiftKey ? -1 : 1)
     if (next) tabs.activate(next)
+    return
+  }
+
+  // Ctrl+\ 合并分屏（对当前标签发起，弹选择器）；Ctrl+Shift+\ 拆分当前分屏标签
+  if (key === '\\') {
+    e.preventDefault()
+    const active = tabs.active
+    if (e.shiftKey) {
+      if (active && tabIsSplit(active)) tabs.unsplit(active.id)
+    } else if (active && !tabIsSplit(active) && active.id !== 'home') {
+      splitAnchorId.value = active.id
+      launcher.value?.open()
+    }
     return
   }
 
@@ -170,7 +226,7 @@ function onGlobalKeydown(e: KeyboardEvent): void {
 
   if (e.shiftKey) return
 
-  // Ctrl+W 关闭当前标签（焦点在终端内时不拦截，保留 bash Ctrl+W 删词）
+  // Ctrl+W 关闭当前标签（分屏标签关闭全部成员；焦点在终端内时不拦截，保留 bash Ctrl+W 删词）
   if (key === 'w') {
     const target = e.target as HTMLElement | null
     if (target?.closest('.xterm')) return
@@ -211,7 +267,12 @@ onUnmounted(() => {
   window.removeEventListener('blur', closeContextMenu)
 })
 
-defineExpose({ openLauncher: () => launcher.value?.open() })
+defineExpose({
+  openLauncher: () => {
+    splitAnchorId.value = null
+    launcher.value?.open()
+  }
+})
 </script>
 
 <template>
@@ -240,6 +301,7 @@ defineExpose({ openLauncher: () => launcher.value?.open() })
         class="tab-item"
         :class="{
           'is-home': tab.id === 'home',
+          'is-split-entry': tabIsSplit(tab),
           active: tab.id === tabs.activeId,
           dragging: tab.id === draggingId,
           'drop-before': tab.id === overId && overSide === 'before' && tab.id !== draggingId,
@@ -258,28 +320,31 @@ defineExpose({ openLauncher: () => launcher.value?.open() })
           type="button"
           class="tab-select"
           :aria-current="tab.id === tabs.activeId ? 'page' : undefined"
+          :title="tabIsSplit(tab) ? '已合并分屏：右键可拆分' : undefined"
           @click="tabs.activate(tab.id)"
         >
           <span
-            v-if="tab.connection"
+            v-for="dot in tabDots(tab)"
+            :key="dot.id"
             class="tab-dot"
-            :data-state="tab.connection"
-            :title="connectionLabels[tab.connection]"
-            :aria-label="connectionLabels[tab.connection]"
+            :data-state="dot.connection"
+            :title="connectionLabels[dot.connection as keyof typeof connectionLabels]"
+            :aria-label="connectionLabels[dot.connection as keyof typeof connectionLabels]"
             role="img"
           />
           <el-icon :size="15">
             <House v-if="tab.id === 'home'" />
-            <Box v-else-if="tab.toolId === 'extensions'" />
-            <component :is="toolById(tab.toolId)?.icon" v-else />
+            <Box v-else-if="tab.id === 'extensions'" />
+            <component :is="tabIcon(tab)" v-else />
           </el-icon>
-          <span class="tab-title" :title="tab.title">{{ tab.id === 'home' ? '首页' : tab.title }}</span>
+          <span class="tab-title">{{ tabTitle(tab) }}</span>
         </button>
         <button
           v-if="tab.id !== 'home'"
           type="button"
           class="tab-close"
-          :aria-label="'关闭 ' + tab.title"
+          :aria-label="'关闭 ' + tabTitle(tab)"
+          :title="tabIsSplit(tab) ? '关闭分屏（全部成员）' : undefined"
           @click="tabs.close(tab.id)"
         >
           <el-icon :size="12"><Close /></el-icon>
@@ -292,7 +357,7 @@ defineExpose({ openLauncher: () => launcher.value?.open() })
         aria-label="快速打开工具"
         title="快速打开工具（Ctrl+K）"
         aria-keyshortcuts="Control+K"
-        @click="launcher?.open()"
+        @click="splitAnchorId = null; launcher?.open()"
       >
         <el-icon><Plus /></el-icon>
       </button>
@@ -326,6 +391,24 @@ defineExpose({ openLauncher: () => launcher.value?.open() })
       >
         <el-icon :size="13"><CopyDocument /></el-icon>
         <span>复制新会话</span>
+      </button>
+      <button
+        v-if="canSplitTarget"
+        type="button"
+        role="menuitem"
+        @click="splitTargetRight"
+      >
+        <el-icon :size="13"><Right /></el-icon>
+        <span>合并分屏（Ctrl+\）</span>
+      </button>
+      <button
+        v-if="isSplitTarget"
+        type="button"
+        role="menuitem"
+        @click="unsplitTarget"
+      >
+        <el-icon :size="13"><CopyDocument /></el-icon>
+        <span>拆分为独立标签（Ctrl+Shift+\）</span>
       </button>
       <button
         v-if="contextMenu.tab.id !== 'home'"
@@ -364,7 +447,7 @@ defineExpose({ openLauncher: () => launcher.value?.open() })
     </div>
   </Teleport>
 
-  <ToolLauncher ref="launcher" />
+  <ToolLauncher ref="launcher" :split-anchor-id="splitAnchorId" @closed="splitAnchorId = null" />
 </template>
 
 <style scoped>
@@ -413,7 +496,7 @@ defineExpose({ openLauncher: () => launcher.value?.open() })
   position: relative;
   flex: 0 1 auto;
   min-width: 96px;
-  max-width: 210px;
+  max-width: 240px;
   display: flex;
   align-items: center;
   gap: 2px;
@@ -434,6 +517,11 @@ defineExpose({ openLauncher: () => launcher.value?.open() })
   flex: none;
   min-width: auto;
   padding-right: 0;
+}
+
+/* 合并分屏标签：主色描边暗示内部并排多面板 */
+.tab-item.is-split-entry.active {
+  border-color: color-mix(in srgb, var(--el-color-primary) 45%, var(--el-border-color-lighter));
 }
 
 .tab-item:hover {
@@ -537,6 +625,10 @@ defineExpose({ openLauncher: () => launcher.value?.open() })
   height: 6px;
   border-radius: 50%;
   background: var(--el-text-color-placeholder);
+}
+
+.tab-dot + .tab-dot {
+  margin-inline-start: -2px;
 }
 
 .tab-dot[data-state="connected"] {

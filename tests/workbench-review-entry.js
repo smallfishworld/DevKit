@@ -3,6 +3,7 @@ import { encodeInteger, parseCalendarTime } from '../src/shared/converter-workbe
 import { DEFAULT_SERIAL_PARAMS, normalizeSerialParams } from '../src/shared/serial'
 import { cycleTabId, launcherIndex, matchesTool, reorderTabIds, tabIdByDigit } from '../src/renderer/src/components/workbench-navigation'
 import { dedupeRecent, sessionIdentity } from '../src/renderer/src/components/session-identity'
+import { memberTabIds, planMerge, reorderWorkTabIds, splitTabTitle } from '../src/renderer/src/components/split-tab'
 
 assert.deepEqual(encodeInteger(-100n, 4), { le: '9C FF FF FF', be: 'FF FF FF 9C', truncated: false })
 assert.deepEqual(encodeInteger(-32768n, 2), { le: '00 80', be: '80 00', truncated: false })
@@ -58,4 +59,23 @@ assert.equal(dedupeRecent([serialA2, serialA, serialB, sshX, shellY]).length, 4)
 assert.equal(dedupeRecent([serialA, serialB, sshX, shellY]).length, 4)          // 无重复原样保留
 assert.deepEqual(dedupeRecent([serialA, serialB, serialA]), [serialA, serialB]) // 保序、保首条
 
-console.log('PASS 串口草稿验证、工具启动器导航、标签排序/快捷键、负数补码与时区毫秒反查、最近会话身份去重')
+// ---------- 合并分屏标签纯逻辑（split-tab.ts） ----------
+assert.equal(splitTabTitle([{ title: 'COM1' }, { title: 'COM2@115200' }]), 'COM1 | COM2@115200')
+assert.deepEqual(
+  memberTabIds({ id: 'split#1', kind: 'split', members: [{ id: 'a', title: 'A' }, { id: 'b', title: 'B' }] }),
+  ['a', 'b']
+)
+assert.deepEqual(memberTabIds({ id: 'serial#1', title: 'COM1' }), ['serial#1'])
+
+const workIds = ['home', 'serial#1', 'ssh#2', 'net#3']
+// 合并位置计划：插入两者较小索引处，成员按原扁平序
+assert.deepEqual(planMerge(workIds, 'serial#1', 'net#3'), { index: 1, firstId: 'serial#1', secondId: 'net#3' })
+assert.deepEqual(planMerge(workIds, 'net#3', 'serial#1'), { index: 1, firstId: 'serial#1', secondId: 'net#3' })
+assert.equal(planMerge(workIds, 'home', 'serial#1'), null)     // home 不可合并
+assert.equal(planMerge(workIds, 'serial#1', 'serial#1'), null) // 自身
+assert.equal(planMerge(workIds, 'serial#1', 'gone#9'), null)   // 目标不存在
+// 分屏标签整体拖拽重排（复用 reorder 语义，home 保护）
+assert.deepEqual(reorderWorkTabIds(['home', 'split#1', 'net#3'], 'split#1', 'net#3', 'after'), ['home', 'net#3', 'split#1'])
+assert.deepEqual(reorderWorkTabIds(['home', 'split#1', 'net#3'], 'home', 'net#3', 'before'), ['home', 'split#1', 'net#3'])
+
+console.log('PASS 串口草稿验证、工具启动器导航、标签排序/快捷键、负数补码与时区毫秒反查、最近会话身份去重、合并分屏标签')

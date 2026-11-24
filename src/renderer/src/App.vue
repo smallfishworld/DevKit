@@ -5,7 +5,7 @@ import brandMark from '../../../resources/branding/mark.svg'
 import { PLUGIN_CATALOG_PANEL, useDevicePlugins } from '@renderer/stores/devicePlugins'
 import type { PluginLogEntry, PluginRuntimeStatus } from '../../shared/plugins'
 import { updateNotice, type UpdateState } from '../../shared/app-updates'
-import { useTabStore } from '@renderer/stores/tabs'
+import { useTabStore, tabIsSplit, type TabItem, type WorkTab } from '@renderer/stores/tabs'
 import { useAppearanceStore } from '@renderer/stores/appearance'
 import { toolById, type ToolDef } from '@renderer/tools/registry'
 import TabBar from './components/TabBar.vue'
@@ -21,6 +21,64 @@ const tabBarRef = ref<InstanceType<typeof TabBar>>()
 const updateDialogRef = ref<InstanceType<typeof AppUpdateDialog>>()
 const aboutOpen = ref(false)
 const updateState = ref<UpdateState>({ phase: 'idle' })
+
+// ---------- 合并分屏（两个面板并排共用一个标签） ----------
+const SPLIT_WIDTH_KEY = 'devkit:split-width:v1'
+/** 左侧面板宽度百分比（分隔条拖拽调整，localStorage 记忆，范围 20–80） */
+const splitPct = ref(Number(readSplitWidth()) || 50)
+const splitGridStyle = computed(() => ({
+  gridTemplateColumns: `minmax(0, ${splitPct.value}%) 4px minmax(0, 1fr)`
+}))
+
+/** 分屏条目的成员列表（普通条目返回 undefined，避免模板内类型收窄） */
+function splitMembers(tab: WorkTab): TabItem[] | undefined {
+  return tabIsSplit(tab) ? tab.members : undefined
+}
+
+/** 普通条目的 toolId（分屏条目无单一 toolId，仅模板 v-else 分支调用，返回空串兜底） */
+function toolIdOf(tab: WorkTab): string {
+  return tabIsSplit(tab) ? (tab.members[0]?.toolId ?? '') : tab.toolId
+}
+
+/** 串口面板自带状态栏，避免与全局状态栏重复 */
+const isSerialActive = computed(() => {
+  const active = tabs.active
+  if (!active) return false
+  const list = tabIsSplit(active) ? active.members : [active]
+  return list.some((m) => m.toolId === 'serial')
+})
+
+function readSplitWidth(): string | null {
+  try {
+    return localStorage.getItem(SPLIT_WIDTH_KEY)
+  } catch {
+    return null
+  }
+}
+
+let dividerDrag = false
+function onDividerPointerdown(e: PointerEvent): void {
+  dividerDrag = true
+  ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+}
+function onDividerPointermove(e: PointerEvent): void {
+  if (!dividerDrag) return
+  const container = (e.currentTarget as HTMLElement).parentElement
+  if (!container) return
+  const rect = container.getBoundingClientRect()
+  if (rect.width <= 0) return
+  const pct = ((e.clientX - rect.left) / rect.width) * 100
+  splitPct.value = Math.min(80, Math.max(20, Math.round(pct * 10) / 10))
+}
+function onDividerPointerup(): void {
+  if (!dividerDrag) return
+  dividerDrag = false
+  try {
+    localStorage.setItem(SPLIT_WIDTH_KEY, String(splitPct.value))
+  } catch {
+    /* 隐私模式等忽略 */
+  }
+}
 
 const hasUpdateHighlight = computed(
   () => updateState.value.phase === 'available' || updateState.value.phase === 'ready'
@@ -162,7 +220,7 @@ onMounted(() => {
       </button>
       <button
         class="header-action"
-        :class="{ active: tabs.active?.toolId === extensions.id }"
+        :class="{ active: tabs.activeToolId === extensions.id }"
         title="扩展中心"
         @click="tabs.openTool(extensions)"
       >
@@ -193,13 +251,33 @@ onMounted(() => {
         v-show="tab.id === tabs.activeId"
         class="tab-page"
       >
-        <component :is="compFor(tab.toolId)" :panel-id="tab.id" @open-extensions="tabs.openTool(extensions)" />
+        <!-- 合并分屏条目：成员面板左右并排 + 可拖分隔条（显式指定列位：面板1 | 分隔条 | 面板2） -->
+        <div v-if="splitMembers(tab)" class="split-view" :style="splitGridStyle">
+          <section
+            v-for="(member, i) in splitMembers(tab)"
+            :key="member.id"
+            class="split-pane"
+            :style="{ gridColumn: i === 0 ? '1' : '3' }"
+          >
+            <component :is="compFor(member.toolId)" :panel-id="member.id" @open-extensions="tabs.openTool(extensions)" />
+          </section>
+          <div
+            class="split-divider"
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="调整分屏宽度"
+            @pointerdown="onDividerPointerdown"
+            @pointermove="onDividerPointermove"
+            @pointerup="onDividerPointerup"
+          ></div>
+        </div>
+        <component v-else :is="compFor(toolIdOf(tab))" :panel-id="tab.id" @open-extensions="tabs.openTool(extensions)" />
       </section>
     </main>
 
-    <footer v-if="tabs.active?.toolId !== 'serial'" class="app-status">
+    <footer v-if="!isSerialActive" class="app-status">
       <div class="status-left">
-        <span class="status-title">{{ tabs.active?.title ?? 'DevKit' }}</span>
+        <span class="status-title">{{ tabs.activeTitle }}</span>
         <span v-if="activeConnectionsText" class="status-pill">
           <i class="status-dot" aria-hidden="true"></i>
           {{ activeConnectionsText }}
@@ -372,6 +450,63 @@ onMounted(() => {
 .win-btn.close:hover {
   background: #e81123;
   color: #fff;
+}
+
+/* ---------- 合并分屏（两个面板并排共用一个标签） ---------- */
+
+/* 分屏视图占满所在 tab-page，成员面板并排 */
+.split-view {
+  position: absolute;
+  inset: 0;
+  display: grid;
+}
+
+.split-pane {
+  position: relative;
+  /* 建立层叠上下文：面板内部任意 z-index 元素都被困住，不会盖住分隔条热区 */
+  z-index: 0;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* 分隔条：布局占 4px（1px 细线居中），拖拽热区经 ::before 向两侧各延 6px；
+   固定占第 2 列；z-index 1 压过两侧面板整棵子树（面板已被 z-index:0 困住） */
+.split-divider {
+  grid-column: 2;
+  z-index: 1;
+  position: relative;
+  cursor: col-resize;
+  touch-action: none;
+  user-select: none;
+}
+
+/* 拖拽热区延伸进两侧面板（不占布局）：命中、光标与悬停反馈都落在它上面 */
+.split-divider::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -6px;
+  right: -6px;
+  background: transparent;
+  transition: background 0.15s ease;
+}
+
+.split-divider:hover::before,
+.split-divider:active::before {
+  background: color-mix(in srgb, var(--el-color-primary) 25%, transparent);
+}
+
+.split-divider::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  transform: translateX(-50%);
+  background: var(--el-border-color);
 }
 
 .app-status {

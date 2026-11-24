@@ -35,7 +35,7 @@ const instances = computed(() => plugins.instances.filter((instance) => instance
 
 function binding(instance: PluginInstance) {
   const status = plugins.statuses.find((row) => row.bound && row.instanceId === instance.id)
-  return status && tabs.tabs.find((tab) => tab.id === status.panelId)
+  return status && tabs.sessionById(status.panelId)
 }
 
 function instanceState(instance: PluginInstance): string {

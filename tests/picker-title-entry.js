@@ -5,7 +5,7 @@ import {
   pixelToPhysical,
   rgbToHex
 } from '../src/shared/picker-geometry'
-import { normalizePortPath, portRemark, portTabTitle } from '../src/shared/serial-title'
+import { normalizePortPath } from '../src/shared/serial-title'
 
 // ---------- 取点器坐标换算 ----------
 // CSS 坐标 → 截图像素：窗口铺满显示器，CSS 尺寸=DIP，图像=物理像素
@@ -74,7 +74,7 @@ import { normalizePortPath, portRemark, portTabTitle } from '../src/shared/seria
   assert.equal(rgbToHex(300, -5, 12.6), '#FF000D')
 }
 
-// ---------- 串口备注标题 ----------
+// ---------- 串口端口名归一化 ----------
 {
   assert.equal(normalizePortPath('COM1'), 'COM1')
   assert.equal(normalizePortPath('com1'), 'COM1')
@@ -82,26 +82,6 @@ import { normalizePortPath, portRemark, portTabTitle } from '../src/shared/seria
   assert.equal(normalizePortPath('\\\\.\\COM3'), 'COM3')
   assert.equal(normalizePortPath('/dev/ttyUSB0'), '/dev/ttyUSB0')
   assert.equal(normalizePortPath(''), '')
-
-  const sessions = [
-    { name: '黑色串口板子', params: { path: 'COM1' } },
-    { name: 'COM1@9600', params: { path: 'com1' } }
-  ]
-  // 没有显式备注 → 回退到最新会话名
-  assert.equal(portRemark('COM1', undefined, sessions), '黑色串口板子')
-  // 显式备注优先（键的写法与端口大小写无关）
-  assert.equal(portRemark('com1', { COM1: '白色调试口' }, sessions), '白色调试口')
-  // 端口没有备注也没有会话 → 空
-  assert.equal(portRemark('COM9', {}, []), '')
-
-  // 标签页标题：备注 + 端口号；备注就是端口号时不重复
-  assert.equal(portTabTitle('COM1', { COM1: '黑色串口板子' }, []), '黑色串口板子 (COM1)')
-  assert.equal(portTabTitle('com1', undefined, sessions), '黑色串口板子 (COM1)')
-  assert.equal(portTabTitle('COM2', {}, []), 'COM2')
-  assert.equal(portTabTitle('COM3', { COM3: 'COM3' }, []), 'COM3')
-  // 非 COM 端口原样展示
-  assert.equal(portTabTitle('/dev/ttyUSB0', {}, []), '/dev/ttyUSB0')
-  assert.equal(portTabTitle('/dev/ttyUSB0', { '/dev/ttyUSB0': '开发板' }, []), '开发板 (/dev/ttyUSB0)')
 }
 
 console.log('picker-geometry / serial-title: ok')

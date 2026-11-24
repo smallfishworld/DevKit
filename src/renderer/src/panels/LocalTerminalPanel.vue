@@ -21,7 +21,7 @@ import {
 
 const props = defineProps<{ panelId: string }>()
 const tabStore = useTabStore()
-const recentShell = tabStore.tabs.find((tab) => tab.id === props.panelId)?.shell
+const recentShell = tabStore.sessionById(props.panelId)?.shell
 const termView = ref<InstanceType<typeof TerminalView> | null>(null)
 useTerminalStream('local-terminal', props.panelId, termView)
 

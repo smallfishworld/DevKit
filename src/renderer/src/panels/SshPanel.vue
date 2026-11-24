@@ -29,7 +29,7 @@ import { useTabStore } from '@renderer/stores/tabs'
 
 const props = defineProps<{ panelId: string }>()
 const tabStore = useTabStore()
-const recentParams = tabStore.tabs.find((tab) => tab.id === props.panelId)?.sshParams
+const recentParams = tabStore.sessionById(props.panelId)?.sshParams
 
 interface DataEvt {
   text: string
