@@ -24,6 +24,7 @@ import type { SshConfig, SshParams } from '../../../shared/ssh'
 
 import type { QuickCmdStep } from '../../../shared/term-macro'
 import { useTermMacros } from '../composables/useTermMacros'
+import { activateTermMacroTarget, registerTermMacroTarget } from '../composables/useTermMacroTargets'
 import { useSidebarDrag } from '../composables/useSidebarDrag'
 import { useTabStore } from '@renderer/stores/tabs'
 
@@ -105,6 +106,22 @@ function macroWriter(st: QuickCmdStep): void {
   const text = (st.text ?? '') + (st.crlf && st.mode !== 'hex' ? '\r' : '')
   window.api.invoke('ssh', 'write', props.panelId, { text }).catch(() => {})
 }
+
+/**
+ * 两个终端分屏时共用一条快捷命令栏（见 composables/useTermMacroTargets）：
+ * 自带的命令栏不再显示，执行方式登记给共享栏；终端获得焦点即成为发送目标。
+ */
+const sharedCmds = computed(() => tabStore.sharesQuickCmds(props.panelId))
+onUnmounted(
+  registerTermMacroTarget({
+    panelId: props.panelId,
+    title: () => tabStore.sessionById(props.panelId)?.title,
+    enabled: () => open.value,
+    writer: macroWriter,
+    // 自带侧栏底部的明文密码提醒，换成共享栏后照常显示
+    footnote: () => (sessions.value.length ? '预设里的密码以明文保存在本机 config.json，请勿保存生产环境密码' : '')
+  })
+)
 
 /** 字节计数节流：刷屏时每批 data 都写 ref 会频繁触发状态栏重渲，500ms 更新足够 */
 const byteCounter = new ByteCounterThrottle((rx, tx) => {
@@ -431,8 +448,9 @@ async function pickKeyFile(): Promise<void> {
 
     <div class="body">
       <!-- 快捷命令栏；可拖动调宽，也可整体折叠/展开。
-           连接参数预设收进了顶部工具栏的下拉里，侧栏不再单列一块。 -->
-      <template v-if="!sidebarHidden">
+           连接参数预设收进了顶部工具栏的下拉里，侧栏不再单列一块。
+           与另一个终端分屏时整块不显示，由分屏左侧的共享栏代替 -->
+      <template v-if="!sidebarHidden && !sharedCmds">
         <div class="sessions" :style="{ width: sidebarWidth + 'px' }">
           <QuickCmdManager :enabled="open" :writer="macroWriter" />
           <p v-if="sessions.length" class="hint preset-note">⚠ 预设里的密码以明文保存在本机 config.json，请勿保存生产环境密码</p>
@@ -449,12 +467,16 @@ async function pickKeyFile(): Promise<void> {
       </template>
 
       <!-- 折叠后的细条：点击展开侧栏 -->
-      <div v-else class="sidebar-collapsed" :title="'展开快捷命令栏'" @click="toggleSidebar">
+      <div v-else-if="!sharedCmds" class="sidebar-collapsed" :title="'展开快捷命令栏'" @click="toggleSidebar">
         <el-icon :size="16"><ArrowRight /></el-icon>
       </div>
 
-      <!-- 终端 -->
-      <div class="term-col">
+      <!-- 终端（点进去或键盘聚焦进来，即成为共享快捷命令栏的发送目标） -->
+      <div
+        class="term-col"
+        @pointerdown="activateTermMacroTarget(props.panelId)"
+        @focusin="activateTermMacroTarget(props.panelId)"
+      >
         <div class="term-opts">
           <el-button size="small" text :icon="Search" title="查找（Ctrl+F）" @click="openTermSearch">查找</el-button>
           <el-button size="small" text @click="clearTerm">清屏</el-button>

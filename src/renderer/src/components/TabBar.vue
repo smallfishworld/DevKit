@@ -139,7 +139,8 @@ const hasAnyClosable = computed(() => tabs.tabs.some((t) => t.id !== 'home'))
 function openContextMenu(tab: WorkTab, e: MouseEvent): void {
   e.preventDefault()
   const menuW = 168
-  const menuH = 210
+  // 分屏条目的菜单多出「关闭左/右侧分屏」两项，估算高度相应加大，避免贴底时溢出
+  const menuH = tabIsSplit(tab) ? 280 : 210
   const x = Math.min(e.clientX, window.innerWidth - menuW - 8)
   const y = Math.min(e.clientY, window.innerHeight - menuH - 8)
   contextMenu.value = { tab, x: Math.max(8, x), y: Math.max(8, y) }
@@ -174,6 +175,13 @@ function splitTargetRight(): void {
 function unsplitTarget(): void {
   const tab = contextMenu.value?.tab
   if (tab && tabIsSplit(tab)) tabs.unsplit(tab.id)
+  closeContextMenu()
+}
+
+/** 菜单动作：关闭分屏的一侧，另一侧原地成为独立标签（side：0 左 / 1 右） */
+function closeSplitSide(side: 0 | 1): void {
+  const tab = contextMenu.value?.tab
+  if (tab && tabIsSplit(tab)) tabs.closeSplitSide(tab.id, side)
   closeContextMenu()
 }
 
@@ -320,7 +328,7 @@ defineExpose({
           type="button"
           class="tab-select"
           :aria-current="tab.id === tabs.activeId ? 'page' : undefined"
-          :title="tabIsSplit(tab) ? '已合并分屏：右键可拆分' : undefined"
+          :title="tabIsSplit(tab) ? '已分屏：右键可拆分' : undefined"
           @click="tabs.activate(tab.id)"
         >
           <span
@@ -399,7 +407,7 @@ defineExpose({
         @click="splitTargetRight"
       >
         <el-icon :size="13"><Right /></el-icon>
-        <span>合并分屏（Ctrl+\）</span>
+        <span>分屏（Ctrl+\）</span>
       </button>
       <button
         v-if="isSplitTarget"
@@ -409,6 +417,24 @@ defineExpose({
       >
         <el-icon :size="13"><CopyDocument /></el-icon>
         <span>拆分为独立标签（Ctrl+Shift+\）</span>
+      </button>
+      <button
+        v-if="isSplitTarget"
+        type="button"
+        role="menuitem"
+        @click="closeSplitSide(0)"
+      >
+        <el-icon :size="13"><ArrowLeft /></el-icon>
+        <span>关闭左侧分屏</span>
+      </button>
+      <button
+        v-if="isSplitTarget"
+        type="button"
+        role="menuitem"
+        @click="closeSplitSide(1)"
+      >
+        <el-icon :size="13"><ArrowRight /></el-icon>
+        <span>关闭右侧分屏</span>
       </button>
       <button
         v-if="contextMenu.tab.id !== 'home'"

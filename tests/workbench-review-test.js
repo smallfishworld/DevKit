@@ -6,6 +6,14 @@ const { buildSync } = require('esbuild')
 const temp = mkdtempSync(join(tmpdir(), 'devkit-workbench-unit-'))
 try {
   const out = join(temp, 'test.cjs')
-  buildSync({ entryPoints: [join(__dirname, 'workbench-review-entry.js')], bundle: true, platform: 'node', outfile: out, logLevel: 'error' })
+  buildSync({
+    entryPoints: [join(__dirname, 'workbench-review-entry.js')],
+    // tabs store 内部走 @renderer 别名引用纯逻辑模块
+    alias: { '@renderer': join(__dirname, '../src/renderer/src') },
+    bundle: true,
+    platform: 'node',
+    outfile: out,
+    logLevel: 'error'
+  })
   require(out)
 } finally { rmSync(temp, { recursive: true, force: true }) }

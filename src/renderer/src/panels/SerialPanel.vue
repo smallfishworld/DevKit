@@ -32,6 +32,7 @@ import { normalizePortPath } from '../../../shared/serial-title'
 import type { VtGuardStats } from '../../../shared/vtguard'
 import type { QuickCmdStep, PluginActionReference, PluginMacroAction } from '../../../shared/term-macro'
 import { useTermMacros } from '../composables/useTermMacros'
+import { activateTermMacroTarget, finishSharedRecording, registerTermMacroTarget } from '../composables/useTermMacroTargets'
 import { useSidebarDrag } from '../composables/useSidebarDrag'
 import { useTabStore } from '@renderer/stores/tabs'
 
@@ -152,8 +153,9 @@ function onAltScreen(): void {
   }).catch(() => {})
 }
 function syncViewVisibility(): void {
+  // sessionVisible 认分屏：面板是激活分屏的成员时同样算在显示
   void window.api.invoke('serial', 'view:visible', props.panelId, {
-    visible: !document.hidden && tabStore.activeId === props.panelId
+    visible: !document.hidden && tabStore.sessionVisible(props.panelId)
   }).catch(() => {})
 }
 watch(() => tabStore.activeId, syncViewVisibility)
@@ -259,6 +261,31 @@ function macroWriter(st: QuickCmdStep): void {
   if (st.type === 'key') writeCmd(st.key ?? '', 'ascii', 'none')
   else if (st.mode === 'hex') writeCmd(st.text ?? '', 'hex', 'none')
   else writeCmd(st.text ?? '', 'ascii', st.crlf ? 'crlf' : 'none')
+}
+
+/**
+ * 两个终端分屏时共用一条快捷命令栏（见 composables/useTermMacroTargets）：
+ * 本面板自带的命令栏不再显示，执行方式登记给共享栏；终端获得焦点即成为发送目标。
+ */
+const sharedCmds = computed(() => tabStore.sharesQuickCmds(props.panelId))
+const unregisterMacroTarget = registerTermMacroTarget({
+  panelId: props.panelId,
+  title: () => tabStore.sessionById(props.panelId)?.title,
+  enabled: () => open.value,
+  writer: macroWriter,
+  getConnectionGeneration: () => connectionGeneration,
+  runPluginAction,
+  getPluginActions,
+  pluginConfigVersion: () => pluginConfigVersion.value,
+  requestPluginConfig: () => {
+    pluginManagerOpen.value = true
+  }
+})
+onUnmounted(unregisterMacroTarget)
+
+/** 停止录制并整理保存：有共享栏时转给共享栏的列表实例，否则用自带的 */
+function finishRecording(): void {
+  if (!finishSharedRecording()) commandManager.value?.finishRecording()
 }
 
 // ---------- 文件传输（YMODEM / ZMODEM） ----------
@@ -845,8 +872,9 @@ async function deletePreset(): Promise<void> {
 
     <div class="body">
       <!-- 快捷命令宏（全局共享）；宽度可拖动调整，可整体折叠/展开。
-           连接参数的「已存预设」收进了连接栏的浮层里，这里不再单列一块。 -->
-        <div v-if="!sidebarHidden" class="sessions" :style="{ width: sidebarWidth + 'px' }">
+           连接参数的「已存预设」收进了连接栏的浮层里，这里不再单列一块。
+           与另一个终端分屏时整块不显示，由分屏左侧的共享栏代替 -->
+        <div v-if="!sidebarHidden && !sharedCmds" class="sessions" :style="{ width: sidebarWidth + 'px' }">
           <QuickCmdManager
             ref="commandManager"
             :enabled="open"
@@ -860,7 +888,7 @@ async function deletePreset(): Promise<void> {
         </div>
 
         <!-- 拖动调整侧栏宽度（VS Code 式分隔条）；中央折叠把手，与 SSH 页一致 -->
-        <div v-if="!sidebarHidden" class="sidebar-split" title="拖动调整宽度" @mousedown="onSidebarResize">
+        <div v-if="!sidebarHidden && !sharedCmds" class="sidebar-split" title="拖动调整宽度" @mousedown="onSidebarResize">
           <button class="split-toggle" title="折叠快捷命令栏" @mousedown.stop @click="toggleSidebar">
             <svg viewBox="0 0 8 12" width="7" height="10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
               <path d="M6.5 1L1.5 6l5 5" />
@@ -869,12 +897,16 @@ async function deletePreset(): Promise<void> {
         </div>
 
       <!-- 折叠后的细条：点击展开侧栏 -->
-      <div v-else class="sidebar-collapsed" title="展开快捷命令栏" @click="toggleSidebar">
+      <div v-else-if="!sharedCmds" class="sidebar-collapsed" title="展开快捷命令栏" @click="toggleSidebar">
         <el-icon :size="16"><ArrowRight /></el-icon>
       </div>
 
-      <!-- 终端 + 发送 -->
-      <div class="term-col">
+      <!-- 终端 + 发送（点进去或键盘聚焦进来，即成为共享快捷命令栏的发送目标） -->
+      <div
+        class="term-col"
+        @pointerdown="activateTermMacroTarget(props.panelId)"
+        @focusin="activateTermMacroTarget(props.panelId)"
+      >
         <div class="term-opts" role="group" aria-label="终端操作">
           <div class="term-group" role="group" aria-label="终端输出">
             <el-button size="small" text :icon="Search" title="查找（Ctrl+F）" @click="openTermSearch">查找</el-button>
@@ -886,7 +918,7 @@ async function deletePreset(): Promise<void> {
             <el-button size="small" text :icon="FolderOpened" @click="openLogSettings">日志设置</el-button>
           </div>
           <el-button size="small" text :icon="UploadFilled" :disabled="!open || transferring" @click="openTransfer">文件传输</el-button>
-          <el-button v-if="recording" class="stop-recording" size="small" text type="danger" @click="commandManager?.finishRecording()">停止录制</el-button>
+          <el-button v-if="recording" class="stop-recording" size="small" text type="danger" @click="finishRecording">停止录制</el-button>
           <el-popover placement="bottom-end" :width="310" trigger="click">
             <template #reference>
               <el-button class="display-action" size="small" text :icon="Setting">显示设置</el-button>

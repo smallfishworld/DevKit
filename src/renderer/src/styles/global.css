@@ -127,17 +127,57 @@ html[data-ui-theme] {
   color: var(--el-text-color-secondary);
 }
 
-/* 内容区：所有打开的面板常驻（v-show 切换），保住工具运行状态 */
+/*
+ * 内容区是一个四列网格：共享快捷命令栏 | 左成员 | 分隔条 | 右成员
+ * （首列只在两个终端分屏时才有内容，列宽由 App.vue 按分屏比例写入）。
+ * 所有打开的面板常驻为网格项（保住工具运行状态），由 data-slot 决定显隐与所在列：
+ * 合并/拆分只改落位，面板不换父节点、不重建实例。
+ */
 .app-body {
   flex: 1;
   position: relative;
   overflow: hidden;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
 }
 
 .tab-page {
-  position: absolute;
-  inset: 0;
+  position: relative;
+  /* 层叠上下文：面板内部任意 z-index 元素都被困在自己格内，不会盖住分隔条热区 */
+  z-index: 0;
+  grid-row: 1;
+  min-width: 0;
+  min-height: 0;
   overflow: auto;
+}
+
+.tab-page[data-slot='hidden'] {
+  display: none;
+}
+
+.tab-page[data-slot='full'] {
+  grid-column: 1 / -1;
+}
+
+.tab-page[data-slot='left'] {
+  grid-column: 2;
+}
+
+.tab-page[data-slot='right'] {
+  grid-column: 4;
+}
+
+/* 共享快捷命令栏的发送目标（最后点进去的终端）：面板顶部亮一条主色线 */
+.tab-page.is-term-target::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 2;
+  height: 2px;
+  background: var(--el-color-primary);
+  pointer-events: none;
 }
 
 /* 状态栏 */

@@ -4,7 +4,7 @@ import { Search } from '@element-plus/icons-vue'
 import { TOOLS } from '@renderer/tools/registry'
 import { useTabStore } from '@renderer/stores/tabs'
 import { launcherIndex, matchesTool } from './workbench-navigation'
-import { memberTabIds } from './split-tab'
+import { isTerminalTool, memberTabIds } from './split-tab'
 
 const props = defineProps<{ splitAnchorId?: string | null }>()
 const emit = defineEmits<{ closed: [] }>()
@@ -21,7 +21,7 @@ const visibleIds = computed(() => {
 const entries = computed(() => [
   ...tabs.flatSessions.flatMap((tab) => {
     const tool = TOOLS.find((item) => item.id === tab.toolId)
-    if (!tool || !['serial', 'ssh', 'local-terminal'].includes(tool.id)) return []
+    if (!tool || !isTerminalTool(tool.id)) return []
     // 分屏模式：锚点自身不可再合并；普通模式：隐藏正在显示的会话
     if (props.splitAnchorId) return tab.id === props.splitAnchorId ? [] : [{ key: tab.id, name: tab.title, tool, tabId: tab.id }]
     return visibleIds.value.has(tab.id) ? [] : [{ key: tab.id, name: tab.title, tool, tabId: tab.id }]

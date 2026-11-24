@@ -9,6 +9,7 @@ import QuickCmdManager from '@renderer/components/QuickCmdManager.vue'
 import { useTabStore } from '@renderer/stores/tabs'
 import { useSidebarDrag } from '../composables/useSidebarDrag'
 import { useTermMacros } from '../composables/useTermMacros'
+import { activateTermMacroTarget, registerTermMacroTarget } from '../composables/useTermMacroTargets'
 import type { QuickCmdStep } from '../../../shared/term-macro'
 import {
   DEFAULT_LOCAL_TERMINAL_CONFIG,
@@ -81,6 +82,20 @@ function macroWriter(st: QuickCmdStep): void {
   const text = (st.text ?? '') + (st.crlf && st.mode !== 'hex' ? '\r' : '')
   window.api.invoke('local-terminal', 'write', props.panelId, { text }).catch(() => {})
 }
+
+/**
+ * 两个终端分屏时共用一条快捷命令栏（见 composables/useTermMacroTargets）：
+ * 自带的命令栏不再显示，执行方式登记给共享栏；终端获得焦点即成为发送目标。
+ */
+const sharedCmds = computed(() => tabStore.sharesQuickCmds(props.panelId))
+onUnmounted(
+  registerTermMacroTarget({
+    panelId: props.panelId,
+    title: () => tabStore.sessionById(props.panelId)?.title,
+    enabled: () => running.value,
+    writer: macroWriter
+  })
+)
 
 function toggleQuickCmd(): void {
   quickCmdHidden.value = !quickCmdHidden.value
@@ -276,7 +291,8 @@ onUnmounted(() => {
     </div>
 
     <div class="term-body">
-      <template v-if="!quickCmdHidden">
+      <!-- 快捷命令栏。与另一个终端分屏时整块不显示，由分屏左侧的共享栏代替 -->
+      <template v-if="!quickCmdHidden && !sharedCmds">
         <div class="quick-cmd-col" :style="{ width: quickCmdWidth + 'px' }">
           <QuickCmdManager :enabled="running" :writer="macroWriter" />
         </div>
@@ -291,11 +307,16 @@ onUnmounted(() => {
       </template>
 
       <!-- 折叠后的细条：点击展开（与串口/SSH 一致） -->
-      <div v-else class="sidebar-collapsed" title="展开快捷命令栏" @click="toggleQuickCmd">
+      <div v-else-if="!sharedCmds" class="sidebar-collapsed" title="展开快捷命令栏" @click="toggleQuickCmd">
         <el-icon :size="16"><ArrowRight /></el-icon>
       </div>
 
-      <div class="terminal-host">
+      <!-- 终端（点进去或键盘聚焦进来，即成为共享快捷命令栏的发送目标） -->
+      <div
+        class="terminal-host"
+        @pointerdown="activateTermMacroTarget(props.panelId)"
+        @focusin="activateTermMacroTarget(props.panelId)"
+      >
         <!-- 终端操作条压在终端上方通栏（与串口/SSH 一致）；
              原先 .terminal-host 是横向 flex，这条会变成一列竖排文字夹在快捷命令栏和终端之间 -->
         <div class="local-term-opts">

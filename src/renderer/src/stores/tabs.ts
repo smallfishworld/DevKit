@@ -3,7 +3,7 @@ import type { SshParams } from '../../../shared/ssh'
 import type { SerialParams } from '../../../shared/serial'
 import type { ToolDef } from '@renderer/tools/registry'
 import { dedupeRecent, sessionIdentity } from '@renderer/components/session-identity'
-import { planMerge, splitTabTitle, type MergePlan } from '@renderer/components/split-tab'
+import { hostSharesQuickCmds, planMerge, splitTabTitle, type MergePlan } from '@renderer/components/split-tab'
 import { reorderTabIds } from '@renderer/components/workbench-navigation'
 
 export interface TabItem {
@@ -136,9 +136,25 @@ export const useTabStore = defineStore('tabs', {
     sessionById(state): (id: string) => TabItem | undefined {
       return (id: string) => findEntry(state.tabs, id)?.member
     },
+    /** 该会话当前是否显示在内容区：自身条目激活，或所在分屏条目激活 */
+    sessionVisible(state): (id: string) => boolean {
+      return (id: string) => findEntry(state.tabs, id)?.host.id === state.activeId
+    },
+    /** 该面板是否处在「两个终端共用一条快捷命令栏」的分屏里（是则不再显示自带的命令栏） */
+    sharesQuickCmds(state): (id: string) => boolean {
+      return (id: string) => hostSharesQuickCmds(findEntry(state.tabs, id)?.host)
+    },
+    /**
+     * 内容区常驻的面板（home 也在内），分屏条目展开为成员。
+     * 合并/拆分只是把这些面板重新排列（成员相邻落位），集合不变；
+     * 内容区按面板 id 复用，实例不重建（面板一卸载就会 dispose 掉连接）。
+     */
+    panelHosts(state): TabItem[] {
+      return state.tabs.flatMap((t) => (tabIsSplit(t) ? t.members : [t]))
+    },
     /** 全部会话标签（含分屏成员），供启动器/统计使用 */
-    flatSessions(state): TabItem[] {
-      return state.tabs.flatMap((t) => (tabIsSplit(t) ? t.members : t.id === 'home' ? [] : [t]))
+    flatSessions(): TabItem[] {
+      return this.panelHosts.filter((t) => t.id !== 'home')
     },
     /** 统计每个 toolId 当前已打开的实例数量 */
     openCountByTool(state): Record<string, number> {
@@ -156,7 +172,8 @@ export const useTabStore = defineStore('tabs', {
   actions: {
     openTool(tool: ToolDef, previous?: TabItem): void {
       if (tool.singleton) {
-        const existing = this.tabs.find((t) => !tabIsSplit(t) && t.toolId === tool.id)
+        // 单例只此一份：已开实例即使正待在分屏里也复用（激活其所在条目）
+        const existing = this.flatSessions.find((t) => t.toolId === tool.id)
         if (existing) {
           this.activate(existing.id)
           return
@@ -186,16 +203,15 @@ export const useTabStore = defineStore('tabs', {
       if (!anchor || tabIsSplit(anchor) || anchor.id === 'home') return false
       let joiner: TabItem | undefined
       if (entry.tabId) {
-        const found = this.tabs.find((t) => t.id === entry.tabId)
-        if (!found || tabIsSplit(found) || found.id === 'home' || found.id === anchorId) return false
-        joiner = found
+        // 已开会话：独立标签或别的分屏里的成员都行（分屏条目自身不可并入）
+        joiner = findEntry(this.tabs, entry.tabId)?.member
+        if (!joiner || joiner.id === 'home') return false
       } else if (entry.tool) {
         const tool = entry.tool
-        if (tool.singleton) {
-          const existing = this.tabs.find((t): t is TabItem => !tabIsSplit(t) && t.toolId === tool.id)
-          if (existing) joiner = existing
-        }
-        if (!joiner) {
+        // 单例工具只此一份：已开实例（哪怕是别的分屏的成员）挪用，没有才新开
+        const existing = tool.singleton ? this.flatSessions.find((t) => t.toolId === tool.id) : undefined
+        if (existing) joiner = existing
+        else {
           seq += 1
           joiner = { id: `${tool.id}#${seq}`, toolId: tool.id, title: tool.name }
         }
@@ -203,9 +219,20 @@ export const useTabStore = defineStore('tabs', {
         return false
       }
       if (!joiner || joiner.id === anchorId) return false
-      // 新开实例尚未入列：先插到锚点之后，再走统一合并（否则 planMerge 找不到目标）
       if (!this.tabs.some((t) => t.id === joiner!.id)) {
-        this.tabs.splice(this.tabs.indexOf(anchor) + 1, 0, joiner)
+        // 目标还不是独立标签：新开实例插到锚点之后；别的分屏里的成员则从原分屏摘出，
+        // 原分屏剩下的成员顶替它留在原位。两步之后才能走统一的合并计划
+        const host = this.tabs.find((t) => tabIsSplit(t) && t.members.some((m) => m.id === joiner!.id))
+        if (host && tabIsSplit(host)) {
+          this.tabs.splice(
+            this.tabs.indexOf(host),
+            1,
+            ...host.members.filter((m) => m.id !== joiner!.id),
+            joiner
+          )
+        } else {
+          this.tabs.splice(this.tabs.indexOf(anchor) + 1, 0, joiner)
+        }
       }
       const plan: MergePlan | null = planMerge(this.tabs.map((t) => t.id), anchorId, joiner.id)
       if (!plan) return false
@@ -302,26 +329,37 @@ export const useTabStore = defineStore('tabs', {
         persistRecent(this.recent)
       }
     },
+    /** 关闭一个面板：记入最近使用，并通知主进程清理资源（停止钩子、关闭端口等） */
+    release(tab: TabItem): void {
+      // 任何工具关闭都记入最近使用（非会话工具无连接概念，恒为 disconnected）
+      this.remember({ ...tab, connection: tab.serialParams || tab.sshParams || tab.shell ? 'disconnected' : undefined })
+      window.api?.invoke(tab.toolId, 'dispose', tab.id).catch(() => {})
+    },
     /** 关闭条目：普通标签关闭自身；分屏标签关闭并释放全部成员面板 */
     close(id: string): void {
       const idx = this.tabs.findIndex((t) => t.id === id)
       if (idx < 0 || id === 'home') return
       const [tab] = this.tabs.splice(idx, 1)
-      if (tabIsSplit(tab)) {
-        for (const m of tab.members) {
-          // 任何工具关闭都记入最近使用（非会话工具无连接概念，恒为 disconnected）
-          this.remember({ ...m, connection: m.serialParams || m.sshParams || m.shell ? 'disconnected' : undefined })
-          // 通知主进程清理该面板资源（停止钩子、关闭端口等）
-          window.api?.invoke(m.toolId, 'dispose', m.id).catch(() => {})
-        }
-      } else {
-        this.remember({ ...tab, connection: tab.serialParams || tab.sshParams || tab.shell ? 'disconnected' : undefined })
-        window.api?.invoke(tab.toolId, 'dispose', tab.id).catch(() => {})
-      }
+      const members = tabIsSplit(tab) ? tab.members : [tab]
+      members.forEach((m) => this.release(m))
       if (this.activeId === id) {
         const fallback = this.tabs[idx - 1] ?? this.tabs[idx]
         this.activeId = fallback?.id ?? 'home'
       }
+    },
+    /**
+     * 关闭分屏的一侧（side：0 左 / 1 右）：该成员释放，另一侧原地成为独立标签
+     * （面板与连接不受影响；分屏正显示时接着显示留下的一侧）。
+     */
+    closeSplitSide(id: string, side: 0 | 1): boolean {
+      const tab = this.tabs.find((t) => t.id === id)
+      if (!tab || !tabIsSplit(tab)) return false
+      const kept = tab.members[side === 0 ? 1 : 0]
+      if (!kept) return false
+      this.release(tab.members[side])
+      this.tabs.splice(this.tabs.indexOf(tab), 1, kept)
+      if (this.activeId === id) this.activate(kept.id)
+      return true
     },
     closeOthers(keepId: string): void {
       const targets = this.tabs.filter((t) => t.id !== 'home' && t.id !== keepId).map((t) => t.id)
