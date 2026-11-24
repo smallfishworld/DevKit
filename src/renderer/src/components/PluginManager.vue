@@ -1,10 +1,13 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { usePanelMessage, usePanelMessageBox } from '@renderer/composables/panelOverlays'
 import { Delete, Plus, Refresh, Upload } from '@element-plus/icons-vue'
 import type { PluginDescriptor, PluginInstance, PluginLogEntry, PluginRuntimeStatus } from '../../../shared/plugins'
 import PluginConfigForm from './PluginConfigForm.vue'
 import { defaultPluginConfig, parseConfigJson, canStopPlugin } from './plugin-config-form'
+
+const ElMessage = usePanelMessage()
+const ElMessageBox = usePanelMessageBox()
 
 const props = defineProps<{ visible: boolean; panelId: string; connected: boolean }>()
 const emit = defineEmits<{

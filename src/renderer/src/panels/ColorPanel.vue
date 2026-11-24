@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { onUnmounted, ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { usePanelMessage } from '@renderer/composables/panelOverlays'
 import { Aim, CopyDocument } from '@element-plus/icons-vue'
+
+const ElMessage = usePanelMessage()
 
 interface PickedColor {
   x: number

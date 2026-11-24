@@ -5,11 +5,13 @@
  * 大文件（行数过多）只渲染差异行。
  */
 import { computed, onMounted, ref, watch } from 'vue'
-import { ElMessage } from 'element-plus'
+import { usePanelMessage } from '@renderer/composables/panelOverlays'
 import { FolderOpened } from '@element-plus/icons-vue'
 import type { DiffEncoding, HexDiffRes, HexRow } from '../../../../shared/diff'
 import { ENCODINGS, useDiff } from '../../composables/useDiff'
 import { useDropSides } from '../../composables/useDiffDrop'
+
+const ElMessage = usePanelMessage()
 
 const props = defineProps<{
   /** 父层（文件夹视图"对比文件"）传入的待比较文件；seq 递增防同路径不触发 */

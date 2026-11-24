@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
-import { ElMessage } from 'element-plus'
+import { usePanelMessage } from '@renderer/composables/panelOverlays'
 import { Connection, Delete, Promotion } from '@element-plus/icons-vue'
 import SerialDevicePlugins from '@renderer/components/SerialDevicePlugins.vue'
 import type { NetConfig, NetMode, NetParams } from '../../../shared/net'
 import { DEFAULT_NET_PARAMS } from '../../../shared/net'
 import { useTabStore } from '@renderer/stores/tabs'
+
+const ElMessage = usePanelMessage()
 
 const props = defineProps<{ panelId: string }>()
 const tabStore = useTabStore()

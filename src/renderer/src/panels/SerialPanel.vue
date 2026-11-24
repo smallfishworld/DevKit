@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
-import { ElMessage } from 'element-plus'
+import { usePanelMessage } from '@renderer/composables/panelOverlays'
+import { usePanelDocument } from '@renderer/composables/usePanelWindow'
 import {
   ArrowRight,
   Clock,
@@ -35,6 +36,9 @@ import { useTermMacros } from '../composables/useTermMacros'
 import { activateTermMacroTarget, finishSharedRecording, registerTermMacroTarget } from '../composables/useTermMacroTargets'
 import { useSidebarDrag } from '../composables/useSidebarDrag'
 import { useTabStore } from '@renderer/stores/tabs'
+
+const ElMessage = usePanelMessage()
+const panelDocument = usePanelDocument()
 
 const props = defineProps<{ panelId: string }>()
 const emit = defineEmits<{ openExtensions: [] }>()
@@ -155,10 +159,15 @@ function onAltScreen(): void {
 function syncViewVisibility(): void {
   // sessionVisible 认分屏：面板是激活分屏的成员时同样算在显示
   void window.api.invoke('serial', 'view:visible', props.panelId, {
-    visible: !document.hidden && tabStore.sessionVisible(props.panelId)
+    visible: !panelDocument.value.hidden && tabStore.sessionVisible(props.panelId)
   }).catch(() => {})
 }
-watch(() => tabStore.activeId, syncViewVisibility)
+watch(() => tabStore.sessionVisible(props.panelId), syncViewVisibility)
+watch(panelDocument, (current, previous) => {
+  previous.removeEventListener('visibilitychange', syncViewVisibility)
+  current.addEventListener('visibilitychange', syncViewVisibility)
+  syncViewVisibility()
+})
 watch([open, opening, displayedParams], ([connected, connecting, current]) => {
   tabStore.setConnection(props.panelId, connected ? 'connected' : connecting ? 'connecting' : 'disconnected', current.path ? { serialParams: { ...current } } : undefined)
 }, { deep: true, immediate: true })
@@ -285,7 +294,7 @@ onUnmounted(unregisterMacroTarget)
 
 /** 停止录制并整理保存：有共享栏时转给共享栏的列表实例，否则用自带的 */
 function finishRecording(): void {
-  if (!finishSharedRecording()) commandManager.value?.finishRecording()
+  if (!finishSharedRecording(props.panelId)) commandManager.value?.finishRecording()
 }
 
 // ---------- 文件传输（YMODEM / ZMODEM） ----------
@@ -366,7 +375,7 @@ function onTransferEvt(p: unknown): void {
 
 // ---------- 初始化 ----------
 onMounted(async () => {
-  document.addEventListener('visibilitychange', syncViewVisibility)
+  panelDocument.value.addEventListener('visibilitychange', syncViewVisibility)
   syncViewVisibility()
   unsubs.push(
     window.api.on('serial', props.panelId, 'data', (p) => {
@@ -424,7 +433,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   connectionGeneration++
-  document.removeEventListener('visibilitychange', syncViewVisibility)
+  panelDocument.value.removeEventListener('visibilitychange', syncViewVisibility)
   unsubs.forEach((u) => u())
   unsubs = []
   byteCounter.dispose()

@@ -1,13 +1,19 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
-import { ArrowLeft, ArrowRight, Box, Close, CopyDocument, House, Plus, Right } from '@element-plus/icons-vue'
+import { ArrowLeft, ArrowRight, Box, Close, CopyDocument, House, Monitor, Plus, Right } from '@element-plus/icons-vue'
 import { connectionLabels, useTabStore, tabIsSplit, type TabItem, type WorkTab } from '@renderer/stores/tabs'
 import { toolById } from '@renderer/tools/registry'
 import { cycleTabId, tabIdByDigit } from './workbench-navigation'
 import { memberTabIds, splitTabTitle } from './split-tab'
-import { draggingId, overId, overSide } from './tab-drag'
+import { insideTabStrip, tabDragDestination, tabDragStarted, tabInsertion } from './tab-drag'
 import ToolLauncher from './ToolLauncher.vue'
 
+const emit = defineEmits<{
+  detach: [id: string]
+  preview: [id: string, offset: { offsetX: number; offsetY: number }]
+  hidePreview: [id: string]
+  cancelPreview: [id: string]
+}>()
 const tabs = useTabStore()
 const launcher = ref<InstanceType<typeof ToolLauncher>>()
 const stripRef = ref<HTMLElement>()
@@ -42,7 +48,7 @@ function onWheel(e: WheelEvent): void {
 }
 
 watch(
-  () => [tabs.activeId, tabs.tabs.length],
+  () => [tabs.activeId, tabs.workbenchTabs.length],
   async () => {
     await nextTick()
     updateScrollState()
@@ -69,48 +75,114 @@ function tabIcon(tab: WorkTab): unknown {
   return toolById(tab.toolId)?.icon
 }
 
-// ---------- 拖拽排序（左右半区精准插入，支持拖到队尾；分屏标签整体移动） ----------
+// Keep the original handle mounted until pointer capture is released.
+const draggingId = ref<string>()
+const dropTarget = ref<ReturnType<typeof tabInsertion>>()
+const stripTabs = computed(() => tabs.tabs.filter((tab) =>
+  tab.id === draggingId.value || !tabs.detachedIds.includes(tab.id)
+))
+let drag: {
+  id: string
+  pointerId: number
+  handle: HTMLButtonElement
+  start: { x: number; y: number }
+  offset: { offsetX: number; offsetY: number }
+} | undefined
+let ignoreClick = false
 
-function onDragStart(id: string, e: DragEvent): void {
-  if (id === 'home') {
-    e.preventDefault()
+function beginTabDrag(id: string, e: PointerEvent): void {
+  if (e.button !== 0 || !e.isPrimary || drag) return
+  ignoreClick = false
+  if (id === 'home') return
+  const handle = e.currentTarget as HTMLButtonElement
+  const rect = handle.getBoundingClientRect()
+  drag = {
+    id, pointerId: e.pointerId, handle,
+    start: { x: e.clientX, y: e.clientY },
+    offset: { offsetX: e.clientX - rect.left, offsetY: e.clientY - rect.top }
+  }
+  handle.setPointerCapture(e.pointerId)
+}
+
+function insertionAt(x: number, draggedId: string) {
+  const bounds = Array.from(stripRef.value?.querySelectorAll<HTMLElement>('[data-tab-id]') ?? [], (el) => {
+    const { left, right } = el.getBoundingClientRect()
+    return { id: el.dataset.tabId!, left, right }
+  })
+  return tabInsertion(bounds.filter((tab) => tab.id !== draggedId), x)
+}
+
+function moveTabDrag(e: PointerEvent): void {
+  if (!drag || drag.pointerId !== e.pointerId || !stripRef.value) return
+  if (!(e.buttons & 1)) {
+    cancelTabDrag()
     return
   }
-  draggingId.value = id
-  if (e.dataTransfer) {
-    e.dataTransfer.effectAllowed = 'move'
-    e.dataTransfer.setData('text/plain', id)
+  const point = { x: e.clientX, y: e.clientY }
+  if (!draggingId.value && !tabDragStarted(drag.start, point)) return
+  draggingId.value = drag.id
+  ignoreClick = true
+  if (tabDragDestination(point, stripRef.value.getBoundingClientRect()) === 'detach') {
+    dropTarget.value = undefined
+    emit('preview', drag.id, drag.offset)
+  } else {
+    emit('hidePreview', drag.id)
+    dropTarget.value = insertionAt(point.x, drag.id)
   }
 }
 
-function onDragOver(id: string, e: DragEvent): void {
-  if (!draggingId.value || id === 'home' || id === draggingId.value) {
-    overId.value = null
+function resetTabDrag(): void {
+  const current = drag
+  drag = undefined
+  draggingId.value = undefined
+  dropTarget.value = undefined
+  if (current?.handle.hasPointerCapture(current.pointerId)) current.handle.releasePointerCapture(current.pointerId)
+}
+
+function cancelTabDrag(e?: PointerEvent): void {
+  if (!drag || (e && drag.pointerId !== e.pointerId)) return
+  if (draggingId.value) emit('cancelPreview', drag.id)
+  resetTabDrag()
+}
+
+function dropTab(e: PointerEvent): void {
+  if (!drag || drag.pointerId !== e.pointerId) return
+  const id = drag.id
+  const wasDragging = !!draggingId.value
+  resetTabDrag()
+  if (!wasDragging || !stripRef.value) return
+  const point = { x: e.clientX, y: e.clientY }
+  if (tabDragDestination(point, stripRef.value.getBoundingClientRect()) === 'detach') {
+    emit('detach', id)
+  } else {
+    emit('cancelPreview', id)
+    const target = insertionAt(point.x, id)
+    if (target) tabs.moveTab(id, target.id, target.side)
+  }
+}
+
+function activateTab(id: string, e: MouseEvent): void {
+  if (ignoreClick && e.detail) {
+    ignoreClick = false
     return
   }
-  e.preventDefault()
-  const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
-  overId.value = id
-  overSide.value = e.clientX >= rect.left + rect.width / 2 ? 'after' : 'before'
+  tabs.activate(id)
 }
 
-function onDragEnd(): void {
-  draggingId.value = null
-  overId.value = null
-}
-
-function onDrop(toId: string): void {
-  if (draggingId.value && toId !== 'home') {
-    tabs.moveTab(draggingId.value, toId, overSide.value)
-  }
-  onDragEnd()
+function attachAt(id: string, screenX: number, screenY: number): boolean {
+  const strip = stripRef.value?.getBoundingClientRect()
+  const point = { x: screenX - window.screenX, y: screenY - window.screenY }
+  if (!strip || !insideTabStrip(point, strip)) return false
+  const target = insertionAt(point.x, id)
+  if (target) tabs.moveTab(id, target.id, target.side)
+  return true
 }
 
 // ---------- 右键上下文菜单 ----------
 const contextMenu = ref<{ tab: WorkTab; x: number; y: number } | null>(null)
 
 const menuTargetIndex = computed(() =>
-  contextMenu.value ? tabs.tabs.findIndex((t) => t.id === contextMenu.value!.tab.id) : -1
+  contextMenu.value ? tabs.workbenchTabs.findIndex((t) => t.id === contextMenu.value!.tab.id) : -1
 )
 const canDuplicateTarget = computed(() => {
   const tab = contextMenu.value?.tab
@@ -129,25 +201,80 @@ const isSplitTarget = computed(() => {
   return Boolean(tab && tabIsSplit(tab))
 })
 const hasOtherClosable = computed(() =>
-  contextMenu.value ? tabs.tabs.some((t) => t.id !== 'home' && t.id !== contextMenu.value!.tab.id) : false
+  contextMenu.value ? tabs.workbenchTabs.some((t) => t.id !== 'home' && t.id !== contextMenu.value!.tab.id) : false
 )
 const hasRightClosable = computed(() =>
-  menuTargetIndex.value >= 0 && menuTargetIndex.value < tabs.tabs.length - 1
+  menuTargetIndex.value >= 0 && menuTargetIndex.value < tabs.workbenchTabs.length - 1
 )
-const hasAnyClosable = computed(() => tabs.tabs.some((t) => t.id !== 'home'))
+const hasAnyClosable = computed(() => tabs.workbenchTabs.some((t) => t.id !== 'home'))
 
-function openContextMenu(tab: WorkTab, e: MouseEvent): void {
+const menuRef = ref<HTMLElement>()
+let menuInvoker: HTMLButtonElement | undefined
+
+function enabledMenuItems(): HTMLButtonElement[] {
+  return Array.from(menuRef.value?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)') ?? [])
+}
+
+async function openContextMenu(tab: WorkTab, invoker: HTMLButtonElement, x: number, y: number, keyboard = false): Promise<void> {
+  menuInvoker = invoker
+  contextMenu.value = { tab, x, y }
+  await nextTick()
+  if (contextMenu.value?.tab.id !== tab.id || !menuRef.value) return
+  const { width, height } = menuRef.value.getBoundingClientRect()
+  contextMenu.value.x = Math.max(8, Math.min(x, window.innerWidth - width - 8))
+  contextMenu.value.y = Math.max(8, Math.min(y, window.innerHeight - height - 8))
+  if (keyboard) enabledMenuItems()[0]?.focus()
+}
+
+function onTabContextMenu(tab: WorkTab, e: MouseEvent): void {
   e.preventDefault()
-  const menuW = 168
-  // 分屏条目的菜单多出「关闭左/右侧分屏」两项，估算高度相应加大，避免贴底时溢出
-  const menuH = tabIsSplit(tab) ? 280 : 210
-  const x = Math.min(e.clientX, window.innerWidth - menuW - 8)
-  const y = Math.min(e.clientY, window.innerHeight - menuH - 8)
-  contextMenu.value = { tab, x: Math.max(8, x), y: Math.max(8, y) }
+  const invoker = (e.currentTarget as HTMLElement).querySelector<HTMLButtonElement>('.tab-select')
+  if (invoker) void openContextMenu(tab, invoker, e.clientX, e.clientY)
+}
+
+function onTabMenuKey(tab: WorkTab, e: KeyboardEvent): void {
+  if (e.key !== 'ContextMenu' && !(e.shiftKey && e.key === 'F10')) return
+  e.preventDefault()
+  const invoker = e.currentTarget as HTMLButtonElement
+  const rect = invoker.getBoundingClientRect()
+  void openContextMenu(tab, invoker, rect.left, rect.bottom, true)
 }
 
 function closeContextMenu(): void {
   contextMenu.value = null
+  menuInvoker = undefined
+}
+
+function dismissMenuAndRestoreFocus(): void {
+  const invoker = menuInvoker
+  closeContextMenu()
+  invoker?.focus({ preventScroll: true })
+}
+
+function onMenuKeydown(e: KeyboardEvent): void {
+  if (e.key === 'Tab') {
+    dismissMenuAndRestoreFocus()
+    return
+  }
+  const items = enabledMenuItems()
+  const index = items.indexOf(document.activeElement as HTMLButtonElement)
+  const next = e.key === 'Home' ? 0 : e.key === 'End' ? items.length - 1 :
+    e.key === 'ArrowDown' ? (index + 1) % items.length :
+      e.key === 'ArrowUp' ? (index + items.length - 1) % items.length : -1
+  if (next < 0) return
+  e.preventDefault()
+  items[next]?.focus()
+}
+
+function detachTarget(): void {
+  const id = contextMenu.value?.tab.id
+  closeContextMenu()
+  if (id) emit('detach', id)
+}
+
+function onWindowBlur(): void {
+  closeContextMenu()
+  cancelTabDrag()
 }
 
 function duplicateTab(tab: WorkTab): void {
@@ -193,8 +320,10 @@ function isModalOpen(): boolean {
 function onGlobalKeydown(e: KeyboardEvent): void {
   if (e.isComposing || e.keyCode === 229) return
 
-  if (e.key === 'Escape' && contextMenu.value) {
-    closeContextMenu()
+  if (e.key === 'Escape' && (contextMenu.value || draggingId.value)) {
+    e.preventDefault()
+    dismissMenuAndRestoreFocus()
+    cancelTabDrag()
     return
   }
 
@@ -206,7 +335,7 @@ function onGlobalKeydown(e: KeyboardEvent): void {
   // Ctrl+Tab / Ctrl+Shift+Tab 轮切标签（分屏标签作为单个条目参与）
   if (e.key === 'Tab') {
     e.preventDefault()
-    const ids = tabs.tabs.map((t) => t.id)
+    const ids = tabs.workbenchTabs.map((t) => t.id)
     const next = cycleTabId(ids, tabs.activeId, e.shiftKey ? -1 : 1)
     if (next) tabs.activate(next)
     return
@@ -249,7 +378,7 @@ function onGlobalKeydown(e: KeyboardEvent): void {
   if (/^[1-9]$/.test(e.key)) {
     const target = e.target as HTMLElement | null
     if (target?.closest('input, textarea, [contenteditable="true"]')) return
-    const id = tabIdByDigit(tabs.tabs.map((t) => t.id), Number(e.key))
+    const id = tabIdByDigit(tabs.workbenchTabs.map((t) => t.id), Number(e.key))
     if (id) {
       e.preventDefault()
       tabs.activate(id)
@@ -264,18 +393,26 @@ onMounted(() => {
     stripObserver.observe(stripRef.value)
   }
   window.addEventListener('keydown', onGlobalKeydown, true)
+  window.addEventListener('pointermove', moveTabDrag, true)
+  window.addEventListener('pointerup', dropTab, true)
+  window.addEventListener('pointercancel', cancelTabDrag, true)
   window.addEventListener('pointerdown', closeContextMenu)
-  window.addEventListener('blur', closeContextMenu)
+  window.addEventListener('blur', onWindowBlur)
 })
 
 onUnmounted(() => {
+  cancelTabDrag()
   stripObserver?.disconnect()
   window.removeEventListener('keydown', onGlobalKeydown, true)
+  window.removeEventListener('pointermove', moveTabDrag, true)
+  window.removeEventListener('pointerup', dropTab, true)
+  window.removeEventListener('pointercancel', cancelTabDrag, true)
   window.removeEventListener('pointerdown', closeContextMenu)
-  window.removeEventListener('blur', closeContextMenu)
+  window.removeEventListener('blur', onWindowBlur)
 })
 
 defineExpose({
+  attachAt,
   openLauncher: () => {
     splitAnchorId.value = null
     launcher.value?.open()
@@ -304,32 +441,31 @@ defineExpose({
       @wheel="onWheel"
     >
       <div
-        v-for="tab in tabs.tabs"
+        v-for="tab in stripTabs"
         :key="tab.id"
         class="tab-item"
+        :data-tab-id="tab.id"
         :class="{
           'is-home': tab.id === 'home',
           'is-split-entry': tabIsSplit(tab),
           active: tab.id === tabs.activeId,
           dragging: tab.id === draggingId,
-          'drop-before': tab.id === overId && overSide === 'before' && tab.id !== draggingId,
-          'drop-after': tab.id === overId && overSide === 'after' && tab.id !== draggingId
+          'drop-before': tab.id === dropTarget?.id && dropTarget.side === 'before',
+          'drop-after': tab.id === dropTarget?.id && dropTarget.side === 'after'
         }"
-        :draggable="tab.id !== 'home'"
         @auxclick.middle="tabs.close(tab.id)"
-        @contextmenu="openContextMenu(tab, $event)"
-        @dragstart="(e: DragEvent) => onDragStart(tab.id, e)"
-        @dragend="onDragEnd"
-        @dragover="(e: DragEvent) => onDragOver(tab.id, e)"
-        @dragleave="overId === tab.id && (overId = null)"
-        @drop.prevent="onDrop(tab.id)"
+        @contextmenu="onTabContextMenu(tab, $event)"
       >
         <button
           type="button"
           class="tab-select"
           :aria-current="tab.id === tabs.activeId ? 'page' : undefined"
           :title="tabIsSplit(tab) ? '已分屏：右键可拆分' : undefined"
-          @click="tabs.activate(tab.id)"
+          aria-haspopup="menu"
+          @click="activateTab(tab.id, $event)"
+          @keydown="onTabMenuKey(tab, $event)"
+          @pointerdown="beginTabDrag(tab.id, $event)"
+          @lostpointercapture="cancelTabDrag"
         >
           <span
             v-for="dot in tabDots(tab)"
@@ -386,8 +522,11 @@ defineExpose({
   <Teleport to="body">
     <div
       v-if="contextMenu"
+      ref="menuRef"
       class="tab-context-menu"
       role="menu"
+      aria-label="标签页操作"
+      @keydown="onMenuKeydown"
       :style="{ left: contextMenu.x + 'px', top: contextMenu.y + 'px' }"
       @pointerdown.stop
     >
@@ -399,6 +538,10 @@ defineExpose({
       >
         <el-icon :size="13"><CopyDocument /></el-icon>
         <span>复制新会话</span>
+      </button>
+      <button v-if="contextMenu.tab.id !== 'home'" type="button" role="menuitem" @click="detachTarget">
+        <el-icon :size="13"><Monitor /></el-icon>
+        <span>移至新窗口</span>
       </button>
       <button
         v-if="canSplitTarget"
@@ -591,6 +734,7 @@ defineExpose({
 }
 
 .tab-select {
+  touch-action: none;
   flex: 1;
   min-width: 0;
   height: 100%;
@@ -721,7 +865,7 @@ defineExpose({
   cursor: pointer;
 }
 
-.tab-context-menu button:hover:not(:disabled) {
+.tab-context-menu button:is(:hover, :focus-visible):not(:disabled) {
   background: var(--el-color-primary-light-9);
   color: var(--el-color-primary);
 }

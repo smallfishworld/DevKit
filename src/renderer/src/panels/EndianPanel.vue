@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { usePanelMessage } from '@renderer/composables/panelOverlays'
 import { CopyDocument } from '@element-plus/icons-vue'
 import { encodeInteger } from '../../../shared/converter-workbench'
+
+const ElMessage = usePanelMessage()
 
 /** 解析任意 HEX 字节序列（宽容分隔） */
 function parseBytes(input: string): number[] {

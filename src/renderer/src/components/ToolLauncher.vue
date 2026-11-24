@@ -23,7 +23,11 @@ const entries = computed(() => [
     const tool = TOOLS.find((item) => item.id === tab.toolId)
     if (!tool || !isTerminalTool(tool.id)) return []
     // 分屏模式：锚点自身不可再合并；普通模式：隐藏正在显示的会话
-    if (props.splitAnchorId) return tab.id === props.splitAnchorId ? [] : [{ key: tab.id, name: tab.title, tool, tabId: tab.id }]
+    if (props.splitAnchorId) {
+      const host = tabs.hostId(tab.id)
+      return tab.id === props.splitAnchorId || (host && tabs.detachedIds.includes(host))
+        ? [] : [{ key: tab.id, name: tab.title, tool, tabId: tab.id }]
+    }
     return visibleIds.value.has(tab.id) ? [] : [{ key: tab.id, name: tab.title, tool, tabId: tab.id }]
   }),
   ...TOOLS.filter((tool) => tool.ready).map((tool) => ({ key: tool.id, name: tool.name, tool, tabId: '' }))

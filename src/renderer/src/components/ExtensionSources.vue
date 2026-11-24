@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
-import { ElMessageBox } from 'element-plus'
+import { usePanelMessageBox } from '@renderer/composables/panelOverlays'
 import type { PluginSource, PluginSourceEntry } from '../../../shared/plugins'
 import { satisfiesMinVersion } from '../../../../packages/plugin-sdk/src/manifest'
 import { pluginRequest, useDevicePlugins } from '@renderer/stores/devicePlugins'
+
+const ElMessageBox = usePanelMessageBox()
 
 const open = defineModel<boolean>({ required: true })
 const plugins = useDevicePlugins()

@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { onUnmounted, ref, shallowRef } from 'vue'
-import { ElMessage } from 'element-plus'
+import { usePanelMessage } from '@renderer/composables/panelOverlays'
 import type { HistoryPage } from '../../../shared/terminal-stream'
+
+const ElMessage = usePanelMessage()
 
 const props = defineProps<{ tool: string; panelId: string }>()
 const visible = ref(false)

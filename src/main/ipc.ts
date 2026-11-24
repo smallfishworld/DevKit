@@ -11,6 +11,8 @@ export interface ToolService {
 
 const services = new Map<string, ToolService>()
 let mainWindow: BrowserWindow | null = null
+let backgroundThrottlingAllowed = true
+let hasDetachedTabs = false
 
 export function setMainWindow(win: BrowserWindow | null): void {
   mainWindow = win
@@ -22,7 +24,15 @@ export function getMainWindow(): BrowserWindow | null {
 
 /** Keep parser callbacks running while the main window is receiving serial data. */
 export function setWindowBackgroundThrottling(allowed: boolean): void {
-  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.setBackgroundThrottling(allowed)
+  backgroundThrottlingAllowed = allowed
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.setBackgroundThrottling(allowed && !hasDetachedTabs)
+  }
+}
+
+export function setHasDetachedTabs(present: boolean): void {
+  hasDetachedTabs = present
+  setWindowBackgroundThrottling(backgroundThrottlingAllowed)
 }
 
 export function registerService(tool: string, service: ToolService): void {

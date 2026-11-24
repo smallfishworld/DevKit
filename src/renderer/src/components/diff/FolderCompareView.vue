@@ -7,12 +7,15 @@
  * - 行内悬停单项操作保留；「对比」跳文本/十六进制视图（父层传路径）
  */
 import { computed, onMounted, ref, shallowRef, watch } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { usePanelMessage, usePanelMessageBox } from '@renderer/composables/panelOverlays'
 import { FolderOpened } from '@element-plus/icons-vue'
 import type { DiffEncoding, FolderEntry, FolderScanRes, FolderSyncRes } from '../../../../shared/diff'
 import { ENCODINGS, useDiff } from '../../composables/useDiff'
 import { useDropSides } from '../../composables/useDiffDrop'
 import { buildTree, countDescendants, flattenTree, type FolderNode } from './folderAlign'
+
+const ElMessage = usePanelMessage()
+const ElMessageBox = usePanelMessageBox()
 
 const emit = defineEmits<{
   (e: 'compareFile', left: string, right: string, hex: boolean): void

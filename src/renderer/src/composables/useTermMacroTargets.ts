@@ -57,16 +57,22 @@ export function pickTermMacroTarget(panelIds: string[]): TermMacroTarget | undef
   )
 }
 
-let sharedFinishRecording: (() => void) | undefined
+const sharedFinishRecording = new Map<string, () => void>()
 
 /** 共享栏登记「停止录制并整理保存」的入口；终端工具栏上的停止录制按钮转给它 */
-export function registerSharedRecordingFinisher(fn: (() => void) | undefined): void {
-  sharedFinishRecording = fn
+export function registerSharedRecordingFinisher(panelIds: string[], fn: () => void): () => void {
+  for (const id of panelIds) sharedFinishRecording.set(id, fn)
+  return () => {
+    for (const id of panelIds) {
+      if (sharedFinishRecording.get(id) === fn) sharedFinishRecording.delete(id)
+    }
+  }
 }
 
 /** 有共享栏时由它停止录制并返回 true；否则返回 false，由调用方自己处理 */
-export function finishSharedRecording(): boolean {
-  if (!sharedFinishRecording) return false
-  sharedFinishRecording()
+export function finishSharedRecording(panelId: string): boolean {
+  const finish = sharedFinishRecording.get(panelId)
+  if (!finish) return false
+  finish()
   return true
 }

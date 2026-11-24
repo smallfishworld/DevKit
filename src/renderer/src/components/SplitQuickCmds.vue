@@ -4,7 +4,7 @@
  * 命令发给当前选中的终端（见 composables/useTermMacroTargets）。
  * 宽度与折叠是整条共享栏自己的状态，与各终端自带栏互不影响。
  */
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, ref, watch, watchEffect } from 'vue'
 import { ArrowRight } from '@element-plus/icons-vue'
 import QuickCmdManager from './QuickCmdManager.vue'
 import { useSidebarDrag } from '../composables/useSidebarDrag'
@@ -51,8 +51,9 @@ function toggle(): void {
 
 // 串口工具栏的「停止录制」在共享栏存在时转给这里的列表实例
 const manager = ref<InstanceType<typeof QuickCmdManager>>()
-onMounted(() => registerSharedRecordingFinisher(() => manager.value?.finishRecording()))
-onUnmounted(() => registerSharedRecordingFinisher(undefined))
+watchEffect((onCleanup) => onCleanup(
+  registerSharedRecordingFinisher(memberIds.value, () => manager.value?.finishRecording())
+))
 </script>
 
 <template>

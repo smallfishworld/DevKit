@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref, watch } from 'vue'
-import { ElMessage } from 'element-plus'
+import { usePanelMessage } from '@renderer/composables/panelOverlays'
 import { Folder, FolderOpened } from '@element-plus/icons-vue'
 import type { TransferInfo } from '../../../shared/types'
 import { useTabStore } from '@renderer/stores/tabs'
+
+const ElMessage = usePanelMessage()
 
 const props = defineProps<{ panelId: string }>()
 const tabStore = useTabStore()

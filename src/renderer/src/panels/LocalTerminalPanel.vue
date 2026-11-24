@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { ElMessage } from 'element-plus'
+import { usePanelMessage } from '@renderer/composables/panelOverlays'
 import { ArrowRight, FolderOpened, RefreshRight, Search, SwitchButton, VideoPlay } from '@element-plus/icons-vue'
 import TerminalView from '@renderer/components/TerminalView.vue'
 import TerminalHistory from '@renderer/components/TerminalHistory.vue'
@@ -19,6 +19,8 @@ import {
   type LocalTerminalExitEvent,
   type ShellProfile
 } from '../../../shared/local-terminal'
+
+const ElMessage = usePanelMessage()
 
 const props = defineProps<{ panelId: string }>()
 const tabStore = useTabStore()
