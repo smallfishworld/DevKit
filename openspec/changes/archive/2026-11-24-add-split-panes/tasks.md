@@ -7,5 +7,5 @@
 - [x] `App.vue`：按条目分支渲染，分屏条目 `.split-view` grid + 分隔条拖宽（20–80% 持久化）；面板改用 `sessionById` 读取自身参数。
 - [x] typecheck + 全量单测绿。
 - [x] 移除串口标签备注功能（用户要求精简）：备注名输入框、`config.portLabels`、预设名回退标题、`portRemark/portTabTitle`；`serial-title.ts` 只留 `normalizePortPath`；标签标题回归纯端口号；分屏分隔线对比度提升（`--el-border-color`）；补 serial-terminal 变更增量。
-- [ ] `npm run dev` 手工冒烟：合并两个已开会话并排、选择器新开工具并入、单 X 关闭全部成员、拆分回独立标签、分隔条拖宽与重启记忆、分屏标签整体拖拽排序、双串口并排收发互不串扰。
-- [ ] 同步 workbench 主 spec 与 serial-terminal 主 spec（移除备注要求），归档 change。
+- [x] `npm run dev` 手工冒烟：合并两个已开会话并排、选择器新开工具并入、单 X 关闭全部成员、拆分回独立标签、分隔条拖宽（热区层叠修复后用户验证）、分屏标签整体拖拽排序、双串口并排收发互不串扰。
+- [x] 同步 workbench 主 spec 与 serial-terminal 主 spec（移除备注要求），归档 change。
