@@ -3,10 +3,11 @@ import { copyFile, mkdir, readdir, readFile, rename, rm, stat, writeFile } from 
 import { join } from 'node:path'
 import { APP_UPDATES, APP_UPDATES_PANEL, type UpdateState } from '../../../shared/app-updates'
 import { emitToolEvent, getMainWindow, type ToolService } from '../../ipc'
-import { GitHubReleases, RELEASE_HOME, packageName, readPendingUpdate, type UpdatePackage } from './github'
+import { GitHubReleases, RELEASE_HOME, RateLimitError, packageName, readPendingUpdate, type ReleaseResult, type UpdatePackage } from './github'
 import { cleanUpdateHandoffs, getInstallTarget, prepareUpdate, verifyUpdateFile, type InstallTarget } from './install'
 
-const CHECK_INTERVAL = 6 * 60 * 60 * 1000
+// 12 小时一次：GitHub API 匿名配额按出口 IP 共享（企业 NAT 下尤甚），降频减少配额消耗
+const CHECK_INTERVAL = 12 * 60 * 60 * 1000
 
 export class AppUpdateService implements ToolService {
   private state: UpdateState
@@ -91,13 +92,29 @@ export class AppUpdateService implements ToolService {
     }
   }
 
+  /** 优先走 API；被限流时切换发布页回退通道，回退也拿不到校验信息则提示手动下载 */
+  private async resolveUpdate(): Promise<ReleaseResult> {
+    try {
+      return await this.feed.latest(this.current, this.target?.format)
+    } catch (error) {
+      if (!(error instanceof RateLimitError)) throw error
+      try {
+        const fallback = await this.feed.fallbackLatest(this.current, this.target?.format)
+        if (fallback) return fallback
+      } catch {
+        // 回退通道网络失败 → 走统一限流提示
+      }
+      throw new Error('GitHub API 受限，且此版本发布未附带校验文件，无法在应用内直接更新；可到发布页手动下载。')
+    }
+  }
+
   private async check(): Promise<UpdateState> {
     await this.initialized
     if (this.busy || this.state.phase === 'ready' || this.state.phase === 'preparing') return this.state
     this.busy = true
     this.setState({ phase: 'checking' })
     try {
-      const result = await this.feed.latest(this.current, this.target?.format)
+      const result = await this.resolveUpdate()
       this.candidate = result.status === 'available' ? result.update : undefined
       this.setState(result.status === 'available'
         ? { phase: 'available', release: result.update, installable: Boolean(this.target) }

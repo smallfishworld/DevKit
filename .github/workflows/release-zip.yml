@@ -77,6 +77,12 @@ jobs:
             throw "ZIP package was not generated: $zip"
           }
 
+          # 生成 .sha256 边车：应用内更新在 GitHub API 限流时走发布直链回退通道，靠它校验完整性
+          foreach ($file in @($portable, $zip)) {
+            $digest = (Get-FileHash -Algorithm SHA256 $file).Hash.ToLower()
+            [System.IO.File]::WriteAllText("$file.sha256", $digest, [System.Text.UTF8Encoding]::new($false))
+          }
+
           "version=$version" >> $env:GITHUB_OUTPUT
           "portable=$portable" >> $env:GITHUB_OUTPUT
           "zip=$zip" >> $env:GITHUB_OUTPUT
@@ -88,7 +94,9 @@ jobs:
         run: |
           gh release upload "${{ steps.build_ref.outputs.tag }}" `
             "${{ steps.package_info.outputs.portable }}" `
+            "${{ steps.package_info.outputs.portable }}.sha256" `
             "${{ steps.package_info.outputs.zip }}" `
+            "${{ steps.package_info.outputs.zip }}.sha256" `
             --clobber
 
       - name: Update Release download notes

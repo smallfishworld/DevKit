@@ -12,13 +12,26 @@ const MAX_PACKAGE = 2 * 1024 * 1024 * 1024
 
 export type PackageFormat = 'portable' | 'zip'
 export type Fetch = (url: string, init?: RequestInit) => Promise<Response>
+export type ReleaseResult = { status: 'current' | 'publishing' } | { status: 'available'; update: UpdatePackage }
 
 export interface UpdatePackage extends UpdateRelease {
   tag: string
   hash: string
 }
 
-type ReleaseResult = { status: 'current' | 'publishing' } | { status: 'available'; update: UpdatePackage }
+const RELEASE_LATEST = `${RELEASE_HOME}/latest`
+const TAG_PATH = /\/releases\/tag\/([^/?#]+)/
+
+/** API 匿名配额耗尽时，更新信息改走发布页回退通道（github.com 网页端点无 API 配额限制） */
+const FALLBACK_NOTES = 'GitHub API 暂时限流，本次更新信息通过发布页回退通道获取。'
+
+/** API 403/429 或退避期内抛出；调用方以此触发发布页回退通道 */
+export class RateLimitError extends Error {
+  constructor() {
+    super('GitHub 请求受限，请稍后再检查。')
+    this.name = 'RateLimitError'
+  }
+}
 
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' ? value as Record<string, unknown> : {}
@@ -74,7 +87,7 @@ export class GitHubReleases {
   constructor(private readonly fetch: Fetch) {}
 
   async latest(current: string, format?: PackageFormat): Promise<ReleaseResult> {
-    if (Date.now() < this.retryAfter) throw new Error('GitHub 请求受限，请稍后再检查。')
+    if (Date.now() < this.retryAfter) throw new RateLimitError()
     const headers: Record<string, string> = {
       Accept: 'application/vnd.github+json',
       'User-Agent': `DevKit/${current}`
@@ -89,13 +102,57 @@ export class GitHubReleases {
       const retry = Number(response.headers.get('retry-after'))
       const reset = Number(response.headers.get('x-ratelimit-reset')) * 1000
       this.retryAfter = Math.max(Date.now() + Math.max(retry || 0, 60) * 1000, reset || 0)
-      throw new Error('GitHub 请求受限，请稍后再检查。')
+      throw new RateLimitError()
     }
     if (!response.ok) throw new Error(`GitHub 检查失败（HTTP ${response.status}）。`)
     const body: unknown = await response.json()
     const result = parseRelease(body, current, format)
     this.cached = { etag: response.headers.get('etag'), body }
     return result
+  }
+
+  /**
+   * API 被限时的零配额回退通道：
+   * 1. `releases/latest` 的 302 跳转 Location 解析最新稳定版 tag（github.com 网页端点，无 API 配额）；
+   * 2. 包大小取自发布直链响应的 Content-Length；
+   * 3. SHA-256 取自随包上传的 `<包名>.sha256` 边车附件（CI 发布时生成）。
+   * 旧版本发布没有边车、或拿不到包大小时返回 undefined，调用方提示手动下载。
+   */
+  async fallbackLatest(current: string, format?: PackageFormat): Promise<ReleaseResult | undefined> {
+    const response = await this.fetch(RELEASE_LATEST, {
+      headers: { 'User-Agent': `DevKit/${current}` }, redirect: 'manual', signal: AbortSignal.timeout(12_000)
+    })
+    const to = response.status >= 300 && response.status < 400 ? response.headers.get('location') : null
+    await response.body?.cancel()
+    // 无跳转（仓库还没有稳定发布）→ 视为已是最新；其余异常一律放弃回退
+    if (!to) return response.ok ? { status: 'current' } : undefined
+    const target = new URL(to, RELEASE_LATEST)
+    if (target.protocol !== 'https:' || target.hostname !== 'github.com') return undefined
+    const tag = TAG_PATH.exec(target.pathname)?.[1]
+    const version = tag ? decodeURIComponent(tag).replace(/^v/, '') : ''
+    if (!tag || !VERSION.test(version)) return undefined
+    if (!isNewerVersion(version, current)) return { status: 'current' }
+    const normalizedTag = `v${version}`
+    if (!format) {
+      return { status: 'available', update: { version, tag: normalizedTag, notes: FALLBACK_NOTES, bytes: 0, hash: '' } }
+    }
+    const assetUrl = `${RELEASE_HOME}/download/${normalizedTag}/${packageName(version, format)}`
+    const bytes = await this.probeContentLength(assetUrl)
+    if (!bytes) return undefined
+    const sidecar = await this.fetchAsset(`${assetUrl}.sha256`, AbortSignal.timeout(12_000))
+    const text = sidecar.ok ? (await sidecar.text()).slice(0, 2048) : ''
+    const hash = /^([a-f\d]{64})/i.exec(text)?.[1]
+    if (!hash) return undefined
+    const update = readPendingUpdate({ version, tag: normalizedTag, notes: FALLBACK_NOTES, bytes, hash }, current)
+    return update ? { status: 'available', update } : undefined
+  }
+
+  /** GET 发布直链只取 Content-Length（不消费正文），应用内下载时按字节与哈希双重校验 */
+  private async probeContentLength(url: string): Promise<number | undefined> {
+    const response = await this.fetchAsset(url, AbortSignal.timeout(12_000))
+    const size = Number(response.headers.get('content-length'))
+    void response.body?.cancel()
+    return Number.isSafeInteger(size) && size > 0 ? size : undefined
   }
 
   async download(

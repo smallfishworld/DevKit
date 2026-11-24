@@ -5,7 +5,7 @@ const { tmpdir } = require('node:os')
 const { join } = require('node:path')
 const { test } = require('node:test')
 const {
-  GitHubReleases, isNewerVersion, packageName, parseRelease, readPendingUpdate
+  GitHubReleases, RateLimitError, isNewerVersion, packageName, parseRelease, readPendingUpdate
 } = require('../src/main/services/updates/github')
 const { updateNotice } = require('../src/shared/app-updates')
 
@@ -100,6 +100,62 @@ test('update entry exposes notices for a newer version and verified download', (
   assert.match(updateNotice({ phase: 'available', release: update }), /新版本 v0\.12\.0/)
   assert.match(updateNotice({ phase: 'ready', release: update }), /已下载/)
   assert.equal(updateNotice({ phase: 'idle' }), '')
+})
+
+test('rate-limited API falls back to the quota-free release page channel', async () => {
+  const api = 'https://api.github.com/repos/smallfishworld/DevKit/releases/latest'
+  const page = 'https://github.com/smallfishworld/DevKit/releases/latest'
+  const downloadUrl = 'https://github.com/smallfishworld/DevKit/releases/download/v0.12.0/DevKit-0.12.0-win-x64.zip'
+  const remote = 'https://release-assets.githubusercontent.com/fixture'
+  // sidecar: undefined=正常边车 / null=404（旧版本发布）/ 其他字符串=损坏内容
+  const makeStub = ({ sidecar, tag } = {}) => async (url, init) => {
+    if (url === api) return new Response(null, { status: 403, headers: { 'x-ratelimit-reset': '1795485219' } })
+    assert.equal(init.redirect, 'manual')
+    if (url === page) {
+      return new Response(null, { status: 302, headers: { location: `https://github.com/smallfishworld/DevKit/releases/tag/${tag ?? 'v0.12.0'}` } })
+    }
+    if (url === remote) return new Response(data, { headers: { 'content-length': String(data.length) } })
+    if (url === downloadUrl) return new Response(null, { status: 302, headers: { location: remote } })
+    if (url === downloadUrl + '.sha256') {
+      if (sidecar === null) return new Response(null, { status: 404 })
+      return new Response(sidecar ?? `${hash}  DevKit-0.12.0-win-x64.zip\n`)
+    }
+    throw new Error('unexpected fetch ' + url)
+  }
+
+  const client = new GitHubReleases(makeStub())
+  // API 限流 → 类型化错误（触发调用方回退）
+  await assert.rejects(client.latest('0.9.0', 'zip'), RateLimitError)
+  const fallback = await client.fallbackLatest('0.9.0', 'zip')
+  assert.equal(fallback.status, 'available')
+  assert.equal(fallback.update.version, '0.12.0')
+  assert.equal(fallback.update.tag, 'v0.12.0')
+  assert.equal(fallback.update.hash, hash)
+  assert.equal(fallback.update.bytes, data.length)
+  // 无分发格式时与 API 只读路径同形（bytes/hash 置空）
+  const loose = await client.fallbackLatest('0.9.0')
+  assert.deepEqual(loose, {
+    status: 'available',
+    update: { version: '0.12.0', tag: 'v0.12.0', notes: loose.update.notes, bytes: 0, hash: '' }
+  })
+  // 回退解析出的元数据可直接驱动校验下载（无感更新闭环）
+  const temp = await mkdtemp(join(tmpdir(), 'devkit-update-fallback-'))
+  try {
+    const target = join(temp, 'fallback.part')
+    await client.download(fallback.update, 'zip', target, () => {})
+    assert.deepEqual(await readFile(target), data)
+  } finally {
+    await rm(temp, { force: true, recursive: true })
+  }
+
+  // 非更新 tag / 未 newer / 无边车 / 边车损坏 → 回退放弃
+  const wrongTag = new GitHubReleases(makeStub({ tag: 'v0.12.0-beta.1' }))
+  assert.equal(await wrongTag.fallbackLatest('0.9.0', 'zip'), undefined)
+  assert.equal((await client.fallbackLatest('0.12.0', 'zip')).status, 'current')
+  const noSidecar = new GitHubReleases(makeStub({ sidecar: null }))
+  assert.equal(await noSidecar.fallbackLatest('0.9.0', 'zip'), undefined)
+  const badSidecar = new GitHubReleases(makeStub({ sidecar: 'not-a-hash' }))
+  assert.equal(await badSidecar.fallbackLatest('0.9.0', 'zip'), undefined)
 })
 
 test('read-only release check works without Windows package format', () => {
