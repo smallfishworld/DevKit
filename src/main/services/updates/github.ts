@@ -27,6 +27,60 @@ const RELEASE_LATEST = `${RELEASE_HOME}/latest`
  * `v0.12.0-beta.1` 截成 `v0.12.0`。
  */
 const TAG_IN_PAGE = /releases\/tag\/(v?(?:0|[1-9]\d{0,14})\.(?:0|[1-9]\d{0,14})\.(?:0|[1-9]\d{0,14}))(?=[^0-9A-Za-z._-]|$)/
+/** 发布正文容器（GitHub 渲染发布说明的位置） */
+const BODY_CONTENT_ANCHOR = 'data-test-selector="body-content"'
+/** 说明里「下载」小节标题行：与 API 路径按 `## 下载` 截断同义 */
+const DOWNLOAD_HEADING = /^[ \t]*下载[ \t]*$/m
+
+/** 极简 HTML → 纯文本：去掉标签间空白、块级元素换行、列表加圆点、去标签、解码实体、逐行收边 */
+function htmlToText(html: string): string {
+  return html
+    .replace(/>\s+</g, '><')
+    .replace(/<(script|style)\b[\s\S]*?<\/\1>/gi, '')
+    .replace(/<li\b[^>]*>/gi, '\n• ')
+    .replace(/<\/(p|ul|ol|h[1-6]|div|tr|blockquote|pre|table)\s*>/gi, '\n')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#0?39;|&apos;/gi, "'")
+    .replace(/&amp;/gi, '&')
+    .split('\n')
+    .map((line) => line.trim())
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
+/**
+ * 从已拉取的最新发布页 HTML 提取发布说明纯文本，让回退通道展示真实更新内容而不是占位文案。
+ * 正文容器为 `data-test-selector="body-content"` 的 markdown-body div，按 div 深度找配对闭合；
+ * 与 API 路径一致，截到「下载」小节为止。结构变化时返回 undefined，由调用方落到占位文案。
+ */
+export function releaseNotesFromTagPage(html: string): string | undefined {
+  const anchor = html.indexOf(BODY_CONTENT_ANCHOR)
+  if (anchor < 0) return undefined
+  const start = html.lastIndexOf('<div', anchor)
+  if (start < 0) return undefined
+  const divTag = /<\/?div\b[^>]*>/g
+  divTag.lastIndex = start
+  let depth = 0
+  let end = -1
+  for (let match: RegExpExecArray | null; (match = divTag.exec(html));) {
+    depth += match[0][1] === '/' ? -1 : 1
+    if (depth === 0) {
+      end = match.index + match[0].length
+      break
+    }
+  }
+  if (end < 0) return undefined
+  const text = htmlToText(html.slice(start, end))
+  if (text.length < 8) return undefined
+  const download = text.search(DOWNLOAD_HEADING)
+  return (download >= 0 ? text.slice(0, download) : text).trim() || undefined
+}
 
 /** API 匿名配额耗尽时，更新信息改走发布页回退通道（github.com 网页端点无 API 配额限制） */
 const FALLBACK_NOTES = 'GitHub API 暂时限流，本次更新信息通过发布页回退通道获取。'
@@ -132,13 +186,16 @@ export class GitHubReleases {
       await response.body?.cancel()
       return undefined
     }
-    const tag = TAG_IN_PAGE.exec(await response.text())?.[1]
+    // 同一份页面既解析版本号也提取发布说明（零额外请求）；提取失败落到占位文案
+    const html = await response.text()
+    const tag = TAG_IN_PAGE.exec(html)?.[1]
     const version = tag?.replace(/^v/, '')
     if (!version || !VERSION.test(version)) return undefined
+    const notes = releaseNotesFromTagPage(html) ?? FALLBACK_NOTES
     if (!isNewerVersion(version, current)) return { status: 'current' }
     const normalizedTag = `v${version}`
     if (!format) {
-      return { status: 'available', update: { version, tag: normalizedTag, notes: FALLBACK_NOTES, bytes: 0, hash: '' } }
+      return { status: 'available', update: { version, tag: normalizedTag, notes, bytes: 0, hash: '' } }
     }
     const assetUrl = `${RELEASE_HOME}/download/${normalizedTag}/${packageName(version, format)}`
     const bytes = await this.probeContentLength(assetUrl)
@@ -147,7 +204,7 @@ export class GitHubReleases {
     const text = sidecar.ok ? (await sidecar.text()).slice(0, 2048) : ''
     const hash = /^([a-f\d]{64})/i.exec(text)?.[1]
     if (!hash) return undefined
-    const update = readPendingUpdate({ version, tag: normalizedTag, notes: FALLBACK_NOTES, bytes, hash }, current)
+    const update = readPendingUpdate({ version, tag: normalizedTag, notes, bytes, hash }, current)
     return update ? { status: 'available', update } : undefined
   }
 

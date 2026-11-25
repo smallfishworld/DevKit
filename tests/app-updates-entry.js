@@ -104,15 +104,26 @@ test('rate-limited API falls back to the quota-free release page channel', async
   const api = 'https://api.github.com/repos/smallfishworld/DevKit/releases/latest'
   const page = 'https://github.com/smallfishworld/DevKit/releases/latest'
   const downloadUrl = 'https://github.com/smallfishworld/DevKit/releases/download/v0.12.0/DevKit-0.12.0-win-x64.zip'
-  // release/latest 跳转后的 tag 页：canonical 与 og:url 都带 /releases/tag/<tag>（Electron 里跳转只能 follow，不能读 302）
-  const tagPage = (tag) => `<html><head><link rel="canonical" href="https://github.com/smallfishworld/DevKit/releases/tag/${tag}">` +
-    `<meta property="og:url" content="https://github.com/smallfishworld/DevKit/releases/tag/${tag}"></head><body>…</body></html>`
+  // release/latest 跳转后的 tag 页（仿 GitHub 结构）：head 里 canonical/og:url 带 tag，
+  // 正文是 data-test-selector="body-content" 的 markdown-body div（含嵌套 div 与实体），其后是 Assets 区
+  // body: 'normal'=完整页面 / 'empty'=正文容器为空 / 'none'=没有正文容器（结构变化）
+  const tagPage = (tag, body = 'normal') => {
+    const content = body === 'normal'
+      ? '<h1>DevKit v0.12.0</h1> <h2>工作台</h2> <ul> <li><strong>新增分屏</strong>：标题 &quot;A | B&quot;、单个关闭按钮</li> <li>分隔条默认严格均分</li> </ul> <div class="Box mt-3"> <p>内嵌说明块</p> </div> <h2>下载</h2> <table><tr><td>DevKit-0.12.0-portable.exe</td></tr></table>'
+      : ''
+    const section = body === 'none'
+      ? `<h2 class="sr-only">Assets</h2>`
+      : `<div data-pjax="true" data-test-selector="body-content" data-view-component="true" class="markdown-body">${content}</div><h2 class="sr-only">Assets</h2>`
+    return `<html><head><link rel="canonical" href="https://github.com/smallfishworld/DevKit/releases/tag/${tag}">` +
+      `<meta property="og:url" content="https://github.com/smallfishworld/DevKit/releases/tag/${tag}"></head>` +
+      `<body><include-fragment>${section}</include-fragment></body></html>`
+  }
   // sidecar: undefined=正常边车 / null=404（旧版本发布）/ 其他字符串=损坏内容
-  const makeStub = ({ sidecar, tag } = {}) => async (url, init) => {
+  const makeStub = ({ sidecar, tag, body } = {}) => async (url, init) => {
     if (url === api) return new Response(null, { status: 403, headers: { 'x-ratelimit-reset': '1795485219' } })
     if (url === page) {
       assert.equal(init.redirect, 'follow')
-      return new Response(tagPage(tag ?? 'v0.12.0'), { headers: { 'content-type': 'text/html' } })
+      return new Response(tagPage(tag ?? 'v0.12.0', body), { headers: { 'content-type': 'text/html' } })
     }
     assert.equal(init.redirect, 'follow')
     if (url === downloadUrl) return new Response(data, { headers: { 'content-length': String(data.length) } })
@@ -132,11 +143,13 @@ test('rate-limited API falls back to the quota-free release page channel', async
   assert.equal(fallback.update.tag, 'v0.12.0')
   assert.equal(fallback.update.hash, hash)
   assert.equal(fallback.update.bytes, data.length)
-  // 无分发格式时与 API 只读路径同形（bytes/hash 置空）
+  // 发布说明从 tag 页正文提取：真实内容 + 实体解码 + 列表圆点，截到「下载」小节，不含占位文案
+  assert.equal(fallback.update.notes, 'DevKit v0.12.0\n工作台\n\n• 新增分屏：标题 "A | B"、单个关闭按钮\n• 分隔条默认严格均分\n内嵌说明块')
+  // 无分发格式时与 API 只读路径同形（bytes/hash 置空），说明同样取真实内容
   const loose = await client.fallbackLatest('0.9.0')
   assert.deepEqual(loose, {
     status: 'available',
-    update: { version: '0.12.0', tag: 'v0.12.0', notes: loose.update.notes, bytes: 0, hash: '' }
+    update: { version: '0.12.0', tag: 'v0.12.0', notes: fallback.update.notes, bytes: 0, hash: '' }
   })
   // 回退解析出的元数据可直接驱动校验下载（无感更新闭环）
   const temp = await mkdtemp(join(tmpdir(), 'devkit-update-fallback-'))
@@ -156,6 +169,13 @@ test('rate-limited API falls back to the quota-free release page channel', async
   assert.equal(await noSidecar.fallbackLatest('0.9.0', 'zip'), undefined)
   const badSidecar = new GitHubReleases(makeStub({ sidecar: 'not-a-hash' }))
   assert.equal(await badSidecar.fallbackLatest('0.9.0', 'zip'), undefined)
+  // 页面结构变化（无正文容器）或正文为空：更新信息照常可用，说明落到占位文案
+  for (const body of ['none', 'empty']) {
+    const broken = new GitHubReleases(makeStub({ body }))
+    const result = await broken.fallbackLatest('0.9.0')
+    assert.equal(result.status, 'available')
+    assert.equal(result.update.notes, 'GitHub API 暂时限流，本次更新信息通过发布页回退通道获取。')
+  }
 })
 
 test('read-only release check works without Windows package format', () => {
