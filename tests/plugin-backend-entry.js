@@ -260,29 +260,15 @@ async function main() {
     assert.equal((await reloaded.invoke('p1','remove',{pluginId:fixtureManifest.id})).ok,true)
     assert.equal((await reloaded.invoke('p1','instance:list')).instances[0].id,id,'uninstall retains configuration identity')
     assert.equal((await reloaded.invoke('p1','list')).plugins.length,0)
-    const migratedRoot=path.join(root,'migration')
-    // OA 解锁已改为外部插件：只有安装了 devkit.oa-debug 才迁移旧的设备动作配置。
-    const installedOa=path.join(migratedRoot,'plugins','installed','devkit.oa-debug')
-    await fs.mkdir(installedOa,{recursive:true})
-    await fs.writeFile(path.join(installedOa,'manifest.json'),JSON.stringify({
-      id:'devkit.oa-debug',name:'OA Unlock',version:'1.0.0',apiVersion:2,transports:['serial'],entry:'index.cjs',
-      configSchema:{type:'object',additionalProperties:true},actions:[{id:'run',label:'Run'}],
-      autoRespond:true,capabilities:['stream.read','stream.write','stream.exclusive','auth.session']
-    }))
-    await fs.writeFile(path.join(installedOa,'index.cjs'),'exports.activate = () => ({})')
-    await fs.writeFile(path.join(migratedRoot,'device-actions.json'),'{malformed')
-    const migration=new PluginService({serial:bridge},[],{userData:migratedRoot,emit:()=>{}})
-    assert.equal((await migration.invoke('p1','list')).ok,true,'bad OA config cannot block unrelated plugins')
-    assert.ok((await migration.invoke('p1','status')).logs.some(entry=>entry.level==='warn'))
-    await fs.writeFile(path.join(migratedRoot,'device-actions.json'),JSON.stringify({profiles:[{id:'a'.repeat(64),label:'Legacy'}]}))
-    const legacyInstances=(await migration.invoke('p1','instance:list')).instances
-    assert.equal(legacyInstances.length,1,'fixed legacy file retries migration')
-    assert.equal(legacyInstances[0].id.length,71)
-    const migrationReload=new PluginService({serial:bridge},[],{userData:migratedRoot,emit:()=>{}})
-    assert.equal((await migrationReload.invoke('p1','instance:list')).instances.length,1,'71-character legacy identity reloads')
+    // A pre-existing state file may still carry the removed legacyImported flag; it is ignored on read.
+    const legacyRoot=path.join(root,'legacy-state')
+    await fs.mkdir(path.join(legacyRoot,'plugins'),{recursive:true})
+    await fs.writeFile(path.join(legacyRoot,'plugins','instances.json'),JSON.stringify({version:2,instances:[],legacyImported:true}))
+    const legacyState=new PluginService({serial:bridge},[],{userData:legacyRoot,emit:()=>{}})
+    assert.equal((await legacyState.invoke('p1','instance:list')).instances.length,0,'unknown state fields are ignored')
     const stateStore=new PluginStore(path.join(root,'size-limit'))
-    await stateStore.writeState([],false)
-    await assert.rejects(stateStore.writeState([{...saved.instance,config:{huge:'x'.repeat(2*1024*1024)}}],false),/2MiB/)
+    await stateStore.writeState([])
+    await assert.rejects(stateStore.writeState([{...saved.instance,config:{huge:'x'.repeat(2*1024*1024)}}]),/2MiB/)
     assert.deepEqual((await stateStore.readState()).instances,[],'oversized write leaves old state intact')
     const contexts=[]
     const generationPlugin={

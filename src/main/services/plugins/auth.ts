@@ -1,5 +1,5 @@
 /**
- * auth.session 宿主能力：OA 登录窗口与带 Cookie 的 HTTP 请求。
+ * auth.session 宿主能力：插件登录窗口与带 Cookie 的 HTTP 请求。
  * Cookie 只保存在 Chromium 的独立持久分区（按登录来源哈希区分），
  * 不写入插件配置、宏或日志；插件只能拿到请求的状态码与响应文本。
  */
@@ -101,7 +101,7 @@ export interface NormalizedLogin {
 export function parseAuthLogin(value: unknown): NormalizedLogin {
   const raw = record(value, '登录参数')
   const parsed = scope(raw)
-  const title = raw.title === undefined ? 'DevKit · OA 登录' : text(raw.title, 'title', 64)
+  const title = raw.title === undefined ? 'DevKit · 插件登录' : text(raw.title, 'title', 64)
   return {
     scope: parsed,
     check: checkOf(raw.check, parsed),
@@ -264,7 +264,7 @@ export class PluginAuthHost {
     const current = browserSession(options.partitionKey)
     if (await checkAuthenticated(current, options.check, signal)) return
     signal.throwIfAborted()
-    if (activeLogins.has(options.partitionKey)) throw new Error('另一个串口正在等待 OA 登录，请完成后重试')
+    if (activeLogins.has(options.partitionKey)) throw new Error('另一个会话正在等待同一登录来源的登录，请完成后重试')
     const win = new BrowserWindow({
       width: 980, height: 720, title: options.title,
       icon: getWindowIconPath(),
@@ -273,7 +273,7 @@ export class PluginAuthHost {
       webPreferences: { session: current, sandbox: true, contextIsolation: true, nodeIntegration: false }
     })
     const closed = new AbortController()
-    win.once('closed', () => closed.abort(new Error('OA 登录窗口已关闭')))
+    win.once('closed', () => closed.abort(new Error('登录窗口已关闭')))
     const blocked = new AbortController()
     function restrictNavigation(event: Electron.Event & { url: string; isMainFrame?: boolean }): void {
       // 只限制主框架：SSO 登录页里的第三方 iframe 不应中止整个登录流程。
@@ -282,7 +282,7 @@ export class PluginAuthHost {
       try { origin = new URL(event.url).origin } catch { return }
       if (options.scope.origins.has(origin)) return
       event.preventDefault()
-      blocked.abort(new Error('OA 登录跳转到未配置的来源'))
+      blocked.abort(new Error('登录跳转到未配置的来源'))
     }
     win.webContents.on('will-frame-navigate', restrictNavigation)
     win.webContents.on('will-redirect', restrictNavigation)
@@ -296,7 +296,7 @@ export class PluginAuthHost {
       win.show()
       void win.loadURL(options.scope.login.href).catch((error: { code?: string }) => {
         if (!loginSignal.aborted && error.code !== 'ERR_ABORTED') {
-          blocked.abort(new Error('无法打开 OA 登录页面，请检查公司网络'))
+          blocked.abort(new Error('无法打开登录页面，请检查网络'))
         }
       })
       for (;;) {
@@ -305,7 +305,7 @@ export class PluginAuthHost {
       }
     } catch (error) {
       if (loginSignal.aborted) {
-        if ((loginSignal.reason as Error | undefined)?.name === 'TimeoutError') throw new Error('等待 OA 登录超时')
+        if ((loginSignal.reason as Error | undefined)?.name === 'TimeoutError') throw new Error('等待登录超时')
         throw loginSignal.reason
       }
       throw error

@@ -72,13 +72,13 @@ exports.activate = async ctx => ({
 所有异步流写入与租约调用须顺序 `await`，禁止对同一实例并发调用 `write`/`exchange`。订阅返回的取消函数须在实例清理时调用；延时发送须维护串行写队列，并在 `dispose` / `reset` / `ctx.signal` 中止时取消待发定时器。使用 `stream.exclusive` 的插件自行取得与释放显式租约，宿主不会为其预先占用会话；其他发送来源在租约期间按会话仲裁规则等待或拒绝。旧 `connectionId` 的租约不能写入重连后的会话。
 
 
-## OA 外部插件与旧配置迁移
+## 串口取数回传外部插件
 
-OA 设备解锁由 [DevKit-Plugins 的 `plugins/oa-unlock`](https://github.com/smallfishworld/DevKit-Plugins/tree/main/plugins/oa-unlock) 提供，稳定 ID 为 `devkit.oa-debug`，支持串口。宿主只提供通用流租约、输入扣留、秘密值保护与认证会话；触发词、挑战码识别、取码请求和结果判定由插件实现。
+串口取数回传由 [DevKit-Plugins 的 `plugins/serial-url-relay`](https://github.com/smallfishworld/DevKit-Plugins/tree/main/plugins/serial-url-relay) 提供，稳定 ID 为 `devkit.serial-url-relay`，支持串口。宿主只提供通用流租约、输入扣留、秘密值保护与认证会话；回传内容来源（HTTPS 接口取数 / 固定值 / 设备输出映射表）、触发词、内容匹配、取数请求和结果判定由插件实现，均在插件配置 Schema 中声明。
 
 1. 按插件仓库说明打包并在全局「扩展中心」安装本地 JSON 包；从 HTTPS 扩展源安装须等待相应版本正式发布。
-2. 安装该插件后，宿主才读取旧 `device-actions.json`，把有效 profile 转成 `legacy-<profile ID>` 的 API v2 配置实例。既有同 ID 实例不覆盖，旧文件不删除；迁移失败与其他插件隔离，可重试。
-3. 迁移实例默认不启用自动监听，也不会自动绑定串口。检查配置后从「当前串口插件」绑定，按需启用自动监听。
-4. 旧 `device-action` 宏步骤仍按现行导入规则丢弃；需要继续使用时，在宏中选择迁移实例及其插件动作。迁移不恢复已移除的设备动作编辑器。
+2. 旧内置 OA 设备动作与 `device-actions.json` 迁移已移除：宿主不再读取该文件，也没有内置业务插件。需要该能力时安装本插件并按新配置表单手工创建实例。
+3. 旧 `device-action` 宏步骤仍按现行导入规则丢弃；需要继续使用时，在宏中选择插件实例及其「插件动作」引用。
 
-自动解锁成功后，插件在同一独占租约内补发暂存输入；失败、超时、停止或断开时丢弃。发送口令须使用 `secret: true`，插件自身日志与状态也不得包含口令。秘密值的即时、跨批及延迟回显由宿主统一处理，不能广播给无关订阅者。
+自动回传成功后，插件在同一独占租约内补发暂存输入；失败、超时、停止或断开时丢弃。发送回传内容须使用 `secret: true`，插件自身日志与状态也不得包含该内容。秘密值的即时、跨批及延迟回显由宿主统一处理，不能广播给无关订阅者。
+

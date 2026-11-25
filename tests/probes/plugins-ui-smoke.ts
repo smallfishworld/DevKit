@@ -20,31 +20,41 @@ let panelId = ''
 let win: BrowserWindow | undefined
 let diagnostics: (() => Promise<unknown>) | undefined
 
-// Synthetic OA fixture: only the auth boundary is mocked; serial, IPC and the
+// Synthetic relay fixture: only the auth boundary is mocked; serial, IPC and the
 // external plugin's utilityProcess execute the same code as the application.
-const oaToken = 'TOKEN_UI_SMOKE_1'
-const oaConfig = {
-  loginUrl: 'https://oa.example.invalid/login', authOrigins: [],
-  authCheck: { type: 'json', url: 'https://oa.example.invalid/api/session', field: 'authenticated' },
-  issue: {
-    url: 'https://oa.example.invalid/api/device/token', body: { challenge: '$challenge' },
-    responsePath: 'response', loginExpiredHttp: [401, 403], loginExpiredCodes: [], retryLoginOnce: true
-  },
-  profiles: [
+const relayReply = 'REPLY_UI_SMOKE_1'
+const relayConfig = {
+  auto: true,
+  replySource: 'http',
+  loginUrl: 'https://relay.example.invalid/login',
+  authOrigins: '',
+  authCheckType: 'json',
+  authCheckUrl: 'https://relay.example.invalid/api/session',
+  authCheckField: 'authenticated',
+  fetchMethod: 'POST',
+  fetchUrl: 'https://relay.example.invalid/api/reply',
+  fetchBody: { input: '$value' },
+  fetchResponsePath: 'response',
+  fetchLoginExpiredHttp: '401,403',
+  fetchLoginExpiredCodes: '',
+  fetchRetryLoginOnce: true,
+  replyCharset: 'base64',
+  replyMinLength: 4,
+  replyMaxLength: 4096,
+  rules: [
     {
-      id: 'manual', label: '手动解锁', actionLabel: '解锁 Debug', kind: 'challenge-response', trigger: 'manual',
-      detect: { type: 'prefix', prefix: 'Challenge:' },
-      result: { type: 'line', successLine: 'Debug unlocked', failureLine: 'Debug denied' },
-      command: 'debug', newline: 'cr', challengeTimeoutMs: 2000, challengeTtlMs: 30000,
-      resultTimeoutMs: 2000, holdInput: false
+      id: 'manual', label: '手动取数回传', actionLabel: '执行取数回传', trigger: 'manual',
+      match: 'prefix', prefix: 'Challenge:',
+      result: 'line', successLine: 'Debug unlocked', failureLine: 'Debug denied',
+      command: 'debug', newline: 'cr', inputTimeoutMs: 2000, valueTtlMs: 30000, resultTimeoutMs: 2000
     },
     {
-      id: 'auto', label: '自动解锁', actionLabel: '自动解锁 Debug', kind: 'challenge-response', trigger: 'auto',
-      triggerWords: ['debug'],
-      detect: { type: 'base64-line', shortMin: 20, shortMax: 21, longMin: 300, longMinDecoded: 260 },
-      result: { type: 'line', successLine: 'Debug unlocked', failureLine: 'Debug denied' },
-      newline: 'cr', challengeTimeoutMs: 2000, challengeTtlMs: 30000,
-      resultTimeoutMs: 2000, holdInput: { maxBytes: 4096, maxMs: 15000 }
+      id: 'auto', label: '自动取数回传', actionLabel: '自动取数回传', trigger: 'auto',
+      triggerWords: 'debug',
+      match: 'base64-line', shortMin: 20, shortMax: 21, longMin: 300, longMinDecoded: 260,
+      result: 'line', successLine: 'Debug unlocked', failureLine: 'Debug denied',
+      newline: 'cr', inputTimeoutMs: 2000, valueTtlMs: 30000, resultTimeoutMs: 2000,
+      holdInput: true, holdMaxBytes: 4096, holdMaxMs: 15000
     }
   ]
 }
@@ -64,8 +74,8 @@ async function main(): Promise<void> {
   await app.whenReady()
   const packagePath = join(userData, 'responder.json')
   const { manifest } = JSON.parse(await readFile(packagePath, 'utf8'))
-  const isOa = manifest.id === 'devkit.oa-debug'
-  const configName = isOa ? 'OA 插件集成测试' : '插件集成测试'
+  const isRelay = manifest.id === 'devkit.serial-url-relay'
+  const configName = isRelay ? '串口取数回传插件集成测试' : '插件集成测试'
   let issueDelayMs = 0
   let loginCalls = 0
   let issueCalls = 0
@@ -80,10 +90,10 @@ async function main(): Promise<void> {
     sentBytes.push(Buffer.from(data))
     sent.push(Buffer.from(data).toString('utf8'))
     done?.()
-    if (isOa) {
+    if (isRelay) {
       const value = Buffer.from(data).toString('utf8')
       if (value === 'debug\r') setImmediate(() => simulated.ports.at(-1)?.emit('data', Buffer.from('Challenge: CHALLENGE_UI_SMOKE\r\n')))
-      if (value === oaToken + '\r') setImmediate(() => simulated.ports.at(-1)?.emit('data', Buffer.from(oaToken + '\r\nDebug unlocked\r\n')))
+      if (value === relayReply + '\r') setImmediate(() => simulated.ports.at(-1)?.emit('data', Buffer.from(relayReply + '\r\nDebug unlocked\r\n')))
     }
   }
   const serial = new SerialService()
@@ -96,18 +106,18 @@ async function main(): Promise<void> {
     userData, hostPath: join(process.cwd(), 'out/main/plugin-host.js'),
     auth: {
       async login(options, signal) {
-        assert.equal((options as { loginUrl: string }).loginUrl, oaConfig.loginUrl)
+        assert.equal((options as { loginUrl: string }).loginUrl, relayConfig.loginUrl)
         signal.throwIfAborted()
         loginCalls++
       },
       async request(options, signal) {
         const request = options as { url: string; body: string }
-        assert.equal(request.url, oaConfig.issue.url)
-        assert.ok(JSON.parse(request.body).challenge)
+        assert.equal(request.url, relayConfig.fetchUrl)
+        assert.ok(JSON.parse(request.body).input)
         issueCalls++
         if (issueDelayMs) await delay(issueDelayMs, undefined, { signal })
         signal.throwIfAborted()
-        return { status: 200, text: JSON.stringify({ response: oaToken }) }
+        return { status: 200, text: JSON.stringify({ response: relayReply }) }
       }
     },
     hostFactory: (path) => {
@@ -153,11 +163,20 @@ async function main(): Promise<void> {
   const editor = '.el-dialog:has(.plugin-config-form)'
   await until(() => fill(editor + ' .el-form > .el-form-item input', configName), '实例名称')
   await until(() => click(editor + ' .el-checkbox input:not(:checked)'), '打开自动监听设置')
-  if (isOa) {
-    await until(() => fill(editor + ' .plugin-config-form textarea', JSON.stringify(oaConfig, null, 2)), '填写模拟 OA 设备配置')
-  }
   await until(() => click(editor + ' .el-dialog__footer button', '保存配置'), '保存schema配置')
   await until(() => text('.instance-row', configName), '新实例')
+  if (isRelay) {
+    // The extension-center editor only exposes the schema form (no whole-config JSON field),
+    // so the full relay fixture is applied through the same instance:save IPC the app uses.
+    const listed = await plugins.invoke(panelId, 'instance:list', {}) as { instances: Array<{ id: string; pluginId: string; label: string }> }
+    const created = listed.instances.find(x => x.pluginId === manifest.id && x.label === configName)
+    assert.ok(created, 'schema-form instance was saved')
+    const updated = await plugins.invoke(panelId, 'instance:save', { instance: {
+      id: created.id, pluginId: manifest.id, label: configName,
+      enabled: true, autoEnabled: true, config: relayConfig
+    } }) as { ok: boolean; error?: string }
+    assert.equal(updated.ok, true, updated.error)
+  }
   const returnToSerial = () => js<boolean>(`(() => {
     const tab = [...document.querySelectorAll('.tab-select')].find(el => el.textContent.includes(${JSON.stringify(portName)}));
     if (!tab) return false; tab.click(); return true;
@@ -172,9 +191,9 @@ async function main(): Promise<void> {
   assert.ok(panelId)
 
   const port = simulated.ports.at(-1)!
-  if (isOa) {
+  if (isRelay) {
     const actionLabel = manifest.actions.find((action: { id: string }) => action.id === 'run')?.label
-    assert.ok(actionLabel, 'OA manifest exposes the stable run action')
+    assert.ok(actionLabel, 'relay manifest exposes the stable run action')
     const state = async () => {
       const result = await plugins.invoke(panelId, 'status', {}) as {
         statuses: Array<{ bound: boolean; state: string; value?: { running?: boolean } }>; logs: unknown[]
@@ -182,7 +201,7 @@ async function main(): Promise<void> {
       return result
     }
     const settled = (automatic = false) => until(async () => (await state()).statuses.some(status =>
-      status.bound && status.state === 'ready' && (!automatic || status.value?.running === false)), 'OA 动作完成并释放事务')
+      status.bound && status.state === 'ready' && (!automatic || status.value?.running === false)), '取数回传动作完成并释放事务')
     const openPopover = async () => {
       if (!await text('.plugin-title', '当前串口插件')) await until(() => click('.conn-bar [aria-label=设备插件]'), '打开当前串口插件')
     }
@@ -190,59 +209,59 @@ async function main(): Promise<void> {
       await until(() => fill('input[aria-label="发送内容"]', value), '填写用户发送内容')
       await until(() => click('.send-bar button', '发送'), '从会话发送用户内容')
     }
-    await until(() => click('.bound-instance button', actionLabel), '执行外置 OA 手动动作')
-    await until(() => sent.includes(oaToken + '\r'), '真实插件收到挑战并写入临时口令')
+    await until(() => click('.bound-instance button', actionLabel), '执行外置取数回传手动动作')
+    await until(() => sent.includes(relayReply + '\r'), '真实插件匹配设备输出并写入取回的内容')
     await settled()
     assert.equal(loginCalls, 1)
     assert.equal(issueCalls, 1)
-    assert.deepEqual(sent.slice(0, 2), ['debug\r', oaToken + '\r'])
+    assert.deepEqual(sent.slice(0, 2), ['debug\r', relayReply + '\r'])
 
     // Cross-callback exclusive lease plus user-input hold/replay, through the UI.
     issueDelayMs = 350
     port.emit('data', Buffer.from('debug\r\nQ0hBTExFTkdFX0FCQ0Q=\r\n'))
-    await until(() => issueCalls === 2, '自动订阅跨回调取得挑战和事务')
+    await until(() => issueCalls === 2, '自动订阅跨回调取得设备输出和事务')
     const heldStart = sent.length
     await sendFromUi('HELD')
-    assert.equal(sent.length, heldStart, '授权期间用户输入由宿主扣住')
+    assert.equal(sent.length, heldStart, '回传期间用户输入由宿主扣住')
     await until(() => sent.includes('HELD\r\n'), '成功后按原序补发扣住的用户输入')
-    assert.deepEqual(sent.slice(heldStart), [oaToken + '\r', 'HELD\r\n'])
+    assert.deepEqual(sent.slice(heldStart), [relayReply + '\r', 'HELD\r\n'])
     await settled(true)
-    assert.equal(JSON.stringify(await state()).includes(oaToken), false, '口令不进入状态和诊断日志')
+    assert.equal(JSON.stringify(await state()).includes(relayReply), false, '回传内容不进入状态和诊断日志')
 
     // Stop while a real plugin RPC is waiting; the stop button must stay usable.
     issueDelayMs = 1000
     await openPopover()
-    await until(() => click('.bound-instance button', actionLabel), '启动待取消 OA 动作')
-    await until(() => issueCalls === 3, 'OA 取码请求在途')
+    await until(() => click('.bound-instance button', actionLabel), '启动待取消取数回传动作')
+    await until(() => issueCalls === 3, '取数请求在途')
     const beforeCancel = sent.length
-    await until(() => click('.bound-instance button', '停止插件'), 'UI 停止在途 OA 动作')
+    await until(() => click('.bound-instance button', '停止插件'), 'UI 停止在途取数回传动作')
     await until(async () => !(await state()).statuses.some(status => status.bound), '停止并回收绑定')
     await delay(1200)
-    assert.equal(sent.length, beforeCancel, '取消后不得发送迟到口令')
+    assert.equal(sent.length, beforeCancel, '取消后不得发送迟到内容')
     await sendFromUi('USER')
     await until(() => sent.includes('USER\r\n'), '取消后回收串口控制权')
 
     await openPopover()
-    await until(() => click('.plugin-actions .el-select__wrapper'), '重新选择 OA 实例')
-    await until(() => click('.el-select-dropdown__item', configName), '选择 OA 配置')
-    await until(() => click('.plugin-actions button', '绑定到当前串口'), '重新绑定 OA 插件')
-    await until(() => text('.conn-bar', '监听中'), 'OA 插件重新就绪')
-    await until(() => click('.bound-instance button', actionLabel), '启动待异常退出 OA 动作')
+    await until(() => click('.plugin-actions .el-select__wrapper'), '重新选择取数回传实例')
+    await until(() => click('.el-select-dropdown__item', configName), '选择取数回传配置')
+    await until(() => click('.plugin-actions button', '绑定到当前串口'), '重新绑定取数回传插件')
+    await until(() => text('.conn-bar', '监听中'), '取数回传插件重新就绪')
+    await until(() => click('.bound-instance button', actionLabel), '启动待异常退出取数回传动作')
     await until(() => issueCalls === 4, '异常退出时持有事务')
     const beforeCrash = sent.length
-    assert.ok(children.at(-1), 'OA runs in a real utilityProcess')
+    assert.ok(children.at(-1), 'relay plugin runs in a real utilityProcess')
     children.at(-1)!.kill()
-    await until(async () => (await state()).statuses.some(status => status.state === 'error'), 'OA 进程退出诊断')
+    await until(async () => (await state()).statuses.some(status => status.state === 'error'), '插件进程退出诊断')
     await delay(1200)
-    assert.equal(sent.length, beforeCrash, '退出进程不得继续写入口令')
+    assert.equal(sent.length, beforeCrash, '退出进程不得继续写入内容')
     await sendFromUi('RECOVER')
     await until(() => sent.includes('RECOVER\r\n'), '异常退出后回收独占事务与扣键')
     await openPopover()
-    await until(() => click('.error-row button', '一键重试绑定'), 'UI 重试异常退出的 OA 插件')
-    await until(() => text('.conn-bar', '监听中'), 'OA 重试成功')
-    await until(() => click('.bound-instance button', '停止插件'), '结束 OA 插件回归')
-    await writeFile(join(process.cwd(), 'out/plugins-oa-smoke.png'), (await win.capturePage()).toPNG())
-    console.log('PASS Electron OA plugin UI: API v2 JSON install, schema config, manual/automatic challenge, secret write, input hold/replay, in-flight stop, process-exit cleanup and retry')
+    await until(() => click('.error-row button', '一键重试绑定'), 'UI 重试异常退出的插件')
+    await until(() => text('.conn-bar', '监听中'), '重试绑定成功')
+    await until(() => click('.bound-instance button', '停止插件'), '结束取数回传插件回归')
+    await writeFile(join(process.cwd(), 'out/plugins-relay-smoke.png'), (await win.capturePage()).toPNG())
+    console.log('PASS Electron serial-url-relay plugin UI: API v2 JSON install, schema config, manual/automatic device-output match, secret write, input hold/replay, in-flight stop, process-exit cleanup and retry')
     return
   }
 

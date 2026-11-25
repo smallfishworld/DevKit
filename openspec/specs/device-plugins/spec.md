@@ -2,7 +2,7 @@
 
 ## Purpose
 
-基于独立同构契约包 `@devkit/plugin-sdk`（API v2），为串口、SSH、网络调试及本地终端等流会话提供可信本地 JavaScript 插件、可视化条件/多规则配置实例、受控 `StreamSessionBridge` 会话租约、开发态热重载与可治理的 HTTPS 扩展源。OA 解锁等业务由外部插件提供，宿主不内置业务插件。
+基于独立同构契约包 `@devkit/plugin-sdk`（API v2），为串口、SSH、网络调试及本地终端等流会话提供可信本地 JavaScript 插件、可视化条件/多规则配置实例、受控 `StreamSessionBridge` 会话租约、开发态热重载与可治理的 HTTPS 扩展源。登录取数等业务由外部插件提供，宿主不内置业务插件。
 
 ## Requirements
 
@@ -82,14 +82,8 @@
 - **WHEN** 插件未声明 `auth.session`、业务接口与登录入口不同源，或试图覆盖 Cookie 等宿主管理的请求头
 - **THEN** 宿主拒绝调用，不暴露认证凭证。
 
-### Requirement: 按安装触发旧 OA 配置迁移
-宿主 SHALL 仅在安装稳定 ID 为 `devkit.oa-debug` 的外部插件后迁移旧 `device-actions.json`；迁移 MUST 保留源文件和既有实例，且不得自动开始设备动作。
-#### Scenario: 未安装业务插件
-- **WHEN** 用户目录存在旧配置但未安装 `devkit.oa-debug`
-- **THEN** 宿主不读取、迁移或删除该文件，也不注册内置 OA 业务插件。
-#### Scenario: 安装后迁移
-- **WHEN** 已安装外部 OA 插件且存在尚未迁移的有效 profile
-- **THEN** 生成稳定 `legacy-<profile ID>`、`configVersion: 2` 的实例，默认关闭自动监听，不自动绑定；已有同 ID 实例不覆盖。
-#### Scenario: 迁移失败
-- **WHEN** 旧文件或其中某项配置无效
-- **THEN** 迁移错误与其他插件隔离，源文件保留，并允许后续重试。
+### Requirement: 业务插件仅由外部提供
+宿主 MUST NOT 内置任何具体业务（登录取数、解锁等）插件；旧内置设备动作能力及其 `device-actions.json` 迁移逻辑已移除，宿主不读取该旧文件。
+#### Scenario: 旧设备动作配置
+- **WHEN** 用户数据目录存在旧 `device-actions.json`
+- **THEN** 宿主不读取、迁移或删除该文件；需要相应功能时安装 DevKit-Plugins 中的外部插件并手工配置实例。

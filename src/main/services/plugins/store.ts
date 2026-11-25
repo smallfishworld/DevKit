@@ -32,7 +32,7 @@ function parseInstallSource(value: unknown): PluginInstallSource {  const source
   return { name, url: url.href }
 }
 
-interface StoreState { version: 2; instances: PluginInstance[]; legacyImported: boolean }
+interface StoreState { version: 2; instances: PluginInstance[] }
 
 /** Windows 上刚写完的目录可能仍被杀毒软件占用，rename 会偶发 EPERM/EBUSY；短暂退避后重试。 */
 async function renameWithRetry(from: string, to: string, attempts = 5): Promise<void> {
@@ -60,7 +60,7 @@ export class PluginStore {
     let text: string
     try { text = await fs.readFile(this.statePath, 'utf8') }
     catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { version: 2, instances: [], legacyImported: false }
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { version: 2, instances: [] }
       throw error
     }
     if (Buffer.byteLength(text) > 2 * 1024 * 1024) throw new Error('插件实例配置文件过大')
@@ -87,13 +87,14 @@ export class PluginStore {
         configVersion: 2
       }
     })
-    return { version: 2, instances, legacyImported: state.legacyImported === true }
+    return { version: 2, instances }
   }
 
-  async writeState(instances: PluginInstance[], legacyImported: boolean): Promise<void> {
+  async writeState(instances: PluginInstance[]): Promise<void> {
     await fs.mkdir(dirname(this.statePath), { recursive: true })
     const temp = this.statePath + '.' + randomUUID() + '.tmp'
-    const text = JSON.stringify({ version: 2, instances, legacyImported }, null, 2) + '\n'
+    // 旧版本在此写入的 legacyImported 不再存在；读取时忽略未知字段，升级后无需迁移。
+    const text = JSON.stringify({ version: 2, instances }, null, 2) + '\n'
     if (Buffer.byteLength(text) > 2 * 1024 * 1024) throw new Error('插件实例配置总大小超过2MiB')
     try { await fs.writeFile(temp, text, { mode: 0o600 }); await fs.rename(temp, this.statePath) }
     finally { await fs.rm(temp, { force: true }).catch(() => {}) }

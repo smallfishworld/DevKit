@@ -116,7 +116,7 @@ npm run dist
 
 全局「扩展中心」支持安装可信 JavaScript 插件、管理 HTTPS 扩展源和创建配置实例；串口、SSH 与网络面板可按插件声明的传输类型绑定实例，运行手动动作或自动应答。插件使用共享的 `@devkit/plugin-sdk`（API v2），提供独立配置表单和可被快捷命令引用的动作；已移除的旧「设备动作」步骤在导入宏时丢弃。
 
-OA 设备解锁作为外部插件维护在 [DevKit-Plugins/plugins/oa-unlock](https://github.com/smallfishworld/DevKit-Plugins/tree/main/plugins/oa-unlock)，不随宿主内置发行。可按插件仓库说明构建 JSON 包后从扩展中心本地安装；只有发布到扩展源的版本才能从源安装。安装 `devkit.oa-debug` 后，旧 `device-actions.json` 中的配置才迁移为插件实例，自动监听默认关闭，旧文件保留。未安装时宿主不读取该旧文件。旧「设备动作」宏需改用迁移后实例的「插件动作」引用。
+串口取数回传作为外部插件维护在 [DevKit-Plugins/plugins/serial-url-relay](https://github.com/smallfishworld/DevKit-Plugins/tree/main/plugins/serial-url-relay)，不随宿主内置发行。可按插件仓库说明构建 JSON 包后从扩展中心本地安装；只有发布到扩展源的版本才能从源安装。该插件是通用的「设备输出命中规则后从网址取数再回传串口」实现：回传内容来源支持 HTTPS 接口取数、固定值与设备输出映射表三种，触发词、内容匹配、结果判定和扣键均可配置。旧内置 OA 设备动作与 `device-actions.json` 迁移已移除，宿主不读取该旧文件；需要该能力时安装本插件并手工创建配置实例。
 
 - 独立文本/HEX 应答示例：`examples/plugins/text-hex-responder/`。
 - 开发模板：`examples/plugins/template/`。
