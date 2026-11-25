@@ -20,6 +20,10 @@ const target = {
   helper: join(root, 'DeliberatelyAbsentHelper.exe')
 }
 
+let officialAssetRequests = 0
+let finishDownload!: () => void
+const downloadMayFinish = new Promise<void>((resolve) => { finishDownload = resolve })
+
 const releases = new GitHubReleases(async (url) => {
   if (url.includes('api.github.com')) {
     return Response.json({
@@ -32,10 +36,15 @@ const releases = new GitHubReleases(async (url) => {
     })
   }
   assert.ok(url.endsWith('/' + name))
+  if (new URL(url).hostname !== 'github.com') return new Response(null, { status: 503 })
+  // The first request probes the source; only the actual download waits for the UI.
+  if (officialAssetRequests++ === 0) return new Response(Uint8Array.from(data))
   return new Response(new ReadableStream({
-    async start(controller) {
+    start(controller) {
       controller.enqueue(data.subarray(0, 4096))
-      await delay(500)
+    },
+    async pull(controller) {
+      await downloadMayFinish
       controller.enqueue(data.subarray(4096))
       controller.close()
     }
@@ -92,8 +101,9 @@ async function main(): Promise<void> {
     assert.equal(await js('document.querySelector(".update-notes img")'), null)
     await press('下载更新')
     await evaluate('document.querySelector("progress")?.value === 4096')
-    await press('稍后')
+    await press('后台下载')
     await evaluate('!document.querySelector(".update-dialog").open')
+    finishDownload()
     await evaluate(ready)
     assert.deepEqual(await readFile(join(target.cache, name)), data)
     console.log('PASS non-blocking notice, release notes, progress and postponed restart')
@@ -109,6 +119,7 @@ async function main(): Promise<void> {
     assert.equal(app.getVersion(), '0.2.0')
     console.log('PASS pending package restoration and pre-restart integrity check')
   } finally {
+    finishDownload()
     service.dispose()
     window.destroy()
   }
