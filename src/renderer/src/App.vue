@@ -4,7 +4,7 @@ import { Brush, Download, Refresh } from '@element-plus/icons-vue'
 import brandMark from '../../../resources/branding/mark.svg'
 import { PLUGIN_CATALOG_PANEL, useDevicePlugins } from '@renderer/stores/devicePlugins'
 import type { PluginLogEntry, PluginRuntimeStatus } from '../../shared/plugins'
-import { updateNotice, type UpdateState } from '../../shared/app-updates'
+import { downloadPercent, downloadSourceLabel, updateNotice, type UpdateState } from '../../shared/app-updates'
 import { useTabStore, tabIsSplit } from '@renderer/stores/tabs'
 import { useAppearanceStore } from '@renderer/stores/appearance'
 import { toolById, type ToolDef } from '@renderer/tools/registry'
@@ -62,8 +62,9 @@ const isSerialActive = computed(() => {
   return list.some((m) => m.toolId === 'serial')
 })
 
+/** 有新版本、下载中、已就绪：右上角的更新入口都要在——下载时用户关掉对话框，进度就看这里 */
 const hasUpdateHighlight = computed(
-  () => updateState.value.phase === 'available' || updateState.value.phase === 'ready'
+  () => updateState.value.phase === 'available' || updateState.value.phase === 'downloading' || updateState.value.phase === 'ready'
 )
 
 const updateStatusLabel = computed(() => {
@@ -71,9 +72,29 @@ const updateStatusLabel = computed(() => {
   if (s.phase === 'ready') return `v${s.release.version} 已下载 · 重启更新`
   if (s.phase === 'available') return `发现新版本 v${s.release.version}`
   if (s.phase === 'checking') return '检查更新中…'
-  if (s.phase === 'downloading') return '下载更新中…'
+  if (s.phase === 'downloading') {
+    const via = downloadSourceLabel(s.source)
+    return updateNotice(s) + (via ? ` · ${via}` : '')
+  }
   if (s.phase === 'preparing') return '准备更新…'
   return winInfo.value.version ? `v${winInfo.value.version}` : '检查更新'
+})
+
+/** 右上角按钮上的短文案：下载中直接给百分比 */
+const updateHeaderLabel = computed(() => {
+  const s = updateState.value
+  if (s.phase === 'ready') return '重启更新'
+  if (s.phase === 'downloading') {
+    const percent = downloadPercent(s.received, s.release.bytes)
+    return percent === undefined ? '下载中' : `下载 ${percent}%`
+  }
+  return '有新版本'
+})
+
+/** 右上角按钮底部那条进度线的宽度 */
+const downloadProgress = computed(() => {
+  const s = updateState.value
+  return s.phase === 'downloading' && s.release.bytes > 0 ? `${Math.min(100, (s.received / s.release.bytes) * 100)}%` : '0%'
 })
 
 const aboutUpdateHint = computed(() => updateNotice(updateState.value) || '检查 GitHub 最新版本')
@@ -200,11 +221,13 @@ onMounted(() => {
         v-if="hasUpdateHighlight"
         type="button"
         class="header-action header-update"
+        :class="{ 'is-downloading': updateState.phase === 'downloading' }"
+        :style="{ '--download-progress': downloadProgress }"
         :title="updateStatusLabel"
         @click="openUpdateDialog"
       >
         <el-icon><Refresh v-if="updateState.phase === 'ready'" /><Download v-else /></el-icon>
-        <span>{{ updateState.phase === 'ready' ? '重启更新' : '有新版本' }}</span>
+        <span>{{ updateHeaderLabel }}</span>
       </button>
       <button
         class="header-action"
@@ -389,6 +412,8 @@ onMounted(() => {
 }
 
 .header-update {
+  position: relative;
+  overflow: hidden;
   color: var(--el-color-warning);
   background: var(--el-color-warning-light-9);
   border: 1px solid color-mix(in srgb, var(--el-color-warning) 35%, transparent);
@@ -398,6 +423,18 @@ onMounted(() => {
 .header-update:hover {
   color: var(--el-color-warning);
   background: color-mix(in srgb, var(--el-color-warning) 20%, transparent);
+}
+
+/* 下载中：按钮底部一条进度线，扫一眼就知道到哪了 */
+.header-update.is-downloading::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: var(--download-progress);
+  height: 2px;
+  background: var(--el-color-warning);
+  transition: width 0.2s ease;
 }
 
 .win-controls {

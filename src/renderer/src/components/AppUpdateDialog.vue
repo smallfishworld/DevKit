@@ -1,6 +1,13 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { APP_UPDATES, APP_UPDATES_PANEL, updateNotice, type UpdateState } from '../../../shared/app-updates'
+import {
+  APP_UPDATES,
+  APP_UPDATES_PANEL,
+  downloadSourceLabel,
+  formatMegabytes,
+  updateNotice,
+  type UpdateState
+} from '../../../shared/app-updates'
 
 defineProps<{ currentVersion: string }>()
 
@@ -19,6 +26,18 @@ const activity = computed(() => ['checking', 'downloading', 'preparing'].include
 const highlighted = computed(() => state.value.phase === 'available' || state.value.phase === 'ready')
 const notice = computed(() => updateNotice(state.value))
 const message = computed(() => invocationError.value || ('message' in state.value ? state.value.message : ''))
+/** 下载中关掉窗口，下载照常在后台进行——所以叫「后台下载」而不是「稍后」 */
+const dismissLabel = computed(() =>
+  state.value.phase === 'downloading' ? '后台下载' : highlighted.value || activity.value ? '稍后' : '关闭'
+)
+/** 进度条下面的一行：已下载 / 总大小，经第三方镜像时标出来源 */
+const downloadDetail = computed(() => {
+  const current = state.value
+  if (current.phase !== 'downloading') return ''
+  return [`${formatMegabytes(current.received)} / ${formatMegabytes(current.release.bytes)}`, downloadSourceLabel(current.source)]
+    .filter(Boolean)
+    .join(' · ')
+})
 let unsubscribe: (() => void) | undefined
 
 watch(state, (val) => emit('state-change', val), { immediate: true })
@@ -79,6 +98,7 @@ defineExpose({ show, run })
         :max="state.release.bytes"
         aria-label="更新包下载进度"
       />
+      <p v-if="downloadDetail" class="update-download-detail">{{ downloadDetail }}</p>
       <p v-if="state.phase === 'ready'" class="update-restart-note">
         重启会结束当前的串口、SSH 和传输会话。
       </p>
@@ -89,7 +109,13 @@ defineExpose({ show, run })
 
       <div class="update-actions">
         <form method="dialog">
-          <button type="submit" autofocus>{{ highlighted || activity ? '稍后' : '关闭' }}</button>
+          <button
+            type="submit"
+            autofocus
+            :title="state.phase === 'downloading' ? '关闭此窗口，下载在后台继续；完成后可从这里重启更新' : undefined"
+          >
+            {{ dismissLabel }}
+          </button>
         </form>
         <button v-if="state.phase === 'ready'" type="button" @click="run('save')">另存更新包</button>
         <button v-if="state.phase === 'ready'" type="button" class="primary" @click="run('restart')">重启并更新</button>
@@ -109,7 +135,8 @@ defineExpose({ show, run })
         >
           前往 GitHub 下载
         </button>
-        <button v-else type="button" class="primary" :disabled="activity" @click="run('check')">检查更新</button>
+        <!-- 下载中只留「后台下载」：灰掉的「检查更新」在下载期间没有意义 -->
+        <button v-else-if="state.phase !== 'downloading'" type="button" class="primary" :disabled="activity" @click="run('check')">检查更新</button>
       </div>
     </dialog>
   </Teleport>
@@ -176,6 +203,13 @@ defineExpose({ show, run })
   width: 100%;
   margin-top: 14px;
   accent-color: var(--el-color-primary);
+}
+
+.update-download-detail {
+  margin: 6px 0 0;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
 }
 
 .update-message:not(:empty) {

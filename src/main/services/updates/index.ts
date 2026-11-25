@@ -1,9 +1,10 @@
 import { app, dialog, net, shell } from 'electron'
 import { copyFile, mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { APP_UPDATES, APP_UPDATES_PANEL, type UpdateState } from '../../../shared/app-updates'
+import { APP_UPDATES, APP_UPDATES_PANEL, createSpeedEstimator, type UpdateState } from '../../../shared/app-updates'
 import { emitToolEvent, getMainWindow, type ToolService } from '../../ipc'
-import { GitHubReleases, RELEASE_HOME, RateLimitError, packageName, readPendingUpdate, type ReleaseResult, type UpdatePackage } from './github'
+import { GitHubReleases, RELEASE_HOME, RateLimitError, packageName, readPendingUpdate, sanitizeMirrors, type ReleaseResult, type UpdatePackage } from './github'
+import { getSection } from '../macro/configStore'
 import { cleanUpdateHandoffs, getInstallTarget, prepareUpdate, verifyUpdateFile, type InstallTarget } from './install'
 
 // 12 小时一次：GitHub API 匿名配额按出口 IP 共享（企业 NAT 下尤甚），降频减少配额消耗
@@ -140,13 +141,34 @@ export class AppUpdateService implements ToolService {
     const update = this.candidate
     const path = this.path(update)
     const partial = path + '.part'
+    // 进度里带上平滑速度与所用下载源（经第三方镜像时让用户知情）
+    let received = 0
+    let source: string | undefined
+    const estimateSpeed = createSpeedEstimator()
+    const report = (): void => {
+      const speed = estimateSpeed(received)
+      this.setState({
+        phase: 'downloading',
+        release: update,
+        received,
+        ...(speed === undefined ? {} : { speed }),
+        ...(source ? { source } : {})
+      })
+    }
     this.busy = true
-    this.setState({ phase: 'downloading', release: update, received: 0 })
+    report()
     try {
       await mkdir(cache, { recursive: true })
       await rm(partial, { force: true })
-      await this.feed.download(update, format, partial, (received) => {
-        this.setState({ phase: 'downloading', release: update, received })
+      await this.feed.download(update, format, partial, (bytes) => {
+        received = bytes
+        report()
+      }, {
+        mirrors: await this.downloadMirrors(),
+        onSource: (label) => {
+          source = label
+          report()
+        }
       })
       await rename(partial, path)
       await rm(join(cache, 'apply-error'), { force: true })
@@ -163,6 +185,17 @@ export class AppUpdateService implements ToolService {
       this.busy = false
     }
     return this.state
+  }
+
+  /** config.json 的 updates.mirrors：非空时整体替换内置镜像；没配或格式不对就用内置的 */
+  private async downloadMirrors(): Promise<string[] | undefined> {
+    try {
+      const section = await getSection<{ mirrors?: unknown }>('updates', {})
+      const mirrors = sanitizeMirrors(section?.mirrors)
+      return mirrors.length ? mirrors : undefined
+    } catch {
+      return undefined
+    }
   }
 
   private async verified(update: UpdatePackage): Promise<boolean> {

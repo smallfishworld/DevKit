@@ -5,12 +5,60 @@ const { tmpdir } = require('node:os')
 const { join } = require('node:path')
 const { test } = require('node:test')
 const {
-  GitHubReleases, RateLimitError, isNewerVersion, packageName, parseRelease, readPendingUpdate
+  DEFAULT_MIRRORS, GitHubReleases, RateLimitError, isNewerVersion, mirrorUrl, packageName, parseRelease,
+  rankDownloadSources, readPendingUpdate, sanitizeMirrors
 } = require('../src/main/services/updates/github')
-const { updateNotice } = require('../src/shared/app-updates')
+const {
+  createSpeedEstimator, downloadPercent, downloadSourceLabel, formatMegabytes, formatSpeed, updateNotice
+} = require('../src/shared/app-updates')
 
 const data = Buffer.from('fixture Windows update')
 const hash = createHash('sha256').update(data).digest('hex')
+const entry = 'https://github.com/smallfishworld/DevKit/releases/download/v0.12.0/DevKit-0.12.0-win-x64.zip'
+/** 测试用短时序：测速窗口 30ms，无数据上限 500ms */
+const quick = { probeMs: 30, probeBytes: 8 * 1024 * 1024, idleMs: 500 }
+// 2 MiB 的确定性数据：够大，才能在测速窗口里分出「快」与「慢」
+const big = Buffer.alloc(2 * 1024 * 1024)
+for (let i = 0; i < big.length; i++) big[i] = (i * 31 + 7) % 251
+const bigHash = createHash('sha256').update(big).digest('hex')
+const bigUpdate = { version: '0.12.0', tag: 'v0.12.0', notes: '', bytes: big.length, hash: bigHash }
+
+/** 把一段数据变成响应；给 range 时按区间回 206 */
+function serve(buffer, { status = 200, range } = {}) {
+  const body = range ? buffer.slice(range.from, range.to + 1) : buffer
+  const headers = range
+    ? { 'content-length': String(body.byteLength), 'content-range': `bytes ${range.from}-${range.to}/${buffer.length}` }
+    : { 'content-length': String(buffer.byteLength) }
+  return new Response(new ReadableStream({
+    start(controller) {
+      controller.enqueue(body.slice(0, 64 * 1024))
+      if (body.byteLength > 64 * 1024) controller.enqueue(body.slice(64 * 1024))
+      controller.close()
+    }
+  }), { status, headers })
+}
+
+/** 先正常给到 upto 字节，下一次读取时连接被重置（声明的是整包大小） */
+function brokenAfter(buffer, upto) {
+  let sent = false
+  return new Response(new ReadableStream({
+    pull(controller) {
+      if (!sent) {
+        sent = true
+        controller.enqueue(buffer.slice(0, upto))
+        return
+      }
+      controller.error(new TypeError('net::ERR_CONNECTION_RESET'))
+    }
+  }), { headers: { 'content-length': String(buffer.byteLength) } })
+}
+
+/** 慢链路：吐 1 KiB 后再没有数据（测速窗口内只读得到这么多） */
+function stalled(buffer) {
+  return new Response(new ReadableStream({
+    start(controller) { controller.enqueue(buffer.slice(0, 1024)) }
+  }), { headers: { 'content-length': String(buffer.length) } })
+}
 const fixtures = ['portable', 'zip'].map((format) => ({
   name: packageName('0.12.0', format), size: data.length, digest: 'sha256:' + hash, state: 'uploaded'
 }))
@@ -72,26 +120,236 @@ test('conditional GitHub checks, partially published release and rate limit', as
 test('asset download follows the GitHub CDN and verifies all bytes', async () => {
   const temp = await mkdtemp(join(tmpdir(), 'devkit-update-unit-'))
   // Electron 的 net.fetch 跟随跳转（manual 跳转会直接取消），注入的 fetch 只见到入口 URL，
-  // 直接返回跳转后的 CDN 最终响应
-  const entry = 'https://github.com/smallfishworld/DevKit/releases/download/v0.12.0/DevKit-0.12.0-win-x64.zip'
+  // 直接返回跳转后的 CDN 最终响应；关闭镜像，单测只看官方直连这一条路
+  const noMirrors = { mirrors: [] }
   try {
     const fetch = async (url, init) => {
       assert.equal(init.redirect, 'follow')
       assert.equal(url, entry)
       return new Response(data)
     }
-    const client = new GitHubReleases(fetch)
+    const client = new GitHubReleases(fetch, quick)
     const target = join(temp, 'valid.part')
     const progress = []
-    await client.download(update, 'zip', target, (received) => progress.push(received))
+    await client.download(update, 'zip', target, (received) => progress.push(received), noMirrors)
     assert.deepEqual(await readFile(target), data)
     assert.deepEqual(progress, [data.length])
-    await assert.rejects(client.download({ ...update, hash: '0'.repeat(64) }, 'zip', join(temp, 'hash.part'), () => {}), /校验/)
-    await assert.rejects(client.download({ ...update, bytes: data.length + 1 }, 'zip', join(temp, 'short.part'), () => {}), /校验/)
-    await assert.rejects(client.download({ ...update, bytes: data.length - 1 }, 'zip', join(temp, 'long.part'), () => {}), /大小/)
+    await assert.rejects(client.download({ ...update, hash: '0'.repeat(64) }, 'zip', join(temp, 'hash.part'), () => {}, noMirrors), /校验/)
+    await assert.rejects(client.download({ ...update, bytes: data.length + 1 }, 'zip', join(temp, 'short.part'), () => {}, noMirrors), /校验/)
+    await assert.rejects(client.download({ ...update, bytes: data.length - 1 }, 'zip', join(temp, 'long.part'), () => {}, noMirrors), /大小/)
   } finally {
     await rm(temp, { force: true, recursive: true })
   }
+})
+
+test('mirror prefixes are validated and custom lists sanitized', () => {
+  assert.equal(mirrorUrl('https://gh-proxy.com', entry), `https://gh-proxy.com/${entry}`)
+  assert.equal(mirrorUrl('  https://ghfast.top/ ', entry), `https://ghfast.top/${entry}`)
+  for (const bad of ['http://gh-proxy.com/', 'https://user:pw@gh-proxy.com/', 'https://gh-proxy.com/?x=1', 'https://gh-proxy.com/#x', 'gh-proxy.com', '']) {
+    assert.equal(mirrorUrl(bad, entry), undefined, bad)
+  }
+  for (const prefix of DEFAULT_MIRRORS) {
+    assert.match(mirrorUrl(prefix, entry), /^https:\/\/[a-z0-9.-]+\/https:\/\/github\.com\//)
+  }
+  assert.deepEqual(sanitizeMirrors([' https://a.dev/ ', 'https://a.dev/', 42, '', null, 'https://b.dev']), ['https://a.dev/', 'https://b.dev'])
+  assert.deepEqual(sanitizeMirrors('https://a.dev'), [])
+})
+
+test('sources: a fast official link stays alone, a slow one defers to clearly faster mirrors', () => {
+  const MIB = 1048576
+  const fast = (mib) => ({ bytes: mib * MIB, seconds: 1 })
+  assert.deepEqual(
+    rankDownloadSources({ url: entry, probe: fast(48) }, [{ url: 'https://a/', label: 'a', probe: fast(64) }]),
+    [{ url: entry }]
+  )
+  // 直连 0.24 MB/s：够快且明显更快的镜像按速度排在前面，只快一点点的、挂掉的都不用，官方兜底
+  assert.deepEqual(
+    rankDownloadSources({ url: entry, probe: { bytes: 240_000, seconds: 1 } }, [
+      { url: 'https://barely/', label: 'barely', probe: { bytes: 300_000, seconds: 1 } },
+      { url: 'https://dead/', label: 'dead', probe: { bytes: 0, seconds: 9, error: 'timeout' } },
+      { url: 'https://mid/', label: 'mid', probe: fast(3.5) },
+      { url: 'https://best/', label: 'best', probe: fast(8.6) }
+    ]),
+    [{ url: 'https://best/', label: 'best' }, { url: 'https://mid/', label: 'mid' }, { url: entry }]
+  )
+  // 直连直接失败、镜像也全挂：只剩官方，让正常下载路径去报那个错
+  const down = { bytes: 0, seconds: 2, error: 'ECONNRESET' }
+  assert.deepEqual(
+    rankDownloadSources({ url: entry, probe: down }, [{ url: 'https://dead/', label: 'dead', probe: down }]),
+    [{ url: entry }]
+  )
+})
+
+test('download uses the fastest mirror only when the official link is slow', async () => {
+  const temp = await mkdtemp(join(tmpdir(), 'devkit-update-mirror-'))
+  const proxy = `https://gh-proxy.com/${entry}`
+  const fastTop = `https://ghfast.top/${entry}`
+  try {
+    // 官方够快：只联系官方（测速一次、正式下载一次），任何镜像都不碰
+    const directCalls = []
+    const direct = new GitHubReleases(async (url) => {
+      directCalls.push(url)
+      return serve(big)
+    }, quick)
+    await direct.download(bigUpdate, 'zip', join(temp, 'direct.part'), () => {})
+    assert.deepEqual(directCalls, [entry, entry])
+    assert.deepEqual(await readFile(join(temp, 'direct.part')), big)
+
+    // 官方慢：并行探测镜像，选最快的那个，官方留作兜底
+    const calls = []
+    let probed = false
+    const sources = []
+    const client = new GitHubReleases(async (url) => {
+      calls.push(url)
+      if (url === entry) {
+        if (!probed) {
+          probed = true
+          return stalled(big)
+        }
+        return serve(big)
+      }
+      if (url === proxy) return serve(big)
+      if (url === fastTop) return stalled(big)
+      throw new Error('unexpected fetch ' + url)
+    }, quick)
+    const target = join(temp, 'mirror.part')
+    const progress = []
+    await client.download(bigUpdate, 'zip', target, (received) => progress.push(received), {
+      onSource: (label) => sources.push(label)
+    })
+    assert.deepEqual(await readFile(target), big)
+    assert.deepEqual(sources, ['gh-proxy.com'])
+    assert.equal(calls[0], entry)
+    assert.deepEqual([...calls.slice(1, 3)].sort(), [fastTop, proxy].sort())
+    assert.deepEqual(calls.slice(3), [proxy])
+    assert.ok(progress.length >= 1)
+  } finally {
+    await rm(temp, { force: true, recursive: true })
+  }
+})
+
+test('an interrupted transfer resumes from the bytes already on disk', async () => {
+  const temp = await mkdtemp(join(tmpdir(), 'devkit-update-resume-'))
+  try {
+    let probed = false
+    const ranges = []
+    const client = new GitHubReleases(async (url, init) => {
+      assert.equal(url, entry)
+      const range = init?.headers?.Range
+      if (range) {
+        // 服务端支持区间：从断点处给到结尾
+        ranges.push(range)
+        const from = Number(/^bytes=(\d+)-$/.exec(range)[1])
+        return serve(big, { status: 206, range: { from, to: big.length - 1 } })
+      }
+      // 测速给全量（判定够快），首次正式下载在 1 MiB 处被重置
+      if (!probed) {
+        probed = true
+        return serve(big)
+      }
+      return brokenAfter(big, 1024 * 1024)
+    }, quick)
+    const target = join(temp, 'resume.part')
+    await client.download(bigUpdate, 'zip', target, () => {}, { mirrors: [] })
+    assert.deepEqual(await readFile(target), big)
+    assert.deepEqual(ranges, ['bytes=1048576-'])
+  } finally {
+    await rm(temp, { force: true, recursive: true })
+  }
+})
+
+test('a server that ignores Range restarts the download instead of appending', async () => {
+  const temp = await mkdtemp(join(tmpdir(), 'devkit-update-restart-'))
+  try {
+    let probed = false
+    let ranged = false
+    const client = new GitHubReleases(async (url, init) => {
+      // 带 Range 的重试拿到的是 200 整包：截掉半截文件从头重写
+      if (init?.headers?.Range) {
+        ranged = true
+        return serve(big)
+      }
+      if (!probed) {
+        probed = true
+        return serve(big)
+      }
+      return brokenAfter(big, 1024 * 1024)
+    }, quick)
+    const target = join(temp, 'restart.part')
+    await client.download(bigUpdate, 'zip', target, () => {}, { mirrors: [] })
+    assert.deepEqual(await readFile(target), big)
+    assert.equal(ranged, true)
+  } finally {
+    await rm(temp, { force: true, recursive: true })
+  }
+})
+
+test('a mirror serving tampered bytes is rejected by the hash and the official copy is used', async () => {
+  const temp = await mkdtemp(join(tmpdir(), 'devkit-update-tamper-'))
+  try {
+    const tampered = Buffer.from(big)
+    tampered[tampered.length - 1] ^= 0xff
+    let probed = false
+    const sources = []
+    const client = new GitHubReleases(async (url) => {
+      if (url === `https://gh-proxy.com/${entry}`) return serve(tampered)
+      if (!probed) {
+        probed = true
+        return stalled(big)
+      }
+      return serve(big)
+    }, quick)
+    const target = join(temp, 'tampered.part')
+    await client.download(bigUpdate, 'zip', target, () => {}, {
+      mirrors: ['https://gh-proxy.com/'],
+      onSource: (label) => sources.push(label)
+    })
+    assert.deepEqual(await readFile(target), big)
+    assert.deepEqual(sources, ['gh-proxy.com', undefined])
+  } finally {
+    await rm(temp, { force: true, recursive: true })
+  }
+})
+
+test('every source is tried in turn and the last failure is reported', async () => {
+  const temp = await mkdtemp(join(tmpdir(), 'devkit-update-failure-'))
+  try {
+    const client = new GitHubReleases(async () => new Response(null, { status: 404 }), quick)
+    await assert.rejects(
+      client.download(bigUpdate, 'zip', join(temp, 'missing.part'), () => {}, { mirrors: ['https://gh-proxy.com/'] }),
+      /HTTP 404/
+    )
+  } finally {
+    await rm(temp, { force: true, recursive: true })
+  }
+})
+
+test('download progress and speed are formatted for the header and the dialog', () => {
+  let now = 0
+  const speed = createSpeedEstimator(() => now)
+  assert.equal(speed(0), undefined)
+  now = 1000
+  assert.equal(speed(3000), 3000)
+  now = 2000
+  assert.ok(Math.abs(speed(9000) - 4200) < 1e-6) // 3000×0.6 + 6000×0.4
+  now = 2100
+  assert.ok(Math.abs(speed(20000) - 4200) < 1e-6) // 间隔不足 500ms：不更新
+  now = 3000
+  assert.ok(Math.abs(speed(100) - 4200) < 1e-6) // 换源重来、字节回退：丢弃该样本
+  now = 4000
+  assert.ok(Math.abs(speed(1100) - 2920) < 1e-6) // 从 100 起重新计数：4200×0.6 + 1000×0.4
+
+  assert.equal(formatSpeed(8.6 * 1048576), '8.6 MB/s')
+  assert.equal(formatSpeed(312 * 1024), '312 KB/s')
+  assert.equal(formatSpeed(10), '1 KB/s')
+  assert.equal(formatMegabytes(172_203_115), '164.2 MB')
+  assert.equal(downloadPercent(86_101_558, 172_203_115), 50)
+  assert.equal(downloadPercent(172_203_115 + 5, 172_203_115), 100)
+  assert.equal(downloadPercent(500, 0), undefined)
+  assert.equal(downloadSourceLabel(undefined), '')
+  assert.equal(downloadSourceLabel('gh-proxy.com'), '经镜像 gh-proxy.com 加速')
+  assert.equal(updateNotice({ phase: 'downloading', release: update, received: 10, speed: 8.6 * 1048576 }), '正在下载更新… 45%（8.6 MB/s）')
+  assert.equal(updateNotice({ phase: 'downloading', release: update, received: 10 }), '正在下载更新… 45%')
 })
 
 test('update entry exposes notices for a newer version and verified download', () => {
@@ -155,7 +413,7 @@ test('rate-limited API falls back to the quota-free release page channel', async
   const temp = await mkdtemp(join(tmpdir(), 'devkit-update-fallback-'))
   try {
     const target = join(temp, 'fallback.part')
-    await client.download(fallback.update, 'zip', target, () => {})
+    await client.download(fallback.update, 'zip', target, () => {}, { mirrors: [] })
     assert.deepEqual(await readFile(target), data)
   } finally {
     await rm(temp, { force: true, recursive: true })
