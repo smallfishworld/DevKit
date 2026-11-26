@@ -248,15 +248,21 @@ async function main(): Promise<void> {
       if (!tool) return false;
       tool.click(); return true;
     })()`), '打开串口')
+    const connectionTrigger = '.serial-panel .conn-bar button[aria-label="连接参数"]'
+    const connectionEditor = '.connection-editor'
+    const baudSelect = connectionEditor + ' .conn-field:has([aria-label="波特率"]) .el-select__wrapper'
     const editBaud = async (value: string): Promise<void> => {
-      await until(() => click('.conn-bar [aria-label="连接参数"]'), '打开连接参数')
-      // 按字段名定位而不是 nth-child：连接参数浮层顶部还有「已存预设 / 保存为预设」两行
-      await until(() => js(`(() => {
-        const field = [...document.querySelectorAll('.connection-editor .conn-field')]
-          .find(f => f.querySelector(':scope > span')?.textContent.trim() === '波特率');
+      // Let the prior close transition settle before toggling the reference again.
+      await until(async () => !await has(connectionEditor, '连接参数'), '连接参数浮层已收起')
+      await until(() => click(connectionTrigger), '打开连接参数')
+      await until(() => has(connectionEditor, '连接参数'), '连接参数浮层可见')
+      await until(async () => await click(baudSelect) || await js(`(() => {
+        const field = [...document.querySelectorAll('.connection-editor .conn-field')].find((element) =>
+          element.getClientRects().length && element.querySelector('span')?.textContent.trim() === '波特率');
         const wrapper = field?.querySelector('.el-select__wrapper');
-        if (!wrapper) return false;
-        wrapper.click(); return true;
+        if (!wrapper?.getClientRects().length) return false;
+        wrapper.click();
+        return true;
       })()`), '打开波特率选项')
       await until(() => click('.connection-editor .el-select-dropdown__item', value), '选择波特率 ' + value)
       await until(async () => !await has('.connection-editor .el-select-dropdown__item', value), '选择后收起波特率菜单')
