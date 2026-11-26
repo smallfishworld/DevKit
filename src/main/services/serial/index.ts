@@ -8,7 +8,7 @@ import { StringDecoder } from 'node:string_decoder'
 import * as iconv from 'iconv-lite'
 import { dialog, app, shell, powerSaveBlocker } from 'electron'
 import { promises as fs } from 'node:fs'
-import { basename, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import type { ToolService } from '../../ipc'
 import { emitToolEvent, setWindowBackgroundThrottling } from '../../ipc'
 import type { SerialConfig, SerialEncoding, SerialParams, SerialTransferEvt, TransferProtocol } from '../../../shared/serial'
@@ -472,9 +472,9 @@ export class SerialService implements ToolService {
           })
           .catch(() => ({ ok: false, error: mainText('logDirCreateFailed') }))
       case 'file:pick':
-        return this.pickFile()
+        return this.pickFile(payload as { defaultPath?: string } | undefined)
       case 'file:pick-dir':
-        return this.pickDir()
+        return this.pickDir(payload as { defaultPath?: string } | undefined)
       case 'file:send':
         return this.fileSend(panelId, payload as { protocol: TransferProtocol; path: string })
       case 'file:recv':
@@ -853,18 +853,33 @@ export class SerialService implements ToolService {
 
   // ---------- 文件传输（YMODEM / ZMODEM） ----------
 
-  private async pickFile(): Promise<{ ok: boolean; path?: string }> {
+  private async existingDir(candidate?: string): Promise<string | undefined> {
+    if (!candidate) return undefined
+    try {
+      return (await fs.stat(candidate)).isDirectory() ? candidate : undefined
+    } catch {
+      return undefined
+    }
+  }
+
+  private async pickFile(payload?: { defaultPath?: string }): Promise<{ ok: boolean; path?: string }> {
+    const defaultPath = payload?.defaultPath
+      ? (await this.existingDir(payload.defaultPath)) ?? (await this.existingDir(dirname(payload.defaultPath)))
+      : undefined
     const { canceled, filePaths } = await dialog.showOpenDialog({
       title: mainText('selectSendFile'),
+      ...(defaultPath ? { defaultPath } : {}),
       properties: ['openFile']
     })
     if (canceled || !filePaths[0]) return { ok: false }
     return { ok: true, path: filePaths[0] }
   }
 
-  private async pickDir(): Promise<{ ok: boolean; path?: string }> {
+  private async pickDir(payload?: { defaultPath?: string }): Promise<{ ok: boolean; path?: string }> {
+    const defaultPath = await this.existingDir(payload?.defaultPath)
     const { canceled, filePaths } = await dialog.showOpenDialog({
       title: mainText('selectReceiveDirectory'),
+      ...(defaultPath ? { defaultPath } : {}),
       properties: ['openDirectory']
     })
     if (canceled || !filePaths[0]) return { ok: false }

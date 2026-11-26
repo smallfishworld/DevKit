@@ -95,7 +95,7 @@ export const toolUiMessages = {
       newAria: '新建快捷命令', menuAria: '快捷命令分组与导入导出', newGroup: '新建分组…', import: '导入命令…', export: '导出命令…'
     },
     sshPanel: {
-      passwordWarning: '预设里的密码以明文保存在本机 config.json，请勿保存生产环境密码', disconnectedError: 'SSH 已断开：{error}', closed: '连接已关闭', error: 'SSH 错误：{error}',
+      disconnectedError: 'SSH 已断开：{error}', closed: '连接已关闭', error: 'SSH 错误：{error}',
       ready: '就绪。填写主机信息后点击「连接」，终端内直接输入命令。', hostRequired: '请填写主机地址', connected: '已连接 {user}@{host}:{port}', connectFailed: '连接失败：{error}', disconnected: '已断开',
       logSaved: '日志已保存', logSaveFailed: '存日志失败：{error}', logDirectory: '日志保存目录已设为：{dir}（新会话生效）', hostFirst: '请先填写主机', presetSaved: '预设「{name}」已保存',
       hostPlaceholder: '主机 IP 或主机名', username: '用户名', password: '密码', key: '私钥', keyPath: '私钥文件路径', connect: '连接', disconnect: '断开', preset: '套用已存预设', savePreset: '存为预设', presetName: '预设名', save: '保存', cancel: '取消', confirm: '确认',
@@ -198,7 +198,7 @@ export const toolUiMessages = {
       newAria: 'New quick command', menuAria: 'Quick-command groups, import, and export', newGroup: 'New group…', import: 'Import commands…', export: 'Export commands…'
     },
     sshPanel: {
-      passwordWarning: 'Preset passwords are stored as plain text in local config.json. Do not save production passwords.', disconnectedError: 'SSH disconnected: {error}', closed: 'Connection closed', error: 'SSH error: {error}',
+      disconnectedError: 'SSH disconnected: {error}', closed: 'Connection closed', error: 'SSH error: {error}',
       ready: 'Ready. Enter host details and connect; type commands directly in the terminal.', hostRequired: 'Enter a host address', connected: 'Connected to {user}@{host}:{port}', connectFailed: 'Connection failed: {error}', disconnected: 'Disconnected',
       logSaved: 'Log saved', logSaveFailed: 'Could not save log: {error}', logDirectory: 'Log directory set to {dir} (applies to new sessions)', hostFirst: 'Enter a host first', presetSaved: 'Preset “{name}” saved',
       hostPlaceholder: 'Host IP or name', username: 'Username', password: 'Password', key: 'Private key', keyPath: 'Private-key file path', connect: 'Connect', disconnect: 'Disconnect', preset: 'Apply a saved preset', savePreset: 'Save as preset', presetName: 'Preset name', save: 'Save', cancel: 'Cancel', confirm: 'Confirm',

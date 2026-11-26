@@ -121,9 +121,7 @@ onUnmounted(
     panelId: props.panelId,
     title: () => tabStore.sessionById(props.panelId)?.title,
     enabled: () => open.value,
-    writer: macroWriter,
-    // 自带侧栏底部的明文密码提醒，换成共享栏后照常显示
-    footnote: () => (sessions.value.length ? t('sshPanel.passwordWarning') : '')
+    writer: macroWriter
   })
 )
 
@@ -457,7 +455,6 @@ async function pickKeyFile(): Promise<void> {
       <template v-if="!sidebarHidden && !sharedCmds">
         <div class="sessions" :style="{ width: sidebarWidth + 'px' }">
           <QuickCmdManager :enabled="open" :writer="macroWriter" />
-          <p v-if="sessions.length" class="hint preset-note">⚠ {{ t('sshPanel.passwordWarning') }}</p>
         </div>
 
         <!-- 拖动调整侧栏宽度（VS Code 式分隔条）；中央折叠把手 -->
@@ -547,7 +544,6 @@ async function pickKeyFile(): Promise<void> {
 .ssh-panel .body { gap:0; }
 /* 顶部内边距与 .term-opts 的 7px 对齐：快捷命令标题与终端工具栏同一水平线 */
 .ssh-panel .sessions { display:flex; flex-direction:column; padding:7px 12px 14px; overflow:hidden; background:var(--el-bg-color-overlay); }
-.preset-note { flex:none; margin:12px 2px 0; padding-top:10px; border-top:1px solid var(--el-border-color-lighter); line-height:1.5; }
 .ssh-panel .term-col { gap:0; }
 .ssh-panel .term-opts { padding:7px 14px; flex-wrap:wrap; background:var(--el-bg-color-overlay); border-bottom:1px solid var(--el-border-color-lighter); }
 .ssh-panel .term-col :deep(.term) { border:0; border-radius:0; box-shadow:none; padding:12px 14px; }

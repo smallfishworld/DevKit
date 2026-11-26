@@ -5,7 +5,7 @@
 import { Client, type ClientChannel } from 'ssh2'
 import { randomUUID } from 'node:crypto'
 import { StringDecoder } from 'node:string_decoder'
-import { app, dialog, shell } from 'electron'
+import { app, dialog, safeStorage, shell } from 'electron'
 import { promises as fs } from 'node:fs'
 import { join } from 'node:path'
 import type { ToolService } from '../../ipc'
@@ -14,6 +14,7 @@ import type { SshConfig, SshParams } from '../../../shared/ssh'
 import { DEFAULT_SSH_CONFIG } from '../../../shared/ssh'
 import type { StreamEvent, StreamSessionBridge } from '../../../shared/plugins'
 import { getSection, setSection } from '../macro/configStore'
+import { decodeSshConfigFromStorage, encodeSshConfigForStorage } from './secret'
 import { TerminalRuntime } from '../terminal/runtime'
 import { IPC_RESULT_CODES, type IpcResultCode } from '../../../shared/ipc-result'
 import { mainText } from '../../app-locale'
@@ -47,6 +48,21 @@ function sshLogDir(): string {
 
 class SshService implements ToolService {
   private runtime = new TerminalRuntime('ssh')
+  private warnedEncryptionUnavailable = false
+
+  private async readConfig(): Promise<SshConfig> {
+    const raw = await getSection<unknown>('ssh', DEFAULT_SSH_CONFIG)
+    return decodeSshConfigFromStorage(raw, safeStorage)
+  }
+
+  private async writeConfig(config: SshConfig): Promise<void> {
+    const encoded = encodeSshConfigForStorage(config, safeStorage, () => {
+      if (this.warnedEncryptionUnavailable) return
+      this.warnedEncryptionUnavailable = true
+      console.warn('[ssh] 系统安全存储不可用，已跳过保存 SSH 密码')
+    })
+    await setSection('ssh', encoded)
+  }
   private readonly pluginListeners = new Map<string, Set<{ receive: (event: StreamEvent) => void; owner?: string }>>()
   private readonly pluginOwners = new Map<string, string>()
 
@@ -153,14 +169,14 @@ class SshService implements ToolService {
     if (this.runtime.handles(action)) return this.runtime.invoke(panelId, action, payload)
     switch (action) {
       case 'attach':
-        return getSection<SshConfig>('ssh', DEFAULT_SSH_CONFIG).then((config) => ({
+        return this.readConfig().then((config) => ({
           config,
           open: sessions.has(panelId)
         }))
       case 'config:get':
-        return getSection<SshConfig>('ssh', DEFAULT_SSH_CONFIG)
+        return this.readConfig()
       case 'config:set':
-        return setSection('ssh', payload).then(() => ({ ok: true }))
+        return this.writeConfig(payload as SshConfig).then(() => ({ ok: true }))
       case 'connect':
         return this.runtime.tasks.run(panelId, () => this.connect(panelId, payload as SshParams))
       case 'close':
@@ -170,18 +186,18 @@ class SshService implements ToolService {
       case 'resize':
         return this.resize(panelId, payload as { cols: number; rows: number })
       case 'log:mem-save':
-        return getSection<SshConfig>('ssh', DEFAULT_SSH_CONFIG).then((c) => this.runtime.export(panelId, c.logDir || sshLogDir()))
+        return this.readConfig().then((c) => this.runtime.export(panelId, c.logDir || sshLogDir()))
       case 'log:mem-clear':
         this.runtime.resetOutput(panelId)
         return { ok: true }
       case 'log:set-dir':
         return this.setLogDir()
       case 'log:get-dir':
-        return getSection<SshConfig>('ssh', DEFAULT_SSH_CONFIG).then((c) => ({ dir: c.logDir || sshLogDir() }))
+        return this.readConfig().then((c) => ({ dir: c.logDir || sshLogDir() }))
       case 'pick-key':
         return this.pickKeyFile()
       case 'log:open-dir':
-        return getSection<SshConfig>('ssh', DEFAULT_SSH_CONFIG)
+        return this.readConfig()
           .then(async (c) => {
             // 优先打开用户设置的保存路径；未设置时打开默认自动日志目录
             const dir = c.logDir || sshLogDir()
@@ -287,7 +303,7 @@ class SshService implements ToolService {
     params: SshParams,
     cancelled: () => boolean
   ): Promise<void> {
-    const cfg = await getSection<SshConfig>('ssh', DEFAULT_SSH_CONFIG)
+    const cfg = await this.readConfig()
     if (cancelled() || stream.destroyed) throw new Error('连接已关闭')
     stream.pause()
     const session: SshSession = {
@@ -398,7 +414,7 @@ class SshService implements ToolService {
 
   /** 设置手动「存日志」的保存目录（目录选择框，重启记忆） */
   private async setLogDir(): Promise<{ ok: boolean; dir?: string; code?: IpcResultCode; error?: string }> {
-    const cfg = await getSection<SshConfig>('ssh', DEFAULT_SSH_CONFIG)
+    const cfg = await this.readConfig()
     const { canceled, filePaths } = await dialog.showOpenDialog({
       title: mainText('selectLogDirectory'),
       defaultPath: cfg.logDir || sshLogDir(),
@@ -406,7 +422,7 @@ class SshService implements ToolService {
     })
     if (canceled || !filePaths[0]) return { ok: false, code: IPC_RESULT_CODES.CANCELLED, error: mainText('cancelled') }
     cfg.logDir = filePaths[0]
-    await setSection('ssh', cfg)
+    await this.writeConfig(cfg)
     return { ok: true, dir: filePaths[0] }
   }
 

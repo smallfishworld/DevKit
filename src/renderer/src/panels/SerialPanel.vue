@@ -1,3 +1,8 @@
+<script lang="ts">
+/** 进程运行期内记住上次选择的文件传输路径（发送文件 / 接收目录），不落盘 */
+const lastTransferPaths: Record<'send' | 'recv', string> = { send: '', recv: '' }
+</script>
+
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -321,15 +326,28 @@ const transferPct = computed(() => {
 
 function openTransfer(): void {
   if (!open.value || transferring.value) return
-  xferPath.value = ''
+  xferPath.value = lastTransferPaths[xferKind.value]
   xferDlg.value = true
+}
+
+function onTransferKindChange(): void {
+  xferPath.value = lastTransferPaths[xferKind.value]
 }
 
 async function chooseTransferPath(): Promise<void> {
   const kind = xferKind.value
   const action = kind === 'send' ? 'file:pick' : 'file:pick-dir'
-  const pick = (await window.api.invoke('serial', action, props.panelId)) as { ok: boolean; path?: string }
-  if (pick.ok && pick.path && xferDlg.value && kind === xferKind.value) xferPath.value = pick.path
+  const defaultPath = xferPath.value || lastTransferPaths[kind]
+  const pick = (await window.api.invoke(
+    'serial',
+    action,
+    props.panelId,
+    defaultPath ? { defaultPath } : undefined
+  )) as { ok: boolean; path?: string }
+  if (pick.ok && pick.path) {
+    lastTransferPaths[kind] = pick.path
+    if (xferDlg.value && kind === xferKind.value) xferPath.value = pick.path
+  }
 }
 
 async function startXfer(): Promise<void> {
@@ -973,14 +991,6 @@ async function deletePreset(): Promise<void> {
             </div>
           </el-popover>
         </div>
-        <div v-if="transfer" class="transfer-strip">
-          <strong>{{ transfer.protocol.toUpperCase() }} · {{ transfer.dir === 'send' ? t('serialUi.xferDirSend') : t('serialUi.xferDirRecv') }}</strong>
-          <span class="xfer-name" :title="transfer.name">{{ transfer.name || t('serialUi.waitingDevice') }}</span>
-          <el-progress :percentage="transferPct" :indeterminate="transferring && !transfer.total"
-            :status="transfer.state === 'error' ? 'exception' : transfer.state === 'done' ? 'success' : undefined" />
-          <span v-if="!transfer.total && transferring" class="hint">{{ t('serialUi.negotiating') }}</span>
-          <el-button v-if="transferring" size="small" text type="danger" @click="cancelTransfer">{{ t('serialUi.cancelTransfer') }}</el-button>
-        </div>
         <el-dialog v-model="logSettings" :title="t('serialUi.logSettingsTitle')" width="min(420px, 95vw)" append-to-body>
           <el-checkbox v-model="autoLog" @change="persistConfig()">{{ t('serialUi.autoSaveLog') }}</el-checkbox>
           <p class="hint">{{ t('serialUi.autoSaveHint') }}</p>
@@ -1017,6 +1027,14 @@ async function deletePreset(): Promise<void> {
           @guard="onGuard"
           @altscreen="onAltScreen"
         />
+        <div v-if="transfer" class="transfer-strip">
+          <strong>{{ transfer.protocol.toUpperCase() }} · {{ transfer.dir === 'send' ? t('serialUi.xferDirSend') : t('serialUi.xferDirRecv') }}</strong>
+          <span class="xfer-name" :title="transfer.name">{{ transfer.name || t('serialUi.waitingDevice') }}</span>
+          <el-progress :percentage="transferPct" :indeterminate="transferring && !transfer.total"
+            :status="transfer.state === 'error' ? 'exception' : transfer.state === 'done' ? 'success' : undefined" />
+          <span v-if="!transfer.total && transferring" class="hint">{{ t('serialUi.negotiating') }}</span>
+          <el-button v-if="transferring" size="small" text type="danger" @click="cancelTransfer">{{ t('serialUi.cancelTransfer') }}</el-button>
+        </div>
 
         <div class="send-bar">
           <el-select
@@ -1104,7 +1122,7 @@ async function deletePreset(): Promise<void> {
           </el-select>
         </el-form-item>
         <el-form-item :label="t('serialUi.xferDirection')">
-          <el-select v-model="xferKind" :aria-label="t('serialUi.xferDirection')" @change="xferPath = ''">
+          <el-select v-model="xferKind" :aria-label="t('serialUi.xferDirection')" @change="onTransferKindChange">
             <el-option :label="t('serialUi.sendToDevice')" value="send" />
             <el-option :label="t('serialUi.recvFromDevice')" value="recv" />
           </el-select>
@@ -1201,7 +1219,7 @@ async function deletePreset(): Promise<void> {
 .log-dir-actions { margin-top:10px; }
 .log-cleanup { margin-top:14px; padding-top:12px; border-top:1px solid var(--el-border-color-lighter); }
 .log-cleanup h3 { font-size:14px; margin:0 0 4px; }
-.transfer-strip { display:flex; align-items:center; gap:8px; padding:4px 12px; border-bottom:1px solid var(--el-border-color-lighter); background:var(--el-bg-color-overlay); font-size:12px; }
+.transfer-strip { display:flex; align-items:center; gap:8px; padding:4px 12px; border-top:1px solid var(--el-border-color-lighter); background:var(--el-bg-color-overlay); font-size:12px; }
 .transfer-strip .xfer-name { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .transfer-strip .el-progress { flex:1; min-width:64px; }
 </style>
