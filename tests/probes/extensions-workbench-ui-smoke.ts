@@ -250,12 +250,50 @@ async function main(): Promise<void> {
     })()`), '打开串口')
     const connectionTrigger = '.serial-panel .conn-bar button[aria-label="连接参数"]'
     const connectionEditor = '.connection-editor'
+    const connectionPopupState = () => js(`({
+      buttons: [...document.querySelectorAll(${JSON.stringify(connectionTrigger)})].map((button) => ({
+        text: button.textContent.trim(), expanded: button.getAttribute('aria-expanded'),
+        disabled: button.disabled, visible: !!button.getClientRects().length
+      })),
+      editors: [...document.querySelectorAll(${JSON.stringify(connectionEditor)})].map((editor) => ({
+        heading: editor.querySelector('h2')?.textContent, visible: !!editor.getClientRects().length,
+        hidden: editor.closest('[aria-hidden]')?.getAttribute('aria-hidden')
+      }))
+    })`)
+    const openConnectionEditor = async (): Promise<void> => {
+      let point: { x: number; y: number } | undefined
+      await until(async () => {
+        point = await js<typeof point>(`(() => {
+          for (const button of document.querySelectorAll(${JSON.stringify(connectionTrigger)})) {
+            if (button.disabled || !button.getClientRects().length) continue;
+            const rect = button.getBoundingClientRect();
+            const x = rect.left + rect.width / 2, y = rect.top + rect.height / 2;
+            if (button.contains(document.elementFromPoint(x, y))) return { x, y };
+          }
+        })()`)
+        return point !== undefined
+      }, '连接参数按钮可点击')
+      // Browser input works on this hidden fixture without depending on OS window focus.
+      const cdp = win.webContents.debugger
+      cdp.attach('1.3')
+      try {
+        const pointer = { ...point!, button: 'left', clickCount: 1 }
+        await cdp.sendCommand('Input.dispatchMouseEvent', { type: 'mousePressed', ...pointer, buttons: 1 })
+        await cdp.sendCommand('Input.dispatchMouseEvent', { type: 'mouseReleased', ...pointer, buttons: 0 })
+      } finally {
+        cdp.detach()
+      }
+      await until(() => has(connectionEditor, '连接参数'), '连接参数浮层可见')
+    }
     const baudSelect = connectionEditor + ' .conn-field:has([aria-label="波特率"]) .el-select__wrapper'
     const editBaud = async (value: string): Promise<void> => {
       // Let the prior close transition settle before toggling the reference again.
       await until(async () => !await has(connectionEditor, '连接参数'), '连接参数浮层已收起')
-      await until(() => click(connectionTrigger), '打开连接参数')
-      await until(() => has(connectionEditor, '连接参数'), '连接参数浮层可见')
+      try {
+        await openConnectionEditor()
+      } catch (cause) {
+        throw new Error('未能打开连接参数：' + JSON.stringify(await connectionPopupState()), { cause })
+      }
       await until(async () => await click(baudSelect) || await js(`(() => {
         const field = [...document.querySelectorAll('.connection-editor .conn-field')].find((element) =>
           element.getClientRects().length && element.querySelector('span')?.textContent.trim() === '波特率');
