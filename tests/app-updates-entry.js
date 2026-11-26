@@ -464,6 +464,7 @@ test('the preflight says what keeps the installation from being updated in place
   assert.equal(preflightRefusal('directory', ''),
     '程序目录无法核对（可能没有读取权限），无法原路径更新。请将更新包另存并解压到新目录。')
   assert.equal(preflightRefusal('failed', ''), undefined)
+  assert.match(preflightRefusal('locked', 'a.txt', 'en'), /^Files in the application folder/)
   // 每种拒绝都以「程序目录」开头（主进程据此认定这是给用户看的原因），并且都给出另存这条路
   for (const reason of ['directory', 'collision', 'locked']) {
     assert.match(preflightRefusal(reason, ''), /^程序目录.*另存/)
@@ -474,6 +475,7 @@ test('a restart that could not finish says why once the helper knows', () => {
   assert.equal(applyFailureMessage(''), '上次更新未完成。可重试或另存更新包。')
   assert.equal(applyFailureMessage('locked'),
     '上次更新未完成：程序目录被其他程序占用。关闭相关窗口或程序后可重试，或另存更新包。')
+  assert.match(applyFailureMessage('locked', 'en'), /^The last update did not finish/)
 })
 
 test('user files an update could not put back are read from the helper marker', () => {
@@ -485,6 +487,8 @@ test('user files an update could not put back are read from the helper marker', 
   for (const marker of ['', '\r\n\r\n', backup, backup + '\r\n \r\n']) assert.equal(parseLeftover(marker), undefined)
 
   const notice = leftoverNotice({ directory: backup, entries: ['项目资料/'] })
+  const englishNotice = leftoverNotice({ directory: backup, entries: ['data/'] }, 'en')
+  assert.equal(englishNotice.buttons[0], 'Open backup folder')
   assert.deepEqual(notice.buttons, ['打开备份目录', '确定'])
   assert.ok(notice.detail.includes(backup + '\n\n项目资料/'))
   const many = leftoverNotice({ directory: backup, entries: Array.from({ length: 12 }, (_, index) => 'file' + index) })

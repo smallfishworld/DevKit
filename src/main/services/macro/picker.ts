@@ -16,6 +16,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { pixelToPhysical } from '../../../shared/picker-geometry'
 import { grabDisplayPng } from './color'
+import { mainText } from '../../app-locale'
 
 export interface PickResult {
   x: number
@@ -111,7 +112,7 @@ document.addEventListener('keydown', (ev) => {
 })
 window.addEventListener('blur', () => window.pickerApi.cancel())
 function ready() {
-  document.title = '截屏取点 — 单击取色，右键或 Esc 取消'
+  document.title = meta.windowTitle
   window.pickerApi.ready()
 }
 if (img.complete && img.naturalWidth) ready()
@@ -175,11 +176,12 @@ export async function pickPoint(): Promise<PickResult | null> {
       offsetX: shot.offset.x,
       offsetY: shot.offset.y,
       imageWidth: shot.width,
-      imageHeight: shot.height
+      imageHeight: shot.height,
+      windowTitle: mainText('pickerWindowTitle')
     })
     await fs.writeFile(
       htmlPath,
-      `<!doctype html><html><head><meta charset="utf-8"><title>截屏取点</title><style>
+      `<!doctype html><html><head><meta charset="utf-8"><title>${mainText('pickerTitle')}</title><style>
         html,body{margin:0;height:100%;overflow:hidden;background:#000;cursor:none;user-select:none}
         #shot{position:fixed;inset:0;width:100%;height:100%;object-fit:fill;image-rendering:pixelated}
         #crossX{position:fixed;left:0;right:0;height:1px;background:rgba(255,59,48,.55);pointer-events:none;z-index:1}
@@ -204,10 +206,10 @@ export async function pickPoint(): Promise<PickResult | null> {
         <div id="tip"><canvas id="loupe" width="120" height="120"></canvas>
           <div id="fields">
             <div id="row1"><div id="swatch"></div><div id="hex">—</div></div>
-            <div><span id="coordLabel">坐标 </span><span id="coord">—</span></div>
+            <div><span id="coordLabel">${mainText('pickerCoordinate')}</span><span id="coord">—</span></div>
           </div>
         </div>
-        <div id="hint">单击取色 · 右键 / Esc 取消</div>
+        <div id="hint">${mainText('pickerHint')}</div>
         <script type="application/json" id="meta">${meta}</script>
         <script>${PICKER_SCRIPT}</script>
       </body></html>`,
@@ -219,7 +221,7 @@ export async function pickPoint(): Promise<PickResult | null> {
       y: display.bounds.y,
       width: display.bounds.width,
       height: display.bounds.height,
-      title: '截屏取点',
+      title: mainText('pickerTitle'),
       frame: false,
       resizable: false,
       movable: false,

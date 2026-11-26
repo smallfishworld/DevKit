@@ -1,3 +1,4 @@
+import { mainText } from '../../app-locale'
 /**
  * 网络调试助手服务（多实例：panelId -> 主机实例）
  * 与串口一致的 80ms 批量推送，防高速收发卡 UI
@@ -72,7 +73,7 @@ class NetService implements ToolService {
         write: async (bytes) => {
           if (sessions.get(panelId) !== s) throw new Error('网络会话已停止')
           const r = s.host.send(Buffer.from(bytes))
-          if (!r.ok) throw new Error(r.error || '网络发送失败')
+          if (!r.ok) throw new Error(r.error || mainText('netSendFailed'))
           s.txBytes += bytes.length
         },
         release: () => {
@@ -248,18 +249,18 @@ class NetService implements ToolService {
     p: { mode: 'ascii' | 'hex'; text: string; newline: string; targetId?: string }
   ): { ok: boolean; error?: string; bytes?: number } {
     const s = sessions.get(panelId)
-    if (!s) return { ok: false, error: '未启动' }
+    if (!s) return { ok: false, error: mainText('netNotStarted') }
     let buf: Buffer
     if (p.mode === 'hex') {
       const compact = p.text.replace(/0x/gi, ' ').replace(/[^0-9a-fA-F]/g, '')
-      if (compact.length === 0) return { ok: false, error: 'HEX 内容为空' }
-      if (compact.length % 2 !== 0) return { ok: false, error: 'HEX 长度须为偶数' }
+      if (compact.length === 0) return { ok: false, error: mainText('netHexEmpty') }
+      if (compact.length % 2 !== 0) return { ok: false, error: mainText('netHexOdd') }
       buf = Buffer.from(compact, 'hex')
     } else {
       const nl = p.newline === 'crlf' ? '\r\n' : p.newline === 'lf' ? '\n' : p.newline === 'cr' ? '\r' : ''
       buf = Buffer.from(p.text + nl, 'utf8')
     }
-    if (buf.length === 0) return { ok: false, error: '发送内容为空' }
+    if (buf.length === 0) return { ok: false, error: mainText('netSendEmpty') }
     const r = s.host.send(buf, p.targetId)
     if (!r.ok) return r
     s.txBytes += buf.length

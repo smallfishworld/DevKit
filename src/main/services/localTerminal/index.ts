@@ -16,6 +16,7 @@ import { getSection, setSection } from '../macro/configStore'
 import { detectWindowsShellProfiles } from './shellProfiles'
 import { join } from 'node:path'
 import { TerminalRuntime } from '../terminal/runtime'
+import { mainText } from '../../app-locale'
 
 interface LocalTerminalSession {
   proc: IPty
@@ -118,14 +119,14 @@ class LocalTerminalService implements ToolService {
 
   private async start(panelId: string, payload: LocalTerminalStartPayload): Promise<unknown> {
     if (process.platform !== 'win32') {
-      return { ok: false, error: '本地终端当前仅支持 Windows' }
+      return { ok: false, error: mainText('localTermWinOnly') }
     }
 
     const profiles = this.profiles()
     const requestedProfileId = normalizeLocalTerminalProfileId(payload.profileId, profiles)
     const profile = profiles.find((item) => item.id === requestedProfileId && item.available)
     if (!profile) {
-      return { ok: false, error: `Shell 不可用：${payload.profileId}` }
+      return { ok: false, error: mainText('localTermShellUnavailable', { id: payload.profileId }) }
     }
 
     await this.kill(panelId)
@@ -202,7 +203,7 @@ class LocalTerminalService implements ToolService {
 
   private write(panelId: string, text: string): unknown {
     const session = sessions.get(panelId)
-    if (!session) return { ok: false, error: '终端未运行' }
+    if (!session) return { ok: false, error: mainText('localTermNotRunning') }
     session.proc.write(text)
     return { ok: true }
   }
@@ -249,7 +250,7 @@ class LocalTerminalService implements ToolService {
 
   private async pickCwd(): Promise<unknown> {
     const result = await dialog.showOpenDialog({
-      title: '选择终端工作目录',
+      title: mainText('selectTerminalDirectory'),
       defaultPath: app.getPath('home'),
       properties: ['openDirectory']
     })

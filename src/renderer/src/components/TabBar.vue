@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { ArrowLeft, ArrowRight, Box, Close, CopyDocument, House, Monitor, Plus, Right } from '@element-plus/icons-vue'
 import { connectionLabels, useTabStore, tabIsSplit, type TabItem, type WorkTab } from '@renderer/stores/tabs'
 import { toolById } from '@renderer/tools/registry'
@@ -15,6 +16,7 @@ const emit = defineEmits<{
   cancelPreview: [id: string]
 }>()
 const tabs = useTabStore()
+const { t } = useI18n()
 const launcher = ref<InstanceType<typeof ToolLauncher>>()
 const stripRef = ref<HTMLElement>()
 
@@ -61,7 +63,7 @@ watch(
 // ---------- 合并分屏条目的模板辅助（避免模板内类型收窄） ----------
 
 function tabTitle(tab: WorkTab): string {
-  return tabIsSplit(tab) ? splitTabTitle(tab.members) : tab.id === 'home' ? '首页' : tab.title
+  return tabIsSplit(tab) ? splitTabTitle(tab.members) : tab.id === 'home' ? t('tabBar.home') : tab.title
 }
 
 /** 连接状态点：普通标签 0/1 个；分屏标签每个成员一个 */
@@ -421,13 +423,13 @@ defineExpose({
 </script>
 
 <template>
-  <nav class="tab-bar" aria-label="工作区">
+  <nav class="tab-bar" :aria-label="t('tabBar.workspaceAria')">
     <button
       v-if="canScrollLeft"
       type="button"
       class="tab-scroll-btn"
-      aria-label="向左滚动标签"
-      title="向左滚动标签"
+      :aria-label="t('tabBar.scrollLeft')"
+      :title="t('tabBar.scrollLeft')"
       @click="scrollStrip(-180)"
     >
       <el-icon :size="12"><ArrowLeft /></el-icon>
@@ -460,7 +462,7 @@ defineExpose({
           type="button"
           class="tab-select"
           :aria-current="tab.id === tabs.activeId ? 'page' : undefined"
-          :title="tabIsSplit(tab) ? '已分屏：右键可拆分' : undefined"
+          :title="tabIsSplit(tab) ? t('tabBar.splitHint') : undefined"
           aria-haspopup="menu"
           @click="activateTab(tab.id, $event)"
           @keydown="onTabMenuKey(tab, $event)"
@@ -487,8 +489,8 @@ defineExpose({
           v-if="tab.id !== 'home'"
           type="button"
           class="tab-close"
-          :aria-label="'关闭 ' + tabTitle(tab)"
-          :title="tabIsSplit(tab) ? '关闭分屏（全部成员）' : undefined"
+          :aria-label="t('tabBar.closeTab', { title: tabTitle(tab) })"
+          :title="tabIsSplit(tab) ? t('tabBar.closeSplitAll') : undefined"
           @click="tabs.close(tab.id)"
         >
           <el-icon :size="12"><Close /></el-icon>
@@ -498,8 +500,8 @@ defineExpose({
       <button
         class="new-tool"
         type="button"
-        aria-label="快速打开工具"
-        title="快速打开工具（Ctrl+K）"
+        :aria-label="t('tabBar.quickOpen')"
+        :title="t('tabBar.quickOpenTitle')"
         aria-keyshortcuts="Control+K"
         @click="splitAnchorId = null; launcher?.open()"
       >
@@ -511,8 +513,8 @@ defineExpose({
       v-if="canScrollRight"
       type="button"
       class="tab-scroll-btn"
-      aria-label="向右滚动标签"
-      title="向右滚动标签"
+      :aria-label="t('tabBar.scrollRight')"
+      :title="t('tabBar.scrollRight')"
       @click="scrollStrip(180)"
     >
       <el-icon :size="12"><ArrowRight /></el-icon>
@@ -525,7 +527,7 @@ defineExpose({
       ref="menuRef"
       class="tab-context-menu"
       role="menu"
-      aria-label="标签页操作"
+      :aria-label="t('tabBar.menuAria')"
       @keydown="onMenuKeydown"
       :style="{ left: contextMenu.x + 'px', top: contextMenu.y + 'px' }"
       @pointerdown.stop
@@ -537,11 +539,11 @@ defineExpose({
         @click="duplicateTab(contextMenu.tab)"
       >
         <el-icon :size="13"><CopyDocument /></el-icon>
-        <span>复制新会话</span>
+        <span>{{ t('tabBar.duplicateSession') }}</span>
       </button>
       <button v-if="contextMenu.tab.id !== 'home'" type="button" role="menuitem" @click="detachTarget">
         <el-icon :size="13"><Monitor /></el-icon>
-        <span>移至新窗口</span>
+        <span>{{ t('tabBar.moveToNewWindow') }}</span>
       </button>
       <button
         v-if="canSplitTarget"
@@ -550,7 +552,7 @@ defineExpose({
         @click="splitTargetRight"
       >
         <el-icon :size="13"><Right /></el-icon>
-        <span>分屏（Ctrl+\）</span>
+        <span>{{ t('tabBar.splitShortcut') }}</span>
       </button>
       <button
         v-if="isSplitTarget"
@@ -559,7 +561,7 @@ defineExpose({
         @click="unsplitTarget"
       >
         <el-icon :size="13"><CopyDocument /></el-icon>
-        <span>拆分为独立标签（Ctrl+Shift+\）</span>
+        <span>{{ t('tabBar.unsplitShortcut') }}</span>
       </button>
       <button
         v-if="isSplitTarget"
@@ -568,7 +570,7 @@ defineExpose({
         @click="closeSplitSide(0)"
       >
         <el-icon :size="13"><ArrowLeft /></el-icon>
-        <span>关闭左侧分屏</span>
+        <span>{{ t('tabBar.closeLeftSplit') }}</span>
       </button>
       <button
         v-if="isSplitTarget"
@@ -577,7 +579,7 @@ defineExpose({
         @click="closeSplitSide(1)"
       >
         <el-icon :size="13"><ArrowRight /></el-icon>
-        <span>关闭右侧分屏</span>
+        <span>{{ t('tabBar.closeRightSplit') }}</span>
       </button>
       <button
         v-if="contextMenu.tab.id !== 'home'"
@@ -586,7 +588,7 @@ defineExpose({
         @click="tabs.close(contextMenu.tab.id); closeContextMenu()"
       >
         <el-icon :size="13"><Close /></el-icon>
-        <span>关闭当前</span>
+        <span>{{ t('tabBar.closeCurrent') }}</span>
       </button>
       <div v-if="contextMenu.tab.id !== 'home' || canDuplicateTarget" class="menu-divider" />
       <button
@@ -595,7 +597,7 @@ defineExpose({
         :disabled="!hasOtherClosable"
         @click="tabs.closeOthers(contextMenu.tab.id); closeContextMenu()"
       >
-        <span>关闭其他标签</span>
+        <span>{{ t('tabBar.closeOthers') }}</span>
       </button>
       <button
         type="button"
@@ -603,7 +605,7 @@ defineExpose({
         :disabled="!hasRightClosable"
         @click="tabs.closeRight(contextMenu.tab.id); closeContextMenu()"
       >
-        <span>关闭右侧标签</span>
+        <span>{{ t('tabBar.closeRight') }}</span>
       </button>
       <button
         type="button"
@@ -611,7 +613,7 @@ defineExpose({
         :disabled="!hasAnyClosable"
         @click="tabs.closeAll(); closeContextMenu()"
       >
-        <span>关闭全部标签</span>
+        <span>{{ t('tabBar.closeAll') }}</span>
       </button>
     </div>
   </Teleport>

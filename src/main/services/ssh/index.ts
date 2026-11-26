@@ -15,6 +15,8 @@ import { DEFAULT_SSH_CONFIG } from '../../../shared/ssh'
 import type { StreamEvent, StreamSessionBridge } from '../../../shared/plugins'
 import { getSection, setSection } from '../macro/configStore'
 import { TerminalRuntime } from '../terminal/runtime'
+import { IPC_RESULT_CODES, type IpcResultCode } from '../../../shared/ipc-result'
+import { mainText } from '../../app-locale'
 
 interface RxPiece {
   buf: Buffer
@@ -187,7 +189,7 @@ class SshService implements ToolService {
             void shell.openPath(dir)
             return { ok: true }
           })
-          .catch(() => ({ ok: false, error: '无法创建日志目录' }))
+          .catch(() => ({ ok: false, error: mainText('logDirCreateFailed') }))
       default:
         throw new Error(`ssh 服务未知操作: ${action}`)
     }
@@ -203,21 +205,21 @@ class SshService implements ToolService {
   private async connect(panelId: string, params: SshParams): Promise<{ ok: boolean; error?: string }> {
     await this.close(panelId)
     const host = (params.host || '').trim()
-    if (!host) return { ok: false, error: '未填写主机地址' }
-    if (!params.username.trim()) return { ok: false, error: '未填写用户名' }
+    if (!host) return { ok: false, error: mainText('sshHostRequired') }
+    if (!params.username.trim()) return { ok: false, error: mainText('sshUserRequired') }
     const port = Number(params.port) || 22
 
     // 密钥认证：先读私钥文件
     let privateKey: Buffer | undefined
     if (params.authType === 'key') {
-      if (!params.privateKeyPath) return { ok: false, error: '未选择私钥文件' }
+      if (!params.privateKeyPath) return { ok: false, error: mainText('sshKeyRequired') }
       try {
         privateKey = await fs.readFile(params.privateKeyPath)
       } catch (err) {
-        return { ok: false, error: `私钥读取失败：${err instanceof Error ? err.message : String(err)}` }
+        return { ok: false, error: mainText('sshKeyReadFailed', { error: err instanceof Error ? err.message : String(err) }) }
       }
     } else if (!params.password) {
-      return { ok: false, error: '未填写密码' }
+      return { ok: false, error: mainText('sshPasswordRequired') }
     }
 
     const client = new Client()
@@ -238,7 +240,7 @@ class SshService implements ToolService {
       }
       client.on('error', (err: Error) => fail(err.message))
       client.on('close', () => {
-        fail('连接已关闭')
+        fail(mainText('sshClosed'))
         void this.runtime.tasks.run(panelId, async () => {
           if (sessions.get(panelId)?.client === client) await this.close(panelId)
         }).catch(() => {})
@@ -383,11 +385,11 @@ class SshService implements ToolService {
   /** 选择私钥文件（渲染端文件系统受限，用主进程对话框） */
   private async pickKeyFile(): Promise<{ ok: boolean; path?: string; error?: string }> {
     const { canceled, filePaths } = await dialog.showOpenDialog({
-      title: '选择私钥文件',
+      title: mainText('selectPrivateKey'),
       properties: ['openFile'],
       filters: [
-        { name: '私钥', extensions: ['pem', 'key', 'ppk', 'id_rsa'] },
-        { name: '所有文件', extensions: ['*'] }
+        { name: mainText('privateKeys'), extensions: ['pem', 'key', 'ppk', 'id_rsa'] },
+        { name: mainText('allFiles'), extensions: ['*'] }
       ]
     })
     if (canceled || filePaths.length === 0) return { ok: false }
@@ -395,14 +397,14 @@ class SshService implements ToolService {
   }
 
   /** 设置手动「存日志」的保存目录（目录选择框，重启记忆） */
-  private async setLogDir(): Promise<{ ok: boolean; dir?: string; error?: string }> {
+  private async setLogDir(): Promise<{ ok: boolean; dir?: string; code?: IpcResultCode; error?: string }> {
     const cfg = await getSection<SshConfig>('ssh', DEFAULT_SSH_CONFIG)
     const { canceled, filePaths } = await dialog.showOpenDialog({
-      title: '选择日志保存目录',
+      title: mainText('selectLogDirectory'),
       defaultPath: cfg.logDir || sshLogDir(),
       properties: ['openDirectory', 'createDirectory']
     })
-    if (canceled || !filePaths[0]) return { ok: false, error: '已取消' }
+    if (canceled || !filePaths[0]) return { ok: false, code: IPC_RESULT_CODES.CANCELLED, error: mainText('cancelled') }
     cfg.logDir = filePaths[0]
     await setSection('ssh', cfg)
     return { ok: true, dir: filePaths[0] }

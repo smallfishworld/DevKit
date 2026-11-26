@@ -2,8 +2,10 @@
 import { onUnmounted, ref } from 'vue'
 import { usePanelMessage } from '@renderer/composables/panelOverlays'
 import { Aim, CopyDocument } from '@element-plus/icons-vue'
+import { useI18n } from 'vue-i18n'
 
 const ElMessage = usePanelMessage()
+const { t } = useI18n()
 
 interface PickedColor {
   x: number
@@ -26,7 +28,7 @@ async function pick(): Promise<void> {
   if (picking.value) return
   picking.value = true
   // 取点窗口会盖住整个屏幕：先给个提示，避免用户以为按钮没反应
-  const hint = ElMessage({ message: '请单击屏幕取色，右键或 Esc 取消', duration: 0, showClose: false })
+  const hint = ElMessage({ message: t('colorPicker.hint'), duration: 0, showClose: false })
   try {
     const res = (await window.api.invoke('color', 'pick', `color#${Date.now()}`)) as {
       x: number
@@ -36,10 +38,10 @@ async function pick(): Promise<void> {
     if (res) {
       history.value.unshift({ ...res, time: Date.now() })
       if (history.value.length > 50) history.value.pop()
-      ElMessage.success(`已取色 ${res.color}`)
+      ElMessage.success(t('colorPicker.picked', { color: res.color }))
     }
   } catch (error) {
-    ElMessage.error(`取色失败：${String(error)}`)
+    ElMessage.error(t('colorPicker.failed', { error: String(error) }))
   } finally {
     hint.close()
     picking.value = false
@@ -48,7 +50,7 @@ async function pick(): Promise<void> {
 
 async function copy(text: string): Promise<void> {
   await window.api.win.writeClipboard(text)
-  ElMessage.success(`已复制 ${text}`)
+  ElMessage.success(t('colorPicker.copied', { text }))
 }
 
 function rgbStr(hex: string): string {
@@ -67,24 +69,24 @@ onUnmounted(onUnmountClear)
   <div class="panel converter-page color-panel">
     <header class="converter-head">
       <div>
-        <h1>取色器</h1>
-        <p>截屏取色与物理像素坐标拾取</p>
+        <h1>{{ t('colorPicker.title') }}</h1>
+        <p>{{ t('colorPicker.subtitle') }}</p>
       </div>
     </header>
 
     <div class="panel-section">
-      <h3>屏幕取色</h3>
+      <h3>{{ t('colorPicker.screen') }}</h3>
       <div class="row">
         <el-button type="primary" size="small" :icon="Aim" :loading="picking" @click="pick">
-          截屏取色
+          {{ t('colorPicker.pick') }}
         </el-button>
-        <span class="hint">取点窗口铺满光标所在屏幕：单击取色，右键 / Esc 取消；坐标为全局物理像素</span>
+        <span class="hint">{{ t('colorPicker.instructions') }}</span>
       </div>
     </div>
 
     <div class="panel-section">
-      <h3>取色记录</h3>
-      <el-empty v-if="history.length === 0" description="还没有取过颜色" :image-size="80" />
+      <h3>{{ t('colorPicker.history') }}</h3>
+      <el-empty v-if="history.length === 0" :description="t('colorPicker.empty')" :image-size="80" />
       <div v-else class="color-list">
         <div v-for="(c, i) in history" :key="`${c.time}-${i}`" class="color-item">
           <div class="swatch" :style="{ background: c.color }" />

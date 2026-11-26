@@ -19,6 +19,7 @@ import { readFileRes, writeFileRes } from './io'
 import { textDiff } from './textdiff'
 import { hexDiff } from './hexdiff'
 import { scanFolder, syncFolderItem } from './folder'
+import { mainText } from '../../app-locale'
 
 class DiffService implements ToolService {
   private async pick(mode: 'file' | 'dir', title: string): Promise<{ ok: boolean; path?: string }> {
@@ -34,9 +35,9 @@ class DiffService implements ToolService {
   invoke(panelId: string, action: string, payload: unknown): Promise<unknown> | unknown {
     switch (action) {
       case 'pick:file':
-        return this.pick('file', '选择左侧 / 右侧文件')
+        return this.pick('file', mainText('selectCompareFile'))
       case 'pick:dir':
-        return this.pick('dir', '选择左侧 / 右侧目录')
+        return this.pick('dir', mainText('selectCompareDirectory'))
       case 'read':
         return readFileRes(payload as FileReadReq)
       case 'write':

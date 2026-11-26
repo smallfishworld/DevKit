@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, reactive, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { usePanelMessage, usePanelMessageBox } from '@renderer/composables/panelOverlays'
 import { Connection, Delete, Refresh, VideoPlay, VideoPause } from '@element-plus/icons-vue'
 import type {
@@ -12,6 +13,7 @@ import { useTabStore } from '@renderer/stores/tabs'
 
 const ElMessage = usePanelMessage()
 const ElMessageBox = usePanelMessageBox()
+const { t, locale } = useI18n()
 
 const props = defineProps<{ panelId: string }>()
 const tabStore = useTabStore()
@@ -21,8 +23,8 @@ function syncTabTitle(): void {
   tabStore.rename(
     props.panelId,
     mode.value === 'server'
-      ? `串口TCP桥接·服务端:${remotePort.value}`
-      : `串口TCP桥接·客户端 ${remoteHost.value}:${remotePort.value}`
+      ? t('bridge.tabServer', { port: remotePort.value })
+      : t('bridge.tabClient', { host: remoteHost.value, port: remotePort.value })
   )
 }
 
@@ -84,6 +86,7 @@ const logBox = ref<HTMLElement | null>(null)
 /** 任一通道运行中 → 共享格式锁定 */
 const anyRunning = computed(() => rows.some((r) => r.running))
 const remotePortInUse = computed(() => remoteRunning.value)
+watch(locale, syncTabTitle)
 
 const BAUDS = [9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600]
 
@@ -134,7 +137,7 @@ onMounted(async () => {
     }),
     window.api.on('bridge', props.panelId, 'remote-config-applied', (p) => {
       const d = p as { cid: number }
-      pushLog('info', `远端已更新 CH${d.cid} 配置`)
+      pushLog('info', t('bridge.remoteUpdatedCh', { cid: d.cid }))
     })
   )
 
@@ -201,7 +204,7 @@ async function persistIdentity(): Promise<void> {
     channels: rows.map((r) => ({ cid: r.cid, port: r.port, baudRate: r.baudRate, tcpPort: r.tcpPort }))
   }
   const res = (await window.api.invoke('bridge', 'config:set', props.panelId, cfg)) as { ok: boolean }
-  if (!res.ok) ElMessage.error('配置保存失败')
+  if (!res.ok) ElMessage.error(t('bridge.saveFailed'))
   const listRes = (await window.api.invoke('bridge', 'config:list-identities', props.panelId)) as {
     identities: string[]
   }
@@ -298,18 +301,18 @@ async function onIdentityChange(): Promise<void> {
     identity: currentIdentity.value
   })) as { ok: boolean; identity: BridgeIdentityConfig }
   if (!res.ok) {
-    ElMessage.error('切换身份失败')
+    ElMessage.error(t('bridge.switchIdentityFailed'))
     return
   }
   applyIdentity(res.identity)
-  pushLog('info', `已切换身份: ${currentIdentity.value}`)
+  pushLog('info', t('bridge.switchedIdentity', { id: currentIdentity.value }))
   await refreshStatus()
 }
 
 async function deleteIdentity(): Promise<void> {
   if (!currentIdentity.value) return
   try {
-    await ElMessageBox.confirm(`删除身份「${currentIdentity.value}」的配置？`, '删除身份', {
+    await ElMessageBox.confirm(t('bridge.deleteIdentityConfirm', { id: currentIdentity.value }), t('bridge.deleteIdentityTitle'), {
       type: 'warning'
     })
   } catch {
@@ -320,13 +323,13 @@ async function deleteIdentity(): Promise<void> {
   })) as { ok: boolean; remaining: string[] }
   if (!res.ok) return
   identities.value = res.remaining
-  ElMessage.success('已删除')
+  ElMessage.success(t('bridge.deleted'))
   // 切到剩余的第一个身份（或新建默认）
   if (res.remaining.length) {
     currentIdentity.value = res.remaining[0]
     await onIdentityChange()
   } else {
-    pushLog('info', '无剩余身份，将新建默认 server_9999')
+    pushLog('info', t('bridge.noRemainingIdentity'))
   }
 }
 
@@ -338,7 +341,7 @@ async function toggleRemote(): Promise<void> {
       await window.api.invoke('bridge', 'remote-server:stop', props.panelId)
       remoteRunning.value = false
       remoteOn.value = false
-      pushLog('info', '远程管理服务已停止')
+      pushLog('info', t('bridge.remoteServerStopped'))
       await persistIdentity()
     } else {
       const res = (await window.api.invoke('bridge', 'remote-server:start', props.panelId, {
@@ -347,11 +350,11 @@ async function toggleRemote(): Promise<void> {
       if (res.ok) {
         remoteRunning.value = true
         remoteOn.value = true
-        pushLog('info', `远程管理服务已启动: 0.0.0.0:${remotePort.value}`)
+        pushLog('info', t('bridge.remoteServerStarted', { port: remotePort.value }))
         await persistIdentity()
         void refreshIps()
       } else {
-        ElMessage.error(`管理端口启动失败：${res.error}`)
+        ElMessage.error(t('bridge.remotePortStartFailed', { error: res.error ?? '' }))
       }
     }
   } else {
@@ -359,7 +362,7 @@ async function toggleRemote(): Promise<void> {
       await window.api.invoke('bridge', 'remote:disconnect', props.panelId)
       remoteRunning.value = false
       remoteOn.value = false
-      pushLog('info', '已断开管理连接')
+      pushLog('info', t('bridge.remoteDisconnected'))
       await persistIdentity()
     } else {
       const res = (await window.api.invoke('bridge', 'remote:connect', props.panelId, {
@@ -368,10 +371,10 @@ async function toggleRemote(): Promise<void> {
       })) as { ok: boolean; error?: string }
       if (res.ok) {
         remoteOn.value = true
-        pushLog('info', `已连接到远端管理服务: ${remoteHost.value}:${remotePort.value}`)
+        pushLog('info', t('bridge.remoteConnected', { host: remoteHost.value, port: remotePort.value }))
         await persistIdentity()
       } else {
-        ElMessage.error(`连接失败：${res.error}`)
+        ElMessage.error(t('bridge.connectFailed', { error: res.error ?? '' }))
       }
     }
   }
@@ -380,13 +383,13 @@ async function toggleRemote(): Promise<void> {
 /** 客户端模式：向远端发管理命令 */
 function remoteSend(cmd: string, kv: Record<string, unknown> = {}): void {
   if (!remoteRunning.value) {
-    ElMessage.warning('请先连接远端')
+    ElMessage.warning(t('bridge.connectRemoteFirst'))
     return
   }
   window.api
     .invoke('bridge', 'remote:send', props.panelId, { cmd, ...kv })
     .then((res) => {
-      if (!(res as { ok: boolean }).ok) ElMessage.warning('发送失败')
+      if (!(res as { ok: boolean }).ok) ElMessage.warning(t('bridge.sendFailed'))
     })
     .catch(() => {})
 }
@@ -401,7 +404,7 @@ async function startRow(row: (typeof rows)[number]): Promise<void> {
     tcpPort: row.tcpPort
   })) as true | string
   if (res !== true) {
-    ElMessage.error(`CH${row.cid} 启动失败：${res}`)
+    ElMessage.error(t('bridge.chStartFailed', { cid: row.cid, error: res }))
   } else {
     row.running = true
   }
@@ -419,7 +422,7 @@ async function startAll(): Promise<void> {
     errors: string[]
   }
   if (res.errors?.length) {
-    ElMessage.warning(`全部启动：${res.errors.length} 路未启动（详见日志）`)
+    ElMessage.warning(t('bridge.startAllPartial', { count: res.errors.length }))
     res.errors.forEach((e) => pushLog('error', e))
   }
   await refreshStatus()
@@ -434,8 +437,8 @@ function breakRow(row: (typeof rows)[number]): void {
   window.api
     .invoke('bridge', 'break', props.panelId, { cid: row.cid })
     .then((res) => {
-      if (!(res as { ok: boolean }).ok) ElMessage.warning(`CH${row.cid} 未运行`)
-      else pushLog('info', `CH${row.cid} Break 已发送`)
+      if (!(res as { ok: boolean }).ok) ElMessage.warning(t('bridge.chNotRunning', { cid: row.cid }))
+      else pushLog('info', t('bridge.chBreakSent', { cid: row.cid }))
     })
     .catch(() => {})
 }
@@ -475,12 +478,12 @@ function fmtTime(t: number): string {
           :disabled="remoteRunning"
           @update:model-value="switchMode(($event as 'server' | 'client'))"
         >
-          <el-radio-button value="server">服务端</el-radio-button>
-          <el-radio-button value="client">客户端</el-radio-button>
+          <el-radio-button value="server">{{ t('bridge.server') }}</el-radio-button>
+          <el-radio-button value="client">{{ t('bridge.client') }}</el-radio-button>
         </el-radio-group>
 
         <template v-if="mode === 'server'">
-          <span class="lbl">服务端IP:</span>
+          <span class="lbl">{{ t('bridge.serverIp') }}</span>
           <el-select
             v-model="remoteHost"
             size="small"
@@ -492,7 +495,7 @@ function fmtTime(t: number): string {
           </el-select>
         </template>
         <template v-else>
-          <span class="lbl">服务端IP:</span>
+          <span class="lbl">{{ t('bridge.serverIp') }}</span>
           <el-input
             v-model="remoteHost"
             size="small"
@@ -501,7 +504,7 @@ function fmtTime(t: number): string {
             @change="persistIdentity"
           />
         </template>
-        <span class="lbl">管理端口</span>
+        <span class="lbl">{{ t('bridge.mgmtPort') }}</span>
         <el-input-number
           v-model="remotePort"
           :min="1"
@@ -520,19 +523,19 @@ function fmtTime(t: number): string {
           :icon="Connection"
           @click="toggleRemote"
         >
-          {{ mode === 'server' ? '启动管理' : '连接' }}
+          {{ mode === 'server' ? t('bridge.startMgmt') : t('bridge.connect') }}
         </el-button>
         <el-button v-else type="danger" size="small" @click="toggleRemote">
-          {{ mode === 'server' ? '停止管理' : '断开' }}
+          {{ mode === 'server' ? t('bridge.stopMgmt') : t('bridge.disconnect') }}
         </el-button>
         <el-tag :type="remoteRunning ? 'success' : 'info'" size="small">
-          {{ remoteRunning ? (mode === 'server' ? '管理服务运行中' : '已连接远端') : '未连接' }}
+          {{ remoteRunning ? (mode === 'server' ? t('bridge.mgmtRunning') : t('bridge.remoteConnectedTag')) : t('bridge.disconnectedTag') }}
         </el-tag>
       </div>
 
       <!-- 身份下拉 -->
       <div class="conn-bar identity-bar">
-        <span class="lbl">配置身份</span>
+        <span class="lbl">{{ t('bridge.configIdentity') }}</span>
         <el-select
           v-model="currentIdentity"
           size="small"
@@ -543,48 +546,48 @@ function fmtTime(t: number): string {
         >
           <el-option v-for="i in identities" :key="i" :value="i" :label="i" />
         </el-select>
-        <el-button size="small" :icon="Delete" @click="deleteIdentity">删除</el-button>
+        <el-button size="small" :icon="Delete" @click="deleteIdentity">{{ t('bridge.delete') }}</el-button>
       </div>
     </div>
 
     <!-- 客户端模式：远端控制条 -->
     <div v-if="mode === 'client' && remoteRunning" class="panel-section remote-bar">
-      <el-button size="small" @click="remoteSend('get_channels')">刷新状态</el-button>
-      <el-button size="small" @click="remoteSend('get_ports')">刷新串口</el-button>
-      <el-button size="small" type="success" :icon="VideoPlay" @click="remoteSend('start_all')">全部启动</el-button>
-      <el-button size="small" type="danger" :icon="VideoPause" @click="remoteSend('stop_all')">全部停止</el-button>
-      <span class="lbl" style="margin-left: auto">客户端模式仅远程管理，本地不启通道</span>
+      <el-button size="small" @click="remoteSend('get_channels')">{{ t('bridge.refreshStatus') }}</el-button>
+      <el-button size="small" @click="remoteSend('get_ports')">{{ t('bridge.refreshPorts') }}</el-button>
+      <el-button size="small" type="success" :icon="VideoPlay" @click="remoteSend('start_all')">{{ t('bridge.startAll') }}</el-button>
+      <el-button size="small" type="danger" :icon="VideoPause" @click="remoteSend('stop_all')">{{ t('bridge.stopAll') }}</el-button>
+      <span class="lbl" style="margin-left: auto">{{ t('bridge.clientOnlyHint') }}</span>
     </div>
 
     <!-- 8 通道表 -->
     <div v-if="mode === 'server'" class="panel-section">
       <div class="conn-bar">
-        <span class="lbl">串口格式（8 路共享）</span>
+        <span class="lbl">{{ t('bridge.sharedFormat') }}</span>
         <el-select v-model="shared.dataBits" size="small" :disabled="anyRunning" style="width: 72px" @change="persistIdentity">
-          <el-option :value="5" label="5 位" />
-          <el-option :value="6" label="6 位" />
-          <el-option :value="7" label="7 位" />
-          <el-option :value="8" label="8 位" />
+          <el-option :value="5" :label="t('bridge.dataBits', { n: 5 })" />
+          <el-option :value="6" :label="t('bridge.dataBits', { n: 6 })" />
+          <el-option :value="7" :label="t('bridge.dataBits', { n: 7 })" />
+          <el-option :value="8" :label="t('bridge.dataBits', { n: 8 })" />
         </el-select>
         <el-select v-model="shared.parity" size="small" :disabled="anyRunning" style="width: 80px" @change="persistIdentity">
-          <el-option value="none" label="无校验" />
-          <el-option value="even" label="偶校验" />
-          <el-option value="odd" label="奇校验" />
+          <el-option value="none" :label="t('bridge.parityNone')" />
+          <el-option value="even" :label="t('bridge.parityEven')" />
+          <el-option value="odd" :label="t('bridge.parityOdd')" />
           <el-option value="mark" label="Mark" />
           <el-option value="space" label="Space" />
         </el-select>
         <el-select v-model="shared.stopBits" size="small" :disabled="anyRunning" style="width: 72px" @change="persistIdentity">
-          <el-option :value="1" label="1 位" />
-          <el-option :value="1.5" label="1.5 位" />
-          <el-option :value="2" label="2 位" />
+          <el-option :value="1" :label="t('bridge.stopBits', { n: 1 })" />
+          <el-option :value="1.5" :label="t('bridge.stopBits', { n: 1.5 })" />
+          <el-option :value="2" :label="t('bridge.stopBits', { n: 2 })" />
         </el-select>
         <el-select v-model="shared.flowCtrl" size="small" :disabled="anyRunning" style="width: 96px" @change="persistIdentity">
-          <el-option value="none" label="无流控" />
+          <el-option value="none" :label="t('bridge.flowNone')" />
           <el-option value="xonxoff" label="XON/XOFF" />
           <el-option value="rtscts" label="RTS/CTS" />
         </el-select>
         <el-divider direction="vertical" />
-        <el-checkbox v-model="identity.allowMulti" size="small" @change="persistIdentity">多客户端</el-checkbox>
+        <el-checkbox v-model="identity.allowMulti" size="small" @change="persistIdentity">{{ t('bridge.allowMulti') }}</el-checkbox>
       </div>
 
       <el-table :data="rows" size="small" class="ch-table">
@@ -593,14 +596,14 @@ function fmtTime(t: number): string {
             <b>CH{{ row.cid }}</b>
           </template>
         </el-table-column>
-        <el-table-column label="串口" min-width="170">
+        <el-table-column :label="t('bridge.colSerial')" min-width="170">
           <template #default="{ row }">
             <el-select
               v-model="row.port"
               size="small"
               filterable
               :disabled="row.running"
-              placeholder="选择串口"
+              :placeholder="t('bridge.selectSerial')"
               @change="persistIdentity"
             >
               <el-option
@@ -612,14 +615,14 @@ function fmtTime(t: number): string {
             </el-select>
           </template>
         </el-table-column>
-        <el-table-column label="波特率" width="110">
+        <el-table-column :label="t('bridge.colBaud')" width="110">
           <template #default="{ row }">
             <el-select v-model="row.baudRate" size="small" :disabled="row.running" @change="persistIdentity">
               <el-option v-for="b in BAUDS" :key="b" :value="b" :label="String(b)" />
             </el-select>
           </template>
         </el-table-column>
-        <el-table-column label="TCP 端口" width="100">
+        <el-table-column :label="t('bridge.colTcpPort')" width="100">
           <template #default="{ row }">
             <el-input-number
               v-model="row.tcpPort"
@@ -633,24 +636,24 @@ function fmtTime(t: number): string {
             />
           </template>
         </el-table-column>
-        <el-table-column label="状态" width="72">
+        <el-table-column :label="t('bridge.colStatus')" width="72">
           <template #default="{ row }">
             <el-tag :type="row.running ? 'success' : 'info'" size="small">
-              {{ row.running ? '运行' : '停止' }}
+              {{ row.running ? t('bridge.running') : t('bridge.stopped') }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="客户端" width="64">
+        <el-table-column :label="t('bridge.colClients')" width="64">
           <template #default="{ row }">
             <span class="mono">{{ row.clients }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="RX / TX 字节" min-width="150">
+        <el-table-column :label="t('bridge.colBytes')" min-width="150">
           <template #default="{ row }">
             <span class="mono">{{ row.rx }} / {{ row.tx }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="200" fixed="right">
+        <el-table-column :label="t('bridge.colActions')" width="200" fixed="right">
           <template #default="{ row }">
             <el-button
               v-if="!row.running"
@@ -659,20 +662,20 @@ function fmtTime(t: number): string {
               text
               @click="startRow(row)"
             >
-              启动
+              {{ t('bridge.start') }}
             </el-button>
-            <el-button v-else type="danger" size="small" text @click="stopRow(row)">停止</el-button>
+            <el-button v-else type="danger" size="small" text @click="stopRow(row)">{{ t('bridge.stop') }}</el-button>
             <el-button size="small" text :disabled="!row.running" @click="breakRow(row)">Break</el-button>
           </template>
         </el-table-column>
       </el-table>
 
       <div class="conn-bar table-actions">
-        <el-button type="success" size="small" :icon="VideoPlay" @click="startAll">全部启动</el-button>
-        <el-button type="danger" size="small" :icon="VideoPause" @click="stopAll">全部停止</el-button>
-        <el-button size="small" :icon="Refresh" @click="refreshPorts">刷新串口</el-button>
-        <el-button size="small" :icon="Delete" @click="clearLogs">清空日志</el-button>
-        <el-checkbox v-model="paused" size="small" style="margin-left: auto">暂停滚动</el-checkbox>
+        <el-button type="success" size="small" :icon="VideoPlay" @click="startAll">{{ t('bridge.startAll') }}</el-button>
+        <el-button type="danger" size="small" :icon="VideoPause" @click="stopAll">{{ t('bridge.stopAll') }}</el-button>
+        <el-button size="small" :icon="Refresh" @click="refreshPorts">{{ t('bridge.refreshPorts') }}</el-button>
+        <el-button size="small" :icon="Delete" @click="clearLogs">{{ t('bridge.clearLogs') }}</el-button>
+        <el-checkbox v-model="paused" size="small" style="margin-left: auto">{{ t('bridge.pauseScroll') }}</el-checkbox>
       </div>
     </div>
 

@@ -6,8 +6,10 @@ import { TOOLS, toolById } from '@renderer/tools/registry'
 import type { ToolDef } from '@renderer/tools/registry'
 import { connectionLabels, useTabStore, type TabItem } from '@renderer/stores/tabs'
 import { matchesTool } from './workbench-navigation'
+import { useI18n } from 'vue-i18n'
 
 const tabs = useTabStore()
+const { t } = useI18n()
 const keyword = ref('')
 const searchInputRef = ref<{ focus: () => void }>()
 
@@ -24,10 +26,10 @@ interface GroupDef {
 
 // 按「拿工具做什么」分组，每组配轻语义色，提升宽屏扫视辨识度
 const GROUP_DEFS: GroupDef[] = [
-  { label: '串口与设备调试', tone: 'primary', ids: ['serial', 'bridge', 'tftp'] },
-  { label: '终端与网络', tone: 'info', ids: ['ssh', 'local-terminal', 'net'] },
-  { label: '数据转换与计算', tone: 'warning', ids: ['timestamp', 'endian', 'encoding', 'calc'] },
-  { label: '文本、屏幕与自动化', tone: 'success', ids: ['diff', 'color', 'macro', 'input'] }
+  { label: 'home.groups.devices', tone: 'primary', ids: ['serial', 'bridge', 'tftp'] },
+  { label: 'home.groups.terminal', tone: 'info', ids: ['ssh', 'local-terminal', 'net'] },
+  { label: 'home.groups.data', tone: 'warning', ids: ['timestamp', 'endian', 'encoding', 'calc'] },
+  { label: 'home.groups.automation', tone: 'success', ids: ['diff', 'color', 'macro', 'input'] }
 ]
 
 const openTabIds = computed(() => new Set(tabs.tabs.map((t) => t.id)))
@@ -44,9 +46,9 @@ function sessionDotState(tab: TabItem): string {
 const SESSION_TOOLS = new Set(['serial', 'ssh', 'local-terminal'])
 
 function sessionLabel(tab: TabItem): string {
-  if (!isSessionOpen(tab)) return SESSION_TOOLS.has(tab.toolId) ? '历史' : '最近'
-  if (tab.toolId === 'local-terminal' && tab.connection === 'connected') return '运行中'
-  return tab.connection ? connectionLabels[tab.connection] : '已打开'
+  if (!isSessionOpen(tab)) return t(SESSION_TOOLS.has(tab.toolId) ? 'home.history' : 'home.latest')
+  if (tab.toolId === 'local-terminal' && tab.connection === 'connected') return t('home.running')
+  return tab.connection ? t(`connection.${tab.connection}`) : t('home.opened')
 }
 
 function sessionTooltip(tab: TabItem): string {
@@ -60,7 +62,7 @@ function sessionTooltip(tab: TabItem): string {
   } else if (tab.shell?.cwd) {
     details.push(tab.shell.cwd)
   }
-  details.push(isSessionOpen(tab) ? '点击切换到该标签' : SESSION_TOOLS.has(tab.toolId) ? '点击重新打开会话' : '点击打开工具')
+  details.push(t(isSessionOpen(tab) ? 'home.switchTab' : SESSION_TOOLS.has(tab.toolId) ? 'home.reopenSession' : 'home.openTool'))
   return details.join('\n')
 }
 
@@ -87,7 +89,7 @@ const pinnedList = computed<ToolDef[]>(() =>
 
 const groups = computed(() =>
   GROUP_DEFS.map(({ label, tone, ids }) => ({
-    label,
+    label: t(label),
     tone,
     tools: ids.flatMap((id) => filtered.value.filter((tool) => tool.id === id))
   })).filter((group) => group.tools.length > 0)
@@ -103,7 +105,7 @@ function openCount(toolId: string): number {
 
 function open(tool: ToolDef): void {
   if (!tool.ready) {
-    ElMessage.info(`「${tool.name}」计划于 ${tool.phase} 阶段提供`)
+    ElMessage.info(t('home.planned', { name: tool.name, phase: tool.phase }))
     return
   }
   tabs.openTool(tool)
@@ -136,29 +138,29 @@ onUnmounted(() => window.removeEventListener('keydown', onSlashFocus))
   <section class="toolbox">
     <header class="page-head">
       <div class="page-title">
-        <h1>工具箱</h1>
-        <p class="muted">选择连接会话或独立开发工具</p>
+        <h1>{{ t('home.title') }}</h1>
+        <p class="muted">{{ t('home.subtitle') }}</p>
       </div>
       <el-input
         ref="searchInputRef"
         v-model="keyword"
         type="search"
-        aria-label="搜索工具"
-        placeholder="搜索串口、SSH、时间戳…（回车打开）"
+        :aria-label="t('home.searchAria')"
+        :placeholder="t('home.searchPlaceholder')"
         clearable
         :prefix-icon="Search"
         @keydown="onSearchKeydown"
       >
-        <template v-if="!keyword" #suffix><kbd title="按 / 快速聚焦搜索">/</kbd></template>
+        <template v-if="!keyword" #suffix><kbd :title="t('home.slashHint')">/</kbd></template>
       </el-input>
     </header>
 
     <!-- 最近会话置顶展示：一键跳转已打开会话或恢复历史会话 -->
-    <section v-if="tabs.recent.length" class="recent-sessions" aria-label="最近会话">
+    <section v-if="tabs.recent.length" class="recent-sessions" :aria-label="t('home.recent')">
       <header class="group-head recent-head tone-recent">
-        <h2>最近会话</h2>
+        <h2>{{ t('home.recent') }}</h2>
         <span class="group-count">{{ tabs.recent.length }}</span>
-        <button type="button" class="recent-clear" @click="tabs.clearRecent()">清空</button>
+        <button type="button" class="recent-clear" @click="tabs.clearRecent()">{{ t('home.clear') }}</button>
       </header>
       <div class="recent-list">
         <div v-for="tab in tabs.recent" :key="tab.id" class="recent-chip-wrap">
@@ -177,8 +179,8 @@ onUnmounted(() => window.removeEventListener('keydown', onSlashFocus))
           <button
             type="button"
             class="recent-remove"
-            :aria-label="'移除最近会话 ' + tab.title"
-            title="从最近会话移除"
+            :aria-label="t('home.removeRecentAria', { title: tab.title })"
+            :title="t('home.removeRecent')"
             @click.stop="tabs.removeRecent(tab.id)"
           >
             <el-icon :size="11"><Close /></el-icon>
@@ -191,7 +193,7 @@ onUnmounted(() => window.removeEventListener('keydown', onSlashFocus))
     <div class="tool-lists">
       <template v-if="pinnedList.length">
         <header class="group-head tone-pin">
-          <h2>常用置顶</h2>
+          <h2>{{ t('home.pinned') }}</h2>
           <span class="group-count">{{ pinnedList.length }}</span>
         </header>
         <div
@@ -209,14 +211,14 @@ onUnmounted(() => window.removeEventListener('keydown', onSlashFocus))
           <div class="tool-body">
             <div class="tool-head">
               <strong class="tool-name">{{ tool.name }}</strong>
-              <span v-if="openCount(tool.id) > 0" class="tool-badge" :title="'已打开 ' + openCount(tool.id) + ' 个标签'">
-                {{ tool.singleton ? '已开' : openCount(tool.id) }}
+              <span v-if="openCount(tool.id) > 0" class="tool-badge" :title="t('home.openedTabs', { count: openCount(tool.id) })">
+                {{ tool.singleton ? t('home.openBadge') : openCount(tool.id) }}
               </span>
               <button
                 type="button"
                 class="pin-btn pinned"
-                aria-label="取消置顶"
-                title="取消置顶"
+                :aria-label="t('home.unpin')"
+                :title="t('home.unpin')"
                 @click.stop="tabs.togglePin(tool.id)"
               >
                 <el-icon :size="14"><StarFilled /></el-icon>
@@ -248,15 +250,15 @@ onUnmounted(() => window.removeEventListener('keydown', onSlashFocus))
           <div class="tool-body">
             <div class="tool-head">
               <strong class="tool-name">{{ tool.name }}</strong>
-              <span v-if="openCount(tool.id) > 0" class="tool-badge" :title="'已打开 ' + openCount(tool.id) + ' 个标签'">
-                {{ tool.singleton ? '已开' : openCount(tool.id) }}
+              <span v-if="openCount(tool.id) > 0" class="tool-badge" :title="t('home.openedTabs', { count: openCount(tool.id) })">
+                {{ tool.singleton ? t('home.openBadge') : openCount(tool.id) }}
               </span>
               <button
                 type="button"
                 class="pin-btn"
                 :class="{ pinned: isPinned(tool.id) }"
-                :aria-label="isPinned(tool.id) ? '取消置顶 ' + tool.name : '置顶常用 ' + tool.name"
-                :title="isPinned(tool.id) ? '取消置顶' : '置顶到常用'"
+                :aria-label="t(isPinned(tool.id) ? 'home.unpinAria' : 'home.pinAria', { name: tool.name })"
+                :title="t(isPinned(tool.id) ? 'home.unpin' : 'home.pin')"
                 @click.stop="tabs.togglePin(tool.id)"
               >
                 <el-icon :size="14">
@@ -271,19 +273,19 @@ onUnmounted(() => window.removeEventListener('keydown', onSlashFocus))
       </template>
     </div>
 
-    <p v-if="!filtered.length" class="muted empty-tip">未找到匹配工具，请换个关键词或按 Esc 清空。</p>
+    <p v-if="!filtered.length" class="muted empty-tip">{{ t('home.noMatch') }}</p>
 
     <footer class="page-foot">
-      <span class="muted">DevKit 嵌入式开发工具箱</span>
+      <span class="muted">{{ t('home.product') }}</span>
       <span class="foot-sep" aria-hidden="true">·</span>
-      <span class="muted">{{ TOOLS.length }} 个工具</span>
+      <span class="muted">{{ t('home.toolCount', { count: TOOLS.length }) }}</span>
       <template v-if="openSessionCount > 0">
         <span class="foot-sep" aria-hidden="true">·</span>
-        <span class="muted">{{ openSessionCount }} 个会话</span>
+        <span class="muted">{{ t('home.sessionCount', { count: openSessionCount }) }}</span>
       </template>
       <template v-if="tabs.pinnedTools.length > 0">
         <span class="foot-sep" aria-hidden="true">·</span>
-        <span class="muted">{{ tabs.pinnedTools.length }} 个置顶</span>
+        <span class="muted">{{ t('home.pinCount', { count: tabs.pinnedTools.length }) }}</span>
       </template>
       <span class="foot-spacer" />
     </footer>

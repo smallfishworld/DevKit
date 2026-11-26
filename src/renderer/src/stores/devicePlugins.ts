@@ -1,14 +1,19 @@
 import { defineStore } from 'pinia'
+import { i18n } from '../i18n'
 import { ref, shallowRef } from 'vue'
 import type { PluginDescriptor, PluginInstance, PluginLogEntry, PluginRuntimeStatus, PluginSource } from '../../../shared/plugins'
 
 export const PLUGIN_CATALOG_PANEL = 'plugin-catalog'
 const MAX_LOGS = 300
-type Result<T> = { ok: boolean; error?: string } & T
+type Result<T> = { ok: boolean; code?: string; error?: string } & T
 
 export async function pluginRequest<T = object>(action: string, payload?: unknown, panelId = PLUGIN_CATALOG_PANEL): Promise<T> {
   const result = await window.api.invoke('plugins', action, panelId, payload) as Result<T>
-  if (!result.ok) throw new Error(result.error || '插件操作失败')
+  if (!result.ok) {
+    const error = new Error(result.error || i18n.global.t('miscUi.pluginOpFailed'))
+    if (result.code) error.name = result.code
+    throw error
+  }
   return result
 }
 

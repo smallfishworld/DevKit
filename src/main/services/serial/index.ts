@@ -26,6 +26,8 @@ import { SerialTxBroker } from './tx-broker'
 import { PluginRxRedactor } from './plugin-rx-redactor'
 import type { SerialTxLease } from './tx-broker'
 import type { StreamEvent, StreamLease, StreamSessionBridge } from '../../../shared/plugins'
+import { IPC_RESULT_CODES, type IpcResultCode } from '../../../shared/ipc-result'
+import { mainText } from '../../app-locale'
 
 interface RxPiece {
   buf: Buffer
@@ -138,7 +140,7 @@ export class SerialService implements ToolService {
     acquire: (panelId, owner, signal) => this.acquirePluginLease(panelId, owner, signal),
     beginHold: (panelId, owner, options) => {
       const session = sessions.get(panelId)
-      if (!session?.port.isOpen || session.suspendedAt !== null) throw new Error('串口未打开')
+      if (!session?.port.isOpen || session.suspendedAt !== null) throw new Error(mainText('serialNotOpen'))
       this.beginHold(session, options, owner)
     },
     endHold: (panelId, owner) => {
@@ -150,7 +152,7 @@ export class SerialService implements ToolService {
   private notifyPlugins(panelId: string, event: StreamEvent): void {
     for (const { listener } of [...this.pluginListeners.get(panelId) ?? []]) {
       try { listener(event.type === 'data' ? { ...event, bytes: [...event.bytes] } : { ...event }) }
-      catch { this.emit(panelId, 'error', { message: '插件接收回调异常' }) }
+      catch { this.emit(panelId, 'error', { message: mainText('serialPluginRxError') }) }
     }
     if (event.type === 'closed') this.pluginListeners.delete(panelId)
   }
@@ -209,7 +211,7 @@ export class SerialService implements ToolService {
       try {
         subscription.listener({ type: 'data', connectionId: session.connectionId, bytes: [...output.bytes],
           text: output.text, receivedAt, sequence: session.sequence })
-      } catch { this.emit(panelId, 'error', { message: '插件接收回调异常' }) }
+      } catch { this.emit(panelId, 'error', { message: mainText('serialPluginRxError') }) }
     }
   }
 
@@ -239,7 +241,7 @@ export class SerialService implements ToolService {
 
   private async acquirePluginLease(panelId: string, owner: string, signal: AbortSignal): Promise<StreamLease> {
     const session = sessions.get(panelId)
-    if (!session?.port.isOpen || session.suspendedAt !== null) throw new Error('串口未打开')
+    if (!session?.port.isOpen || session.suspendedAt !== null) throw new Error(mainText('serialNotOpen'))
     const connectionId = session.connectionId
     const lease = await session.broker.acquire(owner, signal)
     let released = false
@@ -297,7 +299,7 @@ export class SerialService implements ToolService {
   }
 
   private async saveRetention(settings: unknown): Promise<unknown> {
-    if (!validLogRetention(settings)) return { ok: false, error: '保留月数须为 1 到 120 的整数' }
+    if (!validLogRetention(settings)) return { ok: false, error: mainText('serialInvalidRetention') }
     await this.logRetention.save({ enabled: settings.enabled, months: settings.months })
     return { ok: true, settings }
   }
@@ -468,7 +470,7 @@ export class SerialService implements ToolService {
             void shell.openPath(dir)
             return { ok: true }
           })
-          .catch(() => ({ ok: false, error: '无法创建日志目录' }))
+          .catch(() => ({ ok: false, error: mainText('logDirCreateFailed') }))
       case 'file:pick':
         return this.pickFile()
       case 'file:pick-dir':
@@ -836,14 +838,14 @@ export class SerialService implements ToolService {
   }
 
   /** 设置手动「存日志」的保存目录（目录选择框，重启记忆） */
-  private async setLogDir(): Promise<{ ok: boolean; dir?: string; error?: string }> {
+  private async setLogDir(): Promise<{ ok: boolean; dir?: string; code?: IpcResultCode; error?: string }> {
     const cfg = await getSection<SerialConfig>('serial', DEFAULT_SERIAL_CONFIG)
     const { canceled, filePaths } = await dialog.showOpenDialog({
-      title: '选择日志保存目录',
+      title: mainText('selectLogDirectory'),
       defaultPath: cfg.logDir || serialLogDir(),
       properties: ['openDirectory', 'createDirectory']
     })
-    if (canceled || !filePaths[0]) return { ok: false, error: '已取消' }
+    if (canceled || !filePaths[0]) return { ok: false, code: IPC_RESULT_CODES.CANCELLED, error: mainText('cancelled') }
     cfg.logDir = filePaths[0]
     await setSection('serial', cfg)
     return { ok: true, dir: filePaths[0] }
@@ -853,7 +855,7 @@ export class SerialService implements ToolService {
 
   private async pickFile(): Promise<{ ok: boolean; path?: string }> {
     const { canceled, filePaths } = await dialog.showOpenDialog({
-      title: '选择要发送的文件',
+      title: mainText('selectSendFile'),
       properties: ['openFile']
     })
     if (canceled || !filePaths[0]) return { ok: false }
@@ -862,7 +864,7 @@ export class SerialService implements ToolService {
 
   private async pickDir(): Promise<{ ok: boolean; path?: string }> {
     const { canceled, filePaths } = await dialog.showOpenDialog({
-      title: '选择接收目录',
+      title: mainText('selectReceiveDirectory'),
       properties: ['openDirectory']
     })
     if (canceled || !filePaths[0]) return { ok: false }
@@ -873,7 +875,7 @@ export class SerialService implements ToolService {
     this.emit(panelId, 'transfer', e)
   }
 
-  private async fileSend(panelId: string, p: { protocol: TransferProtocol; path: string }): Promise<{ ok: boolean; error?: string }> {
+  private async fileSend(panelId: string, p: { protocol: TransferProtocol; path: string }): Promise<{ ok: boolean; code?: IpcResultCode; error?: string }> {
     const s = sessions.get(panelId)
     if (!s) return { ok: false, error: '串口未打开' }
     if (transfers.has(panelId)) return { ok: false, error: '已有传输进行中' }
@@ -946,7 +948,9 @@ export class SerialService implements ToolService {
         total: data.length,
         error: cancelled ? undefined : err instanceof Error ? err.message : String(err)
       })
-      return { ok: false, error: cancelled ? '已取消' : err instanceof Error ? err.message : String(err) }
+      return cancelled
+        ? { ok: false, code: IPC_RESULT_CODES.CANCELLED, error: mainText('cancelled') }
+        : { ok: false, error: err instanceof Error ? err.message : String(err) }
     } finally {
       s.rawConsumer = null
       transfers.delete(panelId)
@@ -955,7 +959,7 @@ export class SerialService implements ToolService {
     }
   }
 
-  private async fileRecv(panelId: string, p: { protocol: TransferProtocol; dir: string }): Promise<{ ok: boolean; error?: string; saved?: string[] }> {
+  private async fileRecv(panelId: string, p: { protocol: TransferProtocol; dir: string }): Promise<{ ok: boolean; code?: IpcResultCode; error?: string; saved?: string[] }> {
     const s = sessions.get(panelId)
     if (!s) return { ok: false, error: '串口未打开' }
     if (transfers.has(panelId)) return { ok: false, error: '已有传输进行中' }
@@ -1042,7 +1046,9 @@ export class SerialService implements ToolService {
         total: 0,
         error: cancelled ? undefined : err instanceof Error ? err.message : String(err)
       })
-      return { ok: false, error: cancelled ? '已取消' : err instanceof Error ? err.message : String(err) }
+      return cancelled
+        ? { ok: false, code: IPC_RESULT_CODES.CANCELLED, error: mainText('cancelled') }
+        : { ok: false, error: err instanceof Error ? err.message : String(err) }
     } finally {
       s.rawConsumer = null
       transfers.delete(panelId)

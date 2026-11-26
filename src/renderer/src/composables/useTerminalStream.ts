@@ -1,4 +1,5 @@
 import { onMounted, onUnmounted, type Ref } from 'vue'
+import { i18n } from '../i18n'
 import { ElMessageBox } from 'element-plus'
 import type { OutputFrame } from '../../../shared/terminal-stream'
 
@@ -25,7 +26,7 @@ export function useTerminalStream(tool: string, panelId: string, terminal: Ref<T
       window.api.on(tool, panelId, 'output:reset', () => terminal.value?.reset()),
       window.api.on(tool, panelId, 'output:resync', () => terminal.value?.resync()),
       window.api.on(tool, panelId, 'output:overflow', (payload) => {
-        void ElMessageBox.alert((payload as { message: string }).message, '终端显示已暂停', { type: 'warning' }).catch(() => {})
+        void ElMessageBox.alert((payload as { message: string }).message, i18n.global.t('miscUi.termPausedTitle'), { type: 'warning' }).catch(() => {})
       })
     ]
   })

@@ -8,6 +8,7 @@ import type { ToolService } from '../../ipc'
 import { emitToolEvent } from '../../ipc'
 import { getSection, setSection } from '../macro/configStore'
 import { TftpServer, type TransferInfo } from './server'
+import { mainText } from '../../app-locale'
 
 interface StartPayload {
   port: number
@@ -67,7 +68,7 @@ class TftpService implements ToolService {
       case 'pick-dir':
         void dialog
           .showOpenDialog({
-            title: '选择 TFTP 根目录',
+            title: mainText('selectTftpRoot'),
             properties: ['openDirectory', 'createDirectory']
           })
           .then(({ canceled, filePaths }) => {

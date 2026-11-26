@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { Coin, Download, TopRight } from '@element-plus/icons-vue'
 import { usePanelMessageBox } from '@renderer/composables/panelOverlays'
 import { useTabStore } from '@renderer/stores/tabs'
@@ -10,6 +11,7 @@ import DevicePluginEditor from './DevicePluginEditor.vue'
 import ExtensionSources from './ExtensionSources.vue'
 
 const ElMessageBox = usePanelMessageBox()
+const { t } = useI18n()
 
 const tabs = useTabStore()
 const plugins = useDevicePlugins()
@@ -42,10 +44,10 @@ function binding(instance: PluginInstance) {
 
 function instanceState(instance: PluginInstance): string {
   const status = plugins.statuses.find((row) => row.instanceId === instance.id)
-  if (status?.state === 'error') return '运行异常'
-  if (!status?.bound) return instance.enabled ? '未绑定' : '已停用'
-  const stage = status.state === 'running' ? '执行中' : status.state === 'starting' ? '启动中' : instance.autoEnabled ? '监听中' : '待执行'
-  return '已绑定 ' + (binding(instance)?.title ?? '串口会话') + ' · ' + stage
+  if (status?.state === 'error') return t('extCenter.stateError')
+  if (!status?.bound) return instance.enabled ? t('extCenter.stateUnbound') : t('extCenter.stateDisabled')
+  const stage = status.state === 'running' ? t('extCenter.stageRunning') : status.state === 'starting' ? t('extCenter.stageStarting') : instance.autoEnabled ? t('extCenter.stageListening') : t('extCenter.stageIdle')
+  return t('extCenter.boundState', { title: binding(instance)?.title ?? t('extCenter.serialSession'), stage })
 }
 
 function edit(plugin: PluginDescriptor, instance?: PluginInstance): void {
@@ -56,8 +58,8 @@ function edit(plugin: PluginDescriptor, instance?: PluginInstance): void {
 
 async function removeInstance(plugin: PluginDescriptor, instance: PluginInstance): Promise<void> {
   try {
-    await ElMessageBox.confirm(`删除配置「${instance.label}」？正在运行的实例会先停止；操作不可撤销。`, '删除插件配置', {
-      type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消'
+    await ElMessageBox.confirm(t('extCenter.deleteInstanceConfirm', { label: instance.label }), t('extCenter.deleteInstanceTitle'), {
+      type: 'warning', confirmButtonText: t('extCenter.delete'), cancelButtonText: t('extCenter.cancel')
     })
   } catch { return }
   busy.value = true
@@ -72,8 +74,8 @@ async function removeInstance(plugin: PluginDescriptor, instance: PluginInstance
 async function uninstallPlugin(plugin: PluginDescriptor): Promise<void> {
   try {
     await ElMessageBox.confirm(
-      `卸载插件「${plugin.name}」？其 ${instanceCount(plugin.id)} 份配置实例与安装文件将一并删除，操作不可撤销。`,
-      '卸载插件', { type: 'warning', confirmButtonText: '卸载', cancelButtonText: '取消' }
+      t('extCenter.uninstallConfirm', { name: plugin.name, count: instanceCount(plugin.id) }),
+      t('extCenter.uninstallTitle'), { type: 'warning', confirmButtonText: t('extCenter.uninstallBtn'), cancelButtonText: t('extCenter.cancel') }
     )
   } catch { return }
   busy.value = true
@@ -88,8 +90,8 @@ async function uninstallPlugin(plugin: PluginDescriptor): Promise<void> {
 
 async function install(): Promise<void> {
   try {
-    await ElMessageBox.confirm('外部插件在独立进程中运行，并具有本机文件和网络访问能力。请只选择你信任的 JSON 插件包。',
-      '从文件安装', { type: 'warning', confirmButtonText: '选择文件', cancelButtonText: '取消' })
+    await ElMessageBox.confirm(t('extCenter.installFileConfirm'),
+      t('extCenter.installFileTitle'), { type: 'warning', confirmButtonText: t('extCenter.chooseFile'), cancelButtonText: t('extCenter.cancel') })
   } catch { return }
   busy.value = true
   error.value = ''
@@ -98,7 +100,7 @@ async function install(): Promise<void> {
     await plugins.refresh()
     kind.value = 'all'
     selected.value = 'plugin:' + plugin.id
-  } catch (e) { if ((e as Error).message !== '已取消安装') error.value = (e as Error).message }
+  } catch (e) { if ((e as Error).name !== 'CANCELLED') error.value = (e as Error).message }
   finally { busy.value = false }
 }
 </script>
@@ -106,24 +108,24 @@ async function install(): Promise<void> {
 <template>
   <section class="extension-center converter-page panel">
     <header class="converter-head">
-      <div><h1>扩展中心</h1><p>统一管理内置模块与设备插件，安装后可按会话绑定。</p></div>
+      <div><h1>{{ t('extCenter.title') }}</h1><p>{{ t('extCenter.subtitle') }}</p></div>
       <div class="converter-row">
-        <el-button size="small" :icon="Coin" @click="sourcesOpen = true">扩展源管理</el-button>
-        <el-button size="small" type="primary" :icon="Download" :loading="busy" @click="install">从文件安装…</el-button>
+        <el-button size="small" :icon="Coin" @click="sourcesOpen = true">{{ t('extCenter.manageSources') }}</el-button>
+        <el-button size="small" type="primary" :icon="Download" :loading="busy" @click="install">{{ t('extCenter.installFromFile') }}</el-button>
       </div>
     </header>
     <el-alert v-if="error || plugins.error" :title="error || plugins.error" type="error" :closable="false" role="alert" />
     <div class="extension-layout">
       <aside class="panel-section">
-        <el-radio-group v-model="kind" size="small" aria-label="扩展类型">
-          <el-radio-button value="all">全部 ({{ total }})</el-radio-button>
-          <el-radio-button value="plugin">设备插件</el-radio-button>
-          <el-radio-button value="builtin">内置模块</el-radio-button>
+        <el-radio-group v-model="kind" size="small" :aria-label="t('extCenter.typeAria')">
+          <el-radio-button value="all">{{ t('extCenter.allCount', { count: total }) }}</el-radio-button>
+          <el-radio-button value="plugin">{{ t('extCenter.devicePlugins') }}</el-radio-button>
+          <el-radio-button value="builtin">{{ t('extCenter.builtinModules') }}</el-radio-button>
         </el-radio-group>
         <div class="extension-list">
           <button v-for="item in visibleTools" :key="item.key" type="button" :aria-pressed="item.key === detail?.key" @click="selected = item.key">
             <el-icon class="extension-icon"><component :is="item.icon" /></el-icon>
-            <span><strong>{{ item.name }}</strong><small>{{ item.plugin ? '设备插件 · ' + instanceCount(item.plugin.id) + ' 份配置' : '官方内置 · 随 DevKit 更新' }}</small></span>
+            <span><strong>{{ item.name }}</strong><small>{{ item.plugin ? t('extCenter.pluginSummary', { count: instanceCount(item.plugin.id) }) : t('extCenter.builtinSummary') }}</small></span>
           </button>
         </div>
       </aside>
@@ -135,41 +137,41 @@ async function install(): Promise<void> {
               <h2>{{ detail.name }}</h2>
               <div class="extension-facts">
                 <el-tag v-if="detail.plugin" size="small" type="info">v{{ detail.plugin.version }}</el-tag>
-                <el-tag size="small" type="info">来源 · {{ detail.plugin?.installSource?.name ?? (detail.tool || detail.plugin?.builtin ? '官方内置' : '未记录') }}</el-tag>
+                <el-tag size="small" type="info">{{ t('extCenter.sourceLabel', { name: detail.plugin?.installSource?.name ?? (detail.tool || detail.plugin?.builtin ? t('extCenter.officialBuiltin') : t('extCenter.unrecorded')) }) }}</el-tag>
               </div>
             </div>
           </div>
           <p>{{ detail.tool?.description || detail.plugin?.description }}</p>
           <div v-if="detail.tool" class="module-entry">
-            <div><strong>官方内置工作台模块</strong><p>随 DevKit 提供，可直接打开工具标签。</p></div>
-            <el-button type="primary" size="small" :icon="TopRight" @click="tabs.openTool(detail.tool)">打开工具标签</el-button>
+            <div><strong>{{ t('extCenter.builtinModuleTitle') }}</strong><p>{{ t('extCenter.builtinModuleDesc') }}</p></div>
+            <el-button type="primary" size="small" :icon="TopRight" @click="tabs.openTool(detail.tool)">{{ t('extCenter.openToolTab') }}</el-button>
           </div>
           <template v-if="detail.plugin">
             <div class="module-entry">
-              <strong>配置实例</strong>
-              <el-button size="small" @click="edit(detail.plugin)">新建配置</el-button>
+              <strong>{{ t('extCenter.instancesTitle') }}</strong>
+              <el-button size="small" @click="edit(detail.plugin)">{{ t('extCenter.newInstance') }}</el-button>
             </div>
             <div v-for="instance in instances" :key="instance.id" class="module-entry instance-row">
               <div><strong>{{ instance.label }}</strong><p>{{ instanceState(instance) }}</p></div>
               <div>
-                <el-button size="small" @click="edit(detail.plugin, instance)">编辑配置</el-button>
-                <el-button v-if="binding(instance)" size="small" :icon="TopRight" @click="tabs.activate(binding(instance)!.id)">前往会话</el-button>
-                <el-button size="small" type="danger" plain @click="removeInstance(detail.plugin, instance)">删除</el-button>
+                <el-button size="small" @click="edit(detail.plugin, instance)">{{ t('extCenter.editInstance') }}</el-button>
+                <el-button v-if="binding(instance)" size="small" :icon="TopRight" @click="tabs.activate(binding(instance)!.id)">{{ t('extCenter.goToSession') }}</el-button>
+                <el-button size="small" type="danger" plain @click="removeInstance(detail.plugin, instance)">{{ t('extCenter.delete') }}</el-button>
               </div>
             </div>
-            <h3>能力边界与生命周期</h3>
+            <h3>{{ t('extCenter.capabilitiesTitle') }}</h3>
             <div class="converter-row"><el-tag v-for="capability in detail.plugin.capabilities" :key="capability" size="small">{{ capability }}</el-tag></div>
-            <p>在已连接的串口会话中绑定配置实例后，插件才会运行。</p>
+            <p>{{ t('extCenter.bindHint') }}</p>
             <div class="converter-row">
-              <el-button v-if="!detail.plugin.builtin" size="small" type="danger" plain :loading="busy" @click="uninstallPlugin(detail.plugin)">卸载插件</el-button>
+              <el-button v-if="!detail.plugin.builtin" size="small" type="danger" plain :loading="busy" @click="uninstallPlugin(detail.plugin)">{{ t('extCenter.uninstallPlugin') }}</el-button>
             </div>
             <details v-if="!detail.plugin.builtin" class="extension-install-note">
-              <summary>进程隔离与安装说明</summary>
-              <p>插件在独立进程中运行，仍具有本机文件和网络访问能力。请只安装信任的代码。</p>
+              <summary>{{ t('extCenter.isolationSummary') }}</summary>
+              <p>{{ t('extCenter.isolationDesc') }}</p>
             </details>
           </template>
         </template>
-        <el-empty v-else description="暂无已安装的设备插件" :image-size="64" />
+        <el-empty v-else :description="t('extCenter.emptyPlugins')" :image-size="64" />
       </article>
     </div>
     <ExtensionSources v-model="sourcesOpen" />

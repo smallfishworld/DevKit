@@ -17,6 +17,7 @@ import { AppUpdateService } from './services/updates'
 import { confirmUpdatedLaunch } from './services/updates/install'
 import { APP_UPDATES } from '../shared/app-updates'
 import { registerTabWindows } from './tab-windows'
+import { initializeAppLocale, mainText } from './app-locale'
 
 let mainWindow: BrowserWindow | null = null
 
@@ -54,7 +55,7 @@ function createWindow(): void {
     height: 900,
     minWidth: 960,
     minHeight: 600,
-    title: 'DevKit 嵌入式开发套件',
+    title: mainText('appTitle'),
     icon: getWindowIconPath(),
     backgroundColor: '#141414',
     show: false,
@@ -112,6 +113,7 @@ app.on('second-instance', () => {
 })
 
 app.whenReady().then(async () => {
+  await initializeAppLocale()
   if (process.platform === 'win32') app.setAppUserModelId(APP_USER_MODEL_ID)
   if (process.platform === 'darwin' && !app.isPackaged) app.dock?.setIcon(getWindowIconPath())
   Menu.setApplicationMenu(null)

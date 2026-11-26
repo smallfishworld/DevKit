@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { usePanelMessageBox } from '@renderer/composables/panelOverlays'
 import type { PluginSource, PluginSourceEntry } from '../../../shared/plugins'
 import { satisfiesMinVersion } from '../../../../packages/plugin-sdk/src/manifest'
 import { pluginRequest, useDevicePlugins } from '@renderer/stores/devicePlugins'
 
 const ElMessageBox = usePanelMessageBox()
+const { t } = useI18n()
 
 const open = defineModel<boolean>({ required: true })
 const plugins = useDevicePlugins()
@@ -39,8 +41,8 @@ function isCompatible(entry: PluginSourceEntry): boolean {
 async function install(source: PluginSource, entry: PluginSourceEntry): Promise<void> {
   try {
     await ElMessageBox.confirm(
-      `从「${source.name}」安装 ${entry.name} ${entry.version}（${new URL(entry.url).host}）。插件具有本机文件和网络访问能力，请确认你信任此代码。`,
-      '确认安装插件', { type: 'warning', confirmButtonText: '安装', cancelButtonText: '取消' }
+      t('extSources.installConfirm', { source: source.name, name: entry.name, version: entry.version, host: new URL(entry.url).host }),
+      t('extSources.installConfirmTitle'), { type: 'warning', confirmButtonText: t('extSources.install'), cancelButtonText: t('extCenter.cancel') }
     )
   } catch { return }
   await run(async () => {
@@ -55,42 +57,42 @@ watch(open, (visible) => {
 </script>
 
 <template>
-  <el-dialog v-model="open" title="扩展源管理" width="min(700px, 94vw)" append-to-body>
-    <p class="source-note">官方扩展源默认启用，也可添加自定义 HTTPS 安装索引。刷新后可浏览插件。</p>
+  <el-dialog v-model="open" :title="t('extSources.title')" width="min(700px, 94vw)" append-to-body>
+    <p class="source-note">{{ t('extSources.note') }}</p>
     <el-alert v-if="error" :title="error" type="error" :closable="false" role="alert" />
-    <div v-if="!plugins.sources.length" class="source-empty">暂无已配置的扩展源</div>
+    <div v-if="!plugins.sources.length" class="source-empty">{{ t('extSources.empty') }}</div>
     <section v-for="source in plugins.sources" :key="source.id" class="source-card" :data-source-kind="source.official ? 'official' : 'custom'">
       <div class="source-head">
         <strong>{{ source.name }}</strong>
-        <el-tag v-if="source.official" size="small" effect="plain">官方</el-tag>
-        <el-switch :model-value="source.enabled" :disabled="busy" :aria-label="'启用 ' + source.name"
+        <el-tag v-if="source.official" size="small" effect="plain">{{ t('extSources.official') }}</el-tag>
+        <el-switch :model-value="source.enabled" :disabled="busy" :aria-label="t('extSources.enableAria', { name: source.name })"
           @change="(enabled: unknown) => run(() => plugins.sourceAction('sources:toggle', { id: source.id, enabled }))"
         />
-        <el-button size="small" :disabled="busy || !source.enabled" @click="run(() => plugins.sourceAction('sources:refresh', { id: source.id }))">刷新</el-button>
-        <el-button v-if="!source.official" size="small" text type="danger" :disabled="busy" @click="run(() => plugins.sourceAction('sources:remove', { id: source.id }))">移除</el-button>
+        <el-button size="small" :disabled="busy || !source.enabled" @click="run(() => plugins.sourceAction('sources:refresh', { id: source.id }))">{{ t('extSources.refresh') }}</el-button>
+        <el-button v-if="!source.official" size="small" text type="danger" :disabled="busy" @click="run(() => plugins.sourceAction('sources:remove', { id: source.id }))">{{ t('extSources.remove') }}</el-button>
       </div>
       <div class="source-note">{{ source.url }}</div>
-      <div class="source-note">{{ source.refreshedAt ? `${source.entries.length} 个插件 · ${new Date(source.refreshedAt).toLocaleString()}` : '尚未刷新' }}</div>
+      <div class="source-note">{{ source.refreshedAt ? t('extSources.refreshedSummary', { count: source.entries.length, time: new Date(source.refreshedAt).toLocaleString() }) : t('extSources.notRefreshed') }}</div>
       <div v-for="entry in source.enabled ? source.entries : []" :key="entry.id" class="source-entry">
         <span>
           {{ entry.name }} <small>{{ entry.version }}</small>
-          <el-tag v-if="entry.yanked" size="small" type="danger" effect="plain">已撤回</el-tag>
-          <el-tag v-else-if="entry.deprecated" size="small" type="warning" effect="plain" :title="entry.deprecated">已废弃</el-tag>
-          <el-tag v-if="!isCompatible(entry)" size="small" type="info" effect="plain">需宿主 ≥ {{ entry.minHostVersion }}</el-tag>
+          <el-tag v-if="entry.yanked" size="small" type="danger" effect="plain">{{ t('extSources.yanked') }}</el-tag>
+          <el-tag v-else-if="entry.deprecated" size="small" type="warning" effect="plain" :title="entry.deprecated">{{ t('extSources.deprecated') }}</el-tag>
+          <el-tag v-if="!isCompatible(entry)" size="small" type="info" effect="plain">{{ t('extSources.minHost', { version: entry.minHostVersion }) }}</el-tag>
         </span>
-        <el-button size="small" :disabled="busy || entry.yanked || !isCompatible(entry)" @click="install(source, entry)">安装</el-button>
+        <el-button size="small" :disabled="busy || entry.yanked || !isCompatible(entry)" @click="install(source, entry)">{{ t('extSources.install') }}</el-button>
       </div>
     </section>
 
     <details class="source-add">
-      <summary>添加自定义扩展源</summary>
+      <summary>{{ t('extSources.addCustom') }}</summary>
       <el-form label-position="top" @submit.prevent="add">
-        <el-form-item label="源名称" required><el-input v-model="name" maxlength="128" /></el-form-item>
-        <el-form-item label="HTTPS 安装索引地址" required><el-input v-model="url" placeholder="https://example.org/devkit/index.json" /></el-form-item>
-        <el-button native-type="submit" type="primary" :loading="busy" :disabled="!name.trim() || !url.trim()">添加扩展源</el-button>
+        <el-form-item :label="t('extSources.sourceName')" required><el-input v-model="name" maxlength="128" /></el-form-item>
+        <el-form-item :label="t('extSources.indexUrl')" required><el-input v-model="url" placeholder="https://example.org/devkit/index.json" /></el-form-item>
+        <el-button native-type="submit" type="primary" :loading="busy" :disabled="!name.trim() || !url.trim()">{{ t('extSources.addBtn') }}</el-button>
       </el-form>
     </details>
-    <template #footer><el-button type="primary" @click="open = false">完成</el-button></template>
+    <template #footer><el-button type="primary" @click="open = false">{{ t('extSources.done') }}</el-button></template>
   </el-dialog>
 </template>
 

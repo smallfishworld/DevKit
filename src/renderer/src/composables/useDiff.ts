@@ -2,6 +2,7 @@
  * diff 服务渲染端封装：文本/十六进制/文件夹对比 + 同步
  * 全部经 window.api.invoke('diff', action, panelId, payload)
  */
+import { i18n } from '../i18n'
 import type {
   DiffEncoding,
   FileReadReq,
@@ -43,7 +44,7 @@ export function useDiff() {
 }
 
 export const ENCODINGS: { value: DiffEncoding; label: string }[] = [
-  { value: 'auto', label: '自动（BOM/内容嗅探）' },
+  { value: 'auto', get label() { return i18n.global.t('miscUi.autoEncoding') } },
   { value: 'utf8', label: 'UTF-8' },
   { value: 'utf16le', label: 'UTF-16 LE' },
   { value: 'utf16be', label: 'UTF-16 BE' },

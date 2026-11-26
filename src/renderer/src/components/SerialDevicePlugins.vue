@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { Box, RefreshRight, VideoPause } from '@element-plus/icons-vue'
 import { pluginRequest, useDevicePlugins } from '@renderer/stores/devicePlugins'
 import type { PluginInstance, StreamTransport } from '../../../shared/plugins'
@@ -12,20 +13,19 @@ const props = withDefaults(defineProps<{
   transport: 'serial'
 })
 
-const TRANSPORT_LABEL: Record<StreamTransport, string> = {
-  serial: '串口',
-  ssh: 'SSH 会话',
-  net: '网络会话',
-  pty: '本地终端'
-}
-
+const { t } = useI18n()
 const plugins = useDevicePlugins()
 const picked = ref('')
 const error = ref('')
 const pending = ref('')
 const stopping = ref<string[]>([])
 
-const transportLabel = computed(() => TRANSPORT_LABEL[props.transport])
+const transportLabel = computed(() => ({
+  serial: t('sessionPlugins.transportSerial'),
+  ssh: t('sessionPlugins.transportSsh'),
+  net: t('sessionPlugins.transportNet'),
+  pty: t('sessionPlugins.transportPty')
+})[props.transport])
 const bound = computed(() => plugins.statuses.filter((status) => status.panelId === props.panelId && status.bound))
 const errored = computed(() => plugins.statuses.find((status) => status.panelId === props.panelId && status.state === 'error'))
 const lastError = computed(() => errored.value?.error)
@@ -38,10 +38,10 @@ const available = computed(() => plugins.instances.filter((instance) => {
 const instanceFor = (id: string): PluginInstance | undefined => plugins.instances.find((instance) => instance.id === id)
 const actionsFor = (id: string) => plugins.plugins.find((plugin) => plugin.id === instanceFor(id)?.pluginId)?.actions ?? []
 const statusLabel = computed(() => bound.value.some((item) => item.state === 'running')
-  ? '执行中'
+  ? t('sessionPlugins.statusRunning')
   : bound.value.some((item) => item.state === 'starting')
-    ? '启动中'
-    : bound.value.some((item) => instanceFor(item.instanceId)?.autoEnabled) ? '监听中' : bound.value.length ? '已绑定' : '')
+    ? t('sessionPlugins.statusStarting')
+    : bound.value.some((item) => instanceFor(item.instanceId)?.autoEnabled) ? t('sessionPlugins.statusListening') : bound.value.length ? t('sessionPlugins.statusBound') : '')
 const recentLog = computed(() => plugins.logs.filter((log) => log.panelId === props.panelId).at(-1))
 
 async function operate(action: 'bind' | 'run', instanceId: string, actionId?: string): Promise<void> {
@@ -75,9 +75,9 @@ async function stop(instanceId: string): Promise<void> {
   <div class="session-plugin-entry">
     <el-popover placement="bottom-end" :width="340" trigger="click" @show="plugins.refresh()">
       <template #reference>
-        <el-button size="small" text :icon="Box" aria-label="设备插件">插件<span v-if="statusLabel" class="plugin-active"> · {{ statusLabel }}</span></el-button>
+        <el-button size="small" text :icon="Box" :aria-label="t('sessionPlugins.ariaEntry')">{{ t('sessionPlugins.buttonLabel') }}<span v-if="statusLabel" class="plugin-active"> · {{ statusLabel }}</span></el-button>
       </template>
-      <h3 class="plugin-title">当前{{ transportLabel }}插件</h3>
+      <h3 class="plugin-title">{{ t('sessionPlugins.panelTitle', { transport: transportLabel }) }}</h3>
       <div v-if="error || lastError" class="error-row">
         <el-alert :title="error || lastError" type="error" :closable="false" role="alert" />
         <el-button
@@ -89,29 +89,29 @@ async function stop(instanceId: string): Promise<void> {
           :disabled="!!pending"
           @click="operate('bind', errored.instanceId)"
         >
-          一键重试绑定
+          {{ t('sessionPlugins.retryBind') }}
         </el-button>
       </div>
-      <p v-if="!connected" class="plugin-note">连接{{ transportLabel }}后可绑定插件配置。</p>
+      <p v-if="!connected" class="plugin-note">{{ t('sessionPlugins.connectFirst', { transport: transportLabel }) }}</p>
       <div v-for="status in bound" :key="status.instanceId" class="bound-instance">
         <strong>{{ instanceFor(status.instanceId)?.label }}</strong>
         <div class="plugin-actions">
           <el-button size="small" v-for="action in actionsFor(status.instanceId)" :key="action.id"
             :disabled="status.state !== 'ready' || !!pending" @click="operate('run', status.instanceId, action.id)">{{ action.label }}</el-button>
-          <el-button size="small" :loading="stopping.includes(status.instanceId)" @click="stop(status.instanceId)">停止插件</el-button>
+          <el-button size="small" :loading="stopping.includes(status.instanceId)" @click="stop(status.instanceId)">{{ t('sessionPlugins.stopPlugin') }}</el-button>
         </div>
       </div>
       <div v-if="available.length" class="plugin-actions">
-        <el-select v-model="picked" size="small" placeholder="选择配置实例" aria-label="选择配置实例" :disabled="!connected || !!pending">
+        <el-select v-model="picked" size="small" :placeholder="t('sessionPlugins.pickInstance')" :aria-label="t('sessionPlugins.pickInstance')" :disabled="!connected || !!pending">
           <el-option v-for="instance in available" :key="instance.id" :label="instance.label" :value="instance.id" />
         </el-select>
-        <el-button size="small" type="primary" :disabled="!picked || !connected || !!pending" @click="operate('bind', picked)">绑定到当前{{ transportLabel }}</el-button>
+        <el-button size="small" type="primary" :disabled="!picked || !connected || !!pending" @click="operate('bind', picked)">{{ t('sessionPlugins.bindToCurrent', { transport: transportLabel }) }}</el-button>
       </div>
-      <p v-else-if="!bound.length && connected" class="plugin-note">在扩展中心安装支持 {{ transport }} 的插件并新建配置。</p>
+      <p v-else-if="!bound.length && connected" class="plugin-note">{{ t('sessionPlugins.emptyHint', { transport }) }}</p>
       <p v-if="recentLog" class="plugin-note">{{ recentLog.message }}</p>
     </el-popover>
     <el-button v-if="bound.length === 1" size="small" text :icon="VideoPause" :loading="stopping.includes(bound[0].instanceId)"
-      aria-label="停止设备插件" @click="stop(bound[0].instanceId)" />
+      :aria-label="t('sessionPlugins.stopAria')" @click="stop(bound[0].instanceId)" />
   </div>
 </template>
 

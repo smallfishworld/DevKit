@@ -1,6 +1,17 @@
 export const APP_UPDATES = 'app-updates'
 export const APP_UPDATES_PANEL = 'workbench'
 
+export type UpdateMessageCode =
+  | 'UPDATE_RATE_LIMITED'
+  | 'UPDATE_CHECK_FAILED'
+  | 'UPDATE_DOWNLOAD_FAILED'
+  | 'UPDATE_VERIFY_FAILED'
+  | 'UPDATE_PREPARE_FAILED'
+  | 'UPDATE_SAVED'
+  | 'UPDATE_SAVE_FAILED'
+  | 'UPDATE_APPLY_FAILED'
+  | 'UPDATE_APPLY_LOCKED'
+
 export interface UpdateRelease {
   version: string
   notes: string
@@ -9,10 +20,10 @@ export interface UpdateRelease {
 
 export type UpdateState =
   | { phase: 'disabled' | 'idle' | 'checking' | 'current' | 'publishing' }
-  | { phase: 'available' | 'ready' | 'preparing'; release: UpdateRelease; message?: string; installable?: boolean }
+  | { phase: 'available' | 'ready' | 'preparing'; release: UpdateRelease; message?: string; messageCode?: UpdateMessageCode; installable?: boolean }
   /** speed：平滑后的字节/秒，样本不足时缺省；source：经镜像下载时为镜像主机名，官方直连缺省 */
   | { phase: 'downloading'; release: UpdateRelease; received: number; speed?: number; source?: string }
-  | { phase: 'check-failed'; message: string }
+  | { phase: 'check-failed'; message: string; messageCode?: UpdateMessageCode }
 
 /** 下载进度百分比（总大小未知时为 undefined） */
 export function downloadPercent(received: number, bytes: number): number | undefined {
@@ -83,7 +94,23 @@ export function updateNotice(state: UpdateState): string {
  * 预检拒绝原路径更新时的提示：原因与对策。reason 是更新助手写进交接目录的 ready 信号，
  * detail 是它列出的具体条目（可能没有）；认不出的原因返回 undefined，由调用方落到通用提示。
  */
-export function preflightRefusal(reason: string, detail: string): string | undefined {
+export function preflightRefusal(reason: string, detail: string, locale: 'zh-CN' | 'en' = 'zh-CN'): string | undefined {
+  if (locale === 'en') {
+    const items = detail ? ` (${detail})` : ''
+    const elsewhere = 'or save the update package and extract it to a new folder.'
+    switch (reason) {
+      case 'directory':
+        return detail
+          ? `The application folder does not match the DevKit installation inventory${items}, so it cannot be updated in place. Save the update package and extract it to a new folder.`
+          : 'The application folder could not be verified (it may not be readable), so it cannot be updated in place. Save the update package and extract it to a new folder.'
+      case 'collision':
+        return `The application folder contains files whose names collide with the new version${items}. Move them out of the application folder and try again, ${elsewhere}`
+      case 'locked':
+        return `Files in the application folder are in use by another program${items}. Close the related windows or programs and try again, ${elsewhere}`
+      default:
+        return undefined
+    }
+  }
   const items = detail ? `（${detail}）` : ''
   const elsewhere = '或将更新包另存并解压到新目录。'
   switch (reason) {
@@ -99,7 +126,12 @@ export function preflightRefusal(reason: string, detail: string): string | undef
 }
 
 /** 上次「重启并更新」没能完成时的提示；reason 是助手留下的原因码，没有更具体的原因时为空 */
-export function applyFailureMessage(reason: string): string {
+export function applyFailureMessage(reason: string, locale: 'zh-CN' | 'en' = 'zh-CN'): string {
+  if (locale === 'en') {
+    return reason === 'locked'
+      ? 'The last update did not finish because another program was using the application folder. Close the related windows or programs and try again, or save the update package.'
+      : 'The last update did not finish. Try again or save the update package.'
+  }
   return reason === 'locked'
     ? '上次更新未完成：程序目录被其他程序占用。关闭相关窗口或程序后可重试，或另存更新包。'
     : '上次更新未完成。可重试或另存更新包。'
@@ -123,9 +155,20 @@ export function parseLeftover(marker: string): LeftoverFiles | undefined {
 const LEFTOVER_LISTED = 8
 
 /** 遗留文件的提示框文案；第一个按钮打开备份目录 */
-export function leftoverNotice(leftover: LeftoverFiles): { message: string; detail: string; buttons: string[] } {
+export function leftoverNotice(leftover: LeftoverFiles, locale: 'zh-CN' | 'en' = 'zh-CN'): { message: string; detail: string; buttons: string[] } {
   const listed = leftover.entries.slice(0, LEFTOVER_LISTED)
   const hidden = leftover.entries.length - listed.length
+  if (locale === 'en') return {
+    message: 'The update finished, but some files could not be restored to the application folder',
+    detail: [
+      'They remain unchanged in the backup folder below. Move them back manually, then delete the backup folder when it is no longer needed.',
+      leftover.directory,
+      '',
+      ...listed,
+      ...(hidden > 0 ? [`…and ${hidden} more`] : [])
+    ].join('\n'),
+    buttons: ['Open backup folder', 'OK']
+  }
   return {
     message: '更新已完成，但程序目录里有些文件没能放回原处',
     detail: [

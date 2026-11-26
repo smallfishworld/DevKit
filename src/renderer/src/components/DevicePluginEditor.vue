@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import type { PluginDescriptor, PluginInstance } from '../../../shared/plugins'
 import { pluginRequest, useDevicePlugins } from '@renderer/stores/devicePlugins'
 import PluginConfigForm from './PluginConfigForm.vue'
@@ -9,6 +10,7 @@ const open = defineModel<boolean>({ required: true })
 const props = defineProps<{ plugin: PluginDescriptor; instance?: PluginInstance }>()
 const emit = defineEmits<{ saved: [PluginInstance] }>()
 const plugins = useDevicePlugins()
+const { t } = useI18n()
 const label = ref('')
 const enabled = ref(true)
 const autoEnabled = ref(false)
@@ -37,7 +39,7 @@ watch(open, (visible) => {
 function changeEditorMode(mode: 'form' | 'json', previous: 'form' | 'json'): boolean {
   if (mode === 'json') {
     if (!valid.value) {
-      editorError.value = '请先修复表单中标出的 JSON 语法错误'
+      editorError.value = t('pluginEditor.fixJsonFirst')
       return false
     }
     editorJson.value = JSON.stringify(config.value, null, 2)
@@ -45,7 +47,7 @@ function changeEditorMode(mode: 'form' | 'json', previous: 'form' | 'json'): boo
   } else if (previous === 'json') {
     const parsed = parseConfigJson(editorJson.value)
     if (parsed.error || !parsed.config) {
-      editorError.value = parsed.error || '配置无效'
+      editorError.value = parsed.error || t('pluginEditor.invalidConfig')
       return false
     }
     config.value = parsed.config
@@ -60,10 +62,10 @@ async function save(): Promise<void> {
   let saved = config.value
   if (editMode.value === 'json') {
     const parsed = parseConfigJson(editorJson.value)
-    if (!parsed.config) { editorError.value = parsed.error || '配置无效'; return }
+    if (!parsed.config) { editorError.value = parsed.error || t('pluginEditor.invalidConfig'); return }
     saved = parsed.config
   } else if (!valid.value) {
-    editorError.value = '请先修复表单中标出的 JSON 语法错误'
+    editorError.value = t('pluginEditor.fixJsonFirst')
     return
   }
   busy.value = true
@@ -84,28 +86,28 @@ async function save(): Promise<void> {
 </script>
 
 <template>
-  <el-dialog v-model="open" destroy-on-close :title="instance ? '编辑插件配置' : '新建插件配置'" width="min(720px, 94vw)" append-to-body>
+  <el-dialog v-model="open" destroy-on-close :title="instance ? t('pluginEditor.editTitle') : t('pluginEditor.newTitle')" width="min(720px, 94vw)" append-to-body>
     <el-form label-position="top" @submit.prevent="save">
-      <el-form-item label="配置名称" required>
+      <el-form-item :label="t('pluginEditor.configName')" required>
         <el-input v-model="label" maxlength="128" />
       </el-form-item>
-      <el-checkbox v-model="enabled">启用配置</el-checkbox>
-      <el-checkbox v-if="plugin.autoRespond" v-model="autoEnabled">绑定后自动监听</el-checkbox>
+      <el-checkbox v-model="enabled">{{ t('pluginEditor.enableConfig') }}</el-checkbox>
+      <el-checkbox v-if="plugin.autoRespond" v-model="autoEnabled">{{ t('pluginEditor.autoListen') }}</el-checkbox>
     </el-form>
     <el-tabs v-model="editMode" :before-leave="changeEditorMode">
-      <el-tab-pane label="配置表单" name="form">
+      <el-tab-pane :label="t('pluginEditor.tabForm')" name="form">
         <div class="editor-body">
           <PluginConfigForm v-model="config" :schema="plugin.configSchema" @validity="valid = $event" />
         </div>
       </el-tab-pane>
-      <el-tab-pane label="完整 JSON" name="json">
+      <el-tab-pane :label="t('pluginEditor.tabJson')" name="json">
         <el-input v-model="editorJson" type="textarea" :rows="15" spellcheck="false" class="json-input" />
       </el-tab-pane>
     </el-tabs>
     <el-alert v-if="editorError || error" :title="editorError || error" type="error" :closable="false" role="alert" />
     <template #footer>
-      <el-button @click="open = false">取消</el-button>
-      <el-button type="primary" :loading="busy" :disabled="!label.trim()" @click="save">保存配置</el-button>
+      <el-button @click="open = false">{{ t('pluginEditor.cancel') }}</el-button>
+      <el-button type="primary" :loading="busy" :disabled="!label.trim()" @click="save">{{ t('pluginEditor.saveConfig') }}</el-button>
     </template>
   </el-dialog>
 </template>

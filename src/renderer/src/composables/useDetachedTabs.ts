@@ -1,3 +1,4 @@
+import { i18n } from '../i18n'
 import { nextTick, onUnmounted, ref, shallowReactive } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useTabStore } from '@renderer/stores/tabs'
@@ -120,7 +121,7 @@ export function useDetachedTabs() {
   function detachTab(id: string): void {
     const entry = windows.get(id) ?? openTab(id)
     if (!entry) {
-      ElMessage.error('无法打开独立窗口')
+      ElMessage.error(i18n.global.t('miscUi.detachWindowFailed'))
       return
     }
     entry.pending = 'focus'

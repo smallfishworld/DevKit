@@ -5,6 +5,8 @@ import { emitToolEvent } from '../../ipc'
 import { fileNameStamp } from '../../../shared/logtext'
 import { OutputWindow, PanelTasks, DisplayBacklog, type HistoryQuery, type HistoryTailQuery, type OutputAck } from '../../../shared/terminal-stream'
 import { SessionHistory, readHistoryPage } from './history'
+import { IPC_RESULT_CODES, type IpcResultCode } from '../../../shared/ipc-result'
+import { mainText } from '../../app-locale'
 
 interface RuntimeOptions {
   dir: string
@@ -164,14 +166,14 @@ export class TerminalRuntime {
     await history?.dispose()
   }
 
-  async export(id: string, defaultDir?: string): Promise<{ ok: boolean; error?: string }> {
+  async export(id: string, defaultDir?: string): Promise<{ ok: boolean; code?: IpcResultCode; error?: string }> {
     const history = this.histories.get(id)
-    if (!history || !history.bytes) return { ok: false, error: '无日志可存' }
+    if (!history || !history.bytes) return { ok: false, code: IPC_RESULT_CODES.EMPTY, error: mainText('noHistory') }
     const { canceled, filePath } = await dialog.showSaveDialog({
-      title: '保存会话日志', defaultPath: join(defaultDir || app.getPath('documents'), `${this.tool}-${fileNameStamp()}.log`),
-      filters: [{ name: '日志', extensions: ['log', 'txt'] }]
+      title: mainText('saveSessionLog'), defaultPath: join(defaultDir || app.getPath('documents'), `${this.tool}-${fileNameStamp()}.log`),
+      filters: [{ name: mainText('logFiles'), extensions: ['log', 'txt'] }]
     })
-    if (canceled || !filePath) return { ok: false, error: '已取消' }
+    if (canceled || !filePath) return { ok: false, code: IPC_RESULT_CODES.CANCELLED, error: mainText('cancelled') }
     try { await history.exportTo(filePath); return { ok: true } }
     catch (error) { return { ok: false, error: error instanceof Error ? error.message : String(error) } }
   }
@@ -213,7 +215,7 @@ export class TerminalRuntime {
   }
 
   private async pick(id: string): Promise<{ ok: boolean }> {
-    const result = await dialog.showOpenDialog({ title: '打开历史日志', properties: ['openFile'], filters: [{ name: '日志', extensions: ['log', 'txt'] }] })
+    const result = await dialog.showOpenDialog({ title: mainText('openHistoryLog'), properties: ['openFile'], filters: [{ name: mainText('logFiles'), extensions: ['log', 'txt'] }] })
     if (result.canceled || !result.filePaths[0]) return { ok: false }
     this.selected.set(id, result.filePaths[0])
     return { ok: true }

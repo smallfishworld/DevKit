@@ -6,6 +6,7 @@ import { sendTabWindow, type DetachedTab } from '../composables/useDetachedTabs'
 import { splitTabTitle } from './split-tab'
 import { tabDragStarted } from './tab-drag'
 import WorkbenchBody from './WorkbenchBody.vue'
+import { useI18n } from 'vue-i18n'
 
 const props = defineProps<{
   tab: WorkTab
@@ -13,6 +14,7 @@ const props = defineProps<{
   attachAt: (id: string, x: number, y: number) => boolean
 }>()
 const emit = defineEmits<{ attach: []; ready: [mount: HTMLElement] }>()
+const { t } = useI18n()
 const title = computed(() => tabIsSplit(props.tab) ? splitTabTitle(props.tab.members) : props.tab.title)
 watchEffect(() => {
   if (!props.entry.popup.closed) props.entry.root.ownerDocument.title = title.value + ' · DevKit'
@@ -68,21 +70,21 @@ onUnmounted(() => {
         <button
           type="button"
           class="detached-tab"
-          title="拖动标签可移回主窗口"
+          :title="t('shell.moveBackHint')"
           @pointerdown="beginDrag"
           @lostpointercapture="cancelDrag"
         >{{ title }}</button>
         <span class="detached-spacer" />
-        <button type="button" class="detached-return" title="移回主窗口" @click="emit('attach')">
-          <el-icon><Back /></el-icon>移回主窗口
+        <button type="button" class="detached-return" :title="t('shell.moveBack')" @click="emit('attach')">
+          <el-icon><Back /></el-icon>{{ t('shell.moveBack') }}
         </button>
-        <button type="button" title="最小化" aria-label="最小化" @click="sendTabWindow(entry.name, { action: 'minimize' })">
+        <button type="button" :title="t('shell.minimize')" :aria-label="t('shell.minimize')" @click="sendTabWindow(entry.name, { action: 'minimize' })">
           <el-icon><Minus /></el-icon>
         </button>
-        <button type="button" title="最大化或还原" aria-label="最大化或还原" @click="sendTabWindow(entry.name, { action: 'toggle-maximize' })">
+        <button type="button" :title="t('shell.toggleMaximize')" :aria-label="t('shell.toggleMaximize')" @click="sendTabWindow(entry.name, { action: 'toggle-maximize' })">
           <el-icon><FullScreen /></el-icon>
         </button>
-        <button type="button" class="detached-close" title="关闭窗口" aria-label="关闭窗口" @click="entry.popup.close()">
+        <button type="button" class="detached-close" :title="t('shell.closeWindow')" :aria-label="t('shell.closeWindow')" @click="entry.popup.close()">
           <el-icon><Close /></el-icon>
         </button>
       </header>

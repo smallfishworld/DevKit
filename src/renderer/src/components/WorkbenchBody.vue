@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useI18n } from 'vue-i18n'
 import { computed, onMounted, ref } from 'vue'
 import { hostSharesQuickCmds, SPLIT_DEFAULT_PCT, splitGridColumns, splitPctAtPointer, writeStoredSplitPct } from './split-tab'
 import { useTabStore, type SplitTab } from '@renderer/stores/tabs'
@@ -6,6 +7,7 @@ import SplitQuickCmds from './SplitQuickCmds.vue'
 import { providePanelDocument } from '../composables/usePanelWindow'
 
 const props = defineProps<{ split?: SplitTab; ownerDocument?: Document }>()
+const { t } = useI18n()
 const emit = defineEmits<{ ready: [mount: HTMLElement] }>()
 const tabs = useTabStore()
 const panels = ref<HTMLElement>()
@@ -54,7 +56,7 @@ function finishDividerDrag(): void {
       class="split-divider"
       role="separator"
       aria-orientation="vertical"
-      aria-label="调整分屏宽度"
+      :aria-label="t('workbench.resizeSplitAria')"
       @pointerdown="onDividerPointerdown"
       @pointermove="onDividerPointermove"
       @pointerup="finishDividerDrag"

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { usePanelMessage } from '@renderer/composables/panelOverlays'
 import { Connection, Delete, Promotion } from '@element-plus/icons-vue'
 import SerialDevicePlugins from '@renderer/components/SerialDevicePlugins.vue'
@@ -8,6 +9,7 @@ import { DEFAULT_NET_PARAMS } from '../../../shared/net'
 import { useTabStore } from '@renderer/stores/tabs'
 
 const ElMessage = usePanelMessage()
+const { t, locale } = useI18n()
 
 const props = defineProps<{ panelId: string }>()
 const tabStore = useTabStore()
@@ -58,23 +60,23 @@ let loopTimer: ReturnType<typeof setInterval> | null = null
 
 let unsubs: Array<() => void> = []
 
-/** 标签页随模式与地址命名：网络·TCP服务端:9000 / 网络·TCP客户端 10.0.0.1:9000 / 网络·UDP:9000 */
+/** 标签页随模式与地址命名 */
 watch(
-  params,
+  [params, locale],
   () => {
     const label =
       params.mode === 'tcp-server'
-        ? `网络·TCP服务端:${params.localPort}`
+        ? t('net.tabTcpServer', { port: params.localPort })
         : params.mode === 'tcp-client'
-          ? `网络·TCP客户端 ${params.host}:${params.port}`
-          : `网络·UDP:${params.localPort}`
+          ? t('net.tabTcpClient', { host: params.host, port: params.port })
+          : t('net.tabUdp', { port: params.localPort })
     tabStore.rename(props.panelId, label)
   },
   { deep: true, immediate: true }
 )
 
 const modeLabel = computed(
-  () => ({ 'tcp-server': 'TCP 服务端', 'tcp-client': 'TCP 客户端', udp: 'UDP' })[activeMode.value]
+  () => ({ 'tcp-server': t('net.tcpServer'), 'tcp-client': t('net.tcpClient'), udp: t('net.udp') })[activeMode.value]
 )
 
 // ---------- 初始化 ----------
@@ -90,7 +92,7 @@ onMounted(async () => {
       const d = p as DataEvt & { target: string }
       rxBytes.value = d.rxBytes
       txBytes.value = d.txBytes
-      pushLine('tx', d.target || (activeMode.value === 'tcp-client' ? params.host : '广播'), d.text, d.hex, d.time)
+      pushLine('tx', d.target || (activeMode.value === 'tcp-client' ? params.host : t('net.broadcast')), d.text, d.hex, d.time)
     }),
     window.api.on('net', props.panelId, 'clients', (p) => {
       clients.value = (p as { clients: PeerInfo[] }).clients
@@ -104,14 +106,14 @@ onMounted(async () => {
       }
     }),
     window.api.on('net', props.panelId, 'error', (p) => {
-      ElMessage.warning(`网络错误：${(p as { message: string }).message}`)
+      ElMessage.warning(t('net.netError', { message: (p as { message: string }).message }))
     })
   )
   const res = (await window.api.invoke('net', 'attach', props.panelId)) as { config: NetConfig }
   Object.assign(params, res.config.last)
   displayHex.value = res.config.displayHex
   showTimestamp.value = res.config.showTimestamp
-  pushLine('info', '就绪。选择模式后点击「启动 / 连接」。', '', '', Date.now())
+  pushLine('info', t('net.readyInfo'), '', '', Date.now())
 })
 
 onUnmounted(() => {
@@ -142,13 +144,13 @@ async function start(): Promise<void> {
     running.value = true
     const desc =
       params.mode === 'tcp-server'
-        ? `TCP 服务端监听 :${params.localPort}`
+        ? t('net.listeningInfo', { port: params.localPort })
         : params.mode === 'tcp-client'
-          ? `已连接 ${params.host}:${params.port}`
-          : `UDP 绑定 :${params.localPort}，目标 ${params.host}:${params.port}`
+          ? t('net.connectedInfo', { host: params.host, port: params.port })
+          : t('net.udpBoundInfo', { localPort: params.localPort, host: params.host, port: params.port })
     pushLine('info', desc, '', '', Date.now())
   } else {
-    ElMessage.error(`启动失败：${res.error}`)
+    ElMessage.error(t('net.startFailed', { error: res.error ?? '' }))
   }
 }
 
@@ -157,13 +159,13 @@ async function stop(): Promise<void> {
   await window.api.invoke('net', 'stop', props.panelId)
   running.value = false
   clients.value = []
-  pushLine('info', '已停止', '', '', Date.now())
+  pushLine('info', t('net.stopped'), '', '', Date.now())
 }
 
 // ---------- 发送 ----------
 function doSend(text: string, mode: 'ascii' | 'hex', newline: 'none' | 'crlf' | 'lf' | 'cr'): void {
   if (!running.value) {
-    ElMessage.warning('未启动')
+    ElMessage.warning(t('net.notStarted'))
     return
   }
   window.api
@@ -187,7 +189,7 @@ function send(): void {
 function startLoop(): void {
   if (loopOn.value) return
   if (!sendText.value.trim()) {
-    ElMessage.warning('请先填写发送内容')
+    ElMessage.warning(t('net.enterContentFirst'))
     return
   }
   loopOn.value = true
@@ -239,13 +241,13 @@ async function persistConfig(): Promise<void> {
     <div class="panel-section">
       <div class="conn-bar">
         <el-radio-group v-model="params.mode" :disabled="running" size="small" @change="persistConfig">
-          <el-radio-button value="tcp-server">TCP 服务端</el-radio-button>
-          <el-radio-button value="tcp-client">TCP 客户端</el-radio-button>
-          <el-radio-button value="udp">UDP</el-radio-button>
+          <el-radio-button value="tcp-server">{{ t('net.tcpServer') }}</el-radio-button>
+          <el-radio-button value="tcp-client">{{ t('net.tcpClient') }}</el-radio-button>
+          <el-radio-button value="udp">{{ t('net.udp') }}</el-radio-button>
         </el-radio-group>
 
         <template v-if="params.mode === 'tcp-server'">
-          <span class="lbl">本地端口</span>
+          <span class="lbl">{{ t('net.localPort') }}</span>
           <el-input-number
             v-model="params.localPort"
             :min="1"
@@ -258,9 +260,9 @@ async function persistConfig(): Promise<void> {
         </template>
 
         <template v-else-if="params.mode === 'tcp-client'">
-          <span class="lbl">目标地址</span>
+          <span class="lbl">{{ t('net.targetAddress') }}</span>
           <el-input v-model="params.host" :disabled="running" size="small" style="width: 170px" />
-          <span class="lbl">端口</span>
+          <span class="lbl">{{ t('net.port') }}</span>
           <el-input-number
             v-model="params.port"
             :min="1"
@@ -273,7 +275,7 @@ async function persistConfig(): Promise<void> {
         </template>
 
         <template v-else>
-          <span class="lbl">本地端口</span>
+          <span class="lbl">{{ t('net.localPort') }}</span>
           <el-input-number
             v-model="params.localPort"
             :min="1"
@@ -283,9 +285,9 @@ async function persistConfig(): Promise<void> {
             :disabled="running"
             style="width: 96px"
           />
-          <span class="lbl">目标地址</span>
+          <span class="lbl">{{ t('net.targetAddress') }}</span>
           <el-input v-model="params.host" :disabled="running" size="small" style="width: 150px" />
-          <span class="lbl">端口</span>
+          <span class="lbl">{{ t('net.port') }}</span>
           <el-input-number
             v-model="params.port"
             :min="1"
@@ -304,11 +306,11 @@ async function persistConfig(): Promise<void> {
           :icon="Connection"
           @click="start"
         >
-          {{ params.mode === 'tcp-client' ? '连接' : '启动' }}
+          {{ params.mode === 'tcp-client' ? t('net.connect') : t('net.start') }}
         </el-button>
-        <el-button v-else type="danger" size="small" @click="stop">停止</el-button>
+        <el-button v-else type="danger" size="small" @click="stop">{{ t('net.stop') }}</el-button>
         <el-tag size="small" :type="running ? 'success' : 'info'">
-          {{ running ? `${modeLabel} 运行中` : '已停止' }}
+          {{ running ? t('net.runningStatus', { mode: modeLabel }) : t('net.stopped') }}
         </el-tag>
         <span class="counters">
           RX <b>{{ rxBytes }}</b> TX <b>{{ txBytes }}</b>
@@ -318,7 +320,7 @@ async function persistConfig(): Promise<void> {
       <!-- TCP Server 客户端列表 -->
       <div v-if="params.mode === 'tcp-server' && clients.length" class="client-row">
         <el-radio-group v-model="targetId" size="small">
-          <el-radio-button value="">全部广播</el-radio-button>
+          <el-radio-button value="">{{ t('net.broadcastAll') }}</el-radio-button>
           <el-radio-button v-for="c in clients" :key="c.id" :value="c.id">
             {{ c.remote }}
           </el-radio-button>
@@ -332,9 +334,9 @@ async function persistConfig(): Promise<void> {
         <el-radio-button :value="false">ASCII</el-radio-button>
         <el-radio-button :value="true">HEX</el-radio-button>
       </el-radio-group>
-      <el-checkbox v-model="showTimestamp" size="small">时间戳</el-checkbox>
-      <el-checkbox v-model="paused" size="small">暂停滚动</el-checkbox>
-      <el-button size="small" text @click="clearTerm">清空</el-button>
+      <el-checkbox v-model="showTimestamp" size="small">{{ t('net.timestamp') }}</el-checkbox>
+      <el-checkbox v-model="paused" size="small">{{ t('net.pauseScroll') }}</el-checkbox>
+      <el-button size="small" text @click="clearTerm">{{ t('net.clear') }}</el-button>
       <SerialDevicePlugins :panel-id="props.panelId" :connected="running" transport="net" />
     </div>
     <div ref="termBox" class="term mono">
@@ -354,7 +356,7 @@ async function persistConfig(): Promise<void> {
         <el-option value="hex" label="HEX" />
       </el-select>
       <el-select v-model="sendNewline" size="small" style="width: 92px" :disabled="loopOn">
-        <el-option value="none" label="无换行" />
+        <el-option value="none" :label="t('net.noNewline')" />
         <el-option value="crlf" label="\r\n" />
         <el-option value="lf" label="\n" />
         <el-option value="cr" label="\r" />
@@ -363,7 +365,7 @@ async function persistConfig(): Promise<void> {
         v-model="sendText"
         size="small"
         class="send-input mono"
-        :placeholder="sendMode === 'hex' ? 'HEX：AA BB 01' : '输入要发送的内容'"
+        :placeholder="sendMode === 'hex' ? t('net.hexPlaceholder') : t('net.asciiPlaceholder')"
         :disabled="loopOn"
         @keydown.ctrl.enter="send"
       />
@@ -374,13 +376,13 @@ async function persistConfig(): Promise<void> {
         :disabled="!running || loopOn"
         @click="send"
       >
-        发送
+        {{ t('net.send') }}
       </el-button>
       <template v-if="!loopOn">
         <el-input-number v-model="loopPeriod" :min="20" :step="100" size="small" style="width: 100px" />
-        <el-button size="small" :icon="Delete" @click="startLoop">循环</el-button>
+        <el-button size="small" :icon="Delete" @click="startLoop">{{ t('net.loop') }}</el-button>
       </template>
-      <el-button v-else type="danger" size="small" @click="stopLoop">停止循环</el-button>
+      <el-button v-else type="danger" size="small" @click="stopLoop">{{ t('net.stopLoop') }}</el-button>
     </div>
   </div>
 </template>

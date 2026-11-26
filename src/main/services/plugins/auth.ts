@@ -14,6 +14,7 @@ import { applyWindowsAppDetails, getWindowIconPath } from '../../branding'
 import type {
   PluginAuthCheck, PluginAuthLoginOptions, PluginAuthRequestOptions, PluginAuthResponse
 } from '../../../shared/plugins'
+import { mainText } from '../../app-locale'
 
 const MAX_RESPONSE_BYTES = 65_536
 const MAX_HEADER_VALUE = 2048
@@ -101,7 +102,7 @@ export interface NormalizedLogin {
 export function parseAuthLogin(value: unknown): NormalizedLogin {
   const raw = record(value, '登录参数')
   const parsed = scope(raw)
-  const title = raw.title === undefined ? 'DevKit · 插件登录' : text(raw.title, 'title', 64)
+  const title = raw.title === undefined ? mainText('pluginLoginTitle') : text(raw.title, 'title', 64)
   return {
     scope: parsed,
     check: checkOf(raw.check, parsed),

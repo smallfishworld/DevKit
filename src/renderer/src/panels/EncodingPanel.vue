@@ -2,8 +2,10 @@
 import { computed, ref, watch } from 'vue'
 import { usePanelMessage } from '@renderer/composables/panelOverlays'
 import { CopyDocument } from '@element-plus/icons-vue'
+import { useI18n } from 'vue-i18n'
 
 const ElMessage = usePanelMessage()
+const { t } = useI18n()
 
 const CODEC_PANEL = 'codec#main'
 
@@ -56,10 +58,10 @@ const encodings = computed(() => {
     })
     .join('')
   return [
-    { name: 'UTF-8', text: toHex(utf8), len: `${utf8.length} 字节` },
-    { name: 'GBK', text: gbkHex.value, len: gbkBytes.value ? `${gbkBytes.value} 字节` : '' },
-    { name: 'UTF-16BE', text: toHex(utf16), len: `${utf16.length} 字节` },
-    { name: 'Unicode 转义', text: esc, len: '' }
+    { name: 'UTF-8', text: toHex(utf8), len: t('converter.bytes', { count: utf8.length }) },
+    { name: 'GBK', text: gbkHex.value, len: gbkBytes.value ? t('converter.bytes', { count: gbkBytes.value }) : '' },
+    { name: 'UTF-16BE', text: toHex(utf16), len: t('converter.bytes', { count: utf16.length }) },
+    { name: t('converter.unicodeEscape'), text: esc, len: '' }
   ]
 })
 
@@ -105,7 +107,7 @@ const b64 = computed(() => {
   try {
     return btoa(String.fromCharCode(...new TextEncoder().encode(src.value)))
   } catch {
-    return '(内容过长)'
+    return t('converter.tooLong')
   }
 })
 
@@ -130,7 +132,7 @@ const urlDecoded = computed(() => {
 
 async function copy(text: string): Promise<void> {
   await navigator.clipboard.writeText(text)
-  ElMessage.success('已复制')
+  ElMessage.success(t('converter.copied'))
 }
 </script>
 
@@ -138,18 +140,18 @@ async function copy(text: string): Promise<void> {
   <div class="panel converter-page enc-panel">
     <header class="converter-head">
       <div>
-        <h1>编码转换</h1>
-        <p>UTF-8 / GBK / UTF-16BE / Base64 / URL 实时互转</p>
+        <h1>{{ t('converter.encodingTitle') }}</h1>
+        <p>{{ t('converter.encodingSubtitle') }}</p>
       </div>
     </header>
 
     <div class="panel-section">
-      <h3>文本 → 字节编码</h3>
+      <h3>{{ t('converter.textToBytes') }}</h3>
       <el-input
         v-model="src"
         type="textarea"
         :rows="3"
-        placeholder="输入文本，下方实时显示各编码结果"
+        :placeholder="t('converter.textPlaceholder')"
       />
       <el-descriptions :column="2" border size="small" class="enc-desc">
         <el-descriptions-item v-for="e in encodings" :key="e.name" :label="e.name">
@@ -163,7 +165,7 @@ async function copy(text: string): Promise<void> {
     </div>
 
     <div class="panel-section">
-      <h3>HEX 字节 → 文本</h3>
+      <h3>{{ t('converter.hexToText') }}</h3>
       <div class="row">
         <el-radio-group v-model="decodeEnc" size="small">
           <el-radio-button value="utf-8">UTF-8</el-radio-button>
@@ -173,7 +175,7 @@ async function copy(text: string): Promise<void> {
           v-model="hexInput"
           size="small"
           class="mono flex-1"
-          placeholder="如 E5 B5 8C（空格/逗号/连续写法均可）"
+          :placeholder="t('converter.hexPlaceholder')"
           clearable
         />
       </div>
@@ -182,14 +184,14 @@ async function copy(text: string): Promise<void> {
         type="success"
         :closable="false"
         class="mono result-alert"
-        :title="decoded.text || '(空)'"
+        :title="decoded.text || t('converter.empty')"
       />
       <el-alert
         v-else-if="hexInput"
         type="error"
         :closable="false"
         class="result-alert"
-        title="HEX 格式非法或长度不是偶数"
+        :title="t('converter.invalidHex')"
       />
     </div>
 
@@ -197,21 +199,21 @@ async function copy(text: string): Promise<void> {
       <div class="panel-section">
         <h3>Base64</h3>
         <div class="row">
-          <span class="lbl">编码</span>
+          <span class="lbl">{{ t('converter.encode') }}</span>
           <span class="mono wrap flex-1">{{ b64 }}</span>
           <el-button size="small" text :icon="CopyDocument" @click="copy(b64)" />
         </div>
         <div class="row mt-8">
-          <span class="lbl">解码</span>
-          <el-input v-model="b64Input" size="small" class="mono flex-1" placeholder="粘贴 Base64" clearable />
+          <span class="lbl">{{ t('converter.decode') }}</span>
+          <el-input v-model="b64Input" size="small" class="mono flex-1" :placeholder="t('converter.base64Placeholder')" clearable />
         </div>
-        <div v-if="b64Input" class="b64-out mono wrap">{{ b64Decoded ?? '(无效 Base64)' }}</div>
+        <div v-if="b64Input" class="b64-out mono wrap">{{ b64Decoded ?? t('converter.invalidBase64') }}</div>
       </div>
 
       <div class="panel-section">
-        <h3>URL 编码还原</h3>
+        <h3>{{ t('converter.urlDecode') }}</h3>
         <div class="row">
-          <span class="mono wrap flex-1">{{ urlDecoded ?? '(无效转义)' }}</span>
+          <span class="mono wrap flex-1">{{ urlDecoded ?? t('converter.invalidEscape') }}</span>
           <el-button size="small" text :icon="CopyDocument" @click="copy(urlDecoded ?? '')" />
         </div>
       </div>

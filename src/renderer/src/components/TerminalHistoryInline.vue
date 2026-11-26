@@ -7,9 +7,11 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, shallowRef } from 'vue'
 import type { HistoryTailPage } from '../../../shared/terminal-stream'
 import { displayArchiveLine } from '../../../shared/logtext'
+import { useI18n } from 'vue-i18n'
 
 const props = defineProps<{ panelId: string; font: string; fontSize: number; showTime: boolean; foreground: string; background: string }>()
 const emit = defineEmits<{ (event: 'live'): void }>()
+const { t } = useI18n()
 const PAGE_LINES = 160
 const MAX_PAGES = 8
 type Page = { end: number; data: HistoryTailPage }
@@ -60,7 +62,7 @@ async function loadOlder(initial = false): Promise<void> {
     }) as HistoryTailPage
     if (!alive) return
     if (!initial && (!data.rows.length || data.before >= end!)) {
-      errorText.value = '日志历史游标没有继续前进，请检查文件是否发生变化'
+      errorText.value = t('history.stalled')
       return
     }
     const windowPages = [{ end: end ?? data.size, data }, ...pages.value]
@@ -128,11 +130,11 @@ onUnmounted(() => { alive = false })
     @keydown.esc="emit('live')"
     @keydown.end="emit('live')"
   >
-    <div v-if="busy" class="history-status">正在读取历史日志…</div>
+    <div v-if="busy" class="history-status">{{ t('history.loading') }}</div>
     <div v-if="errorText" class="history-status">{{ errorText }}</div>
     <div v-for="row in rows" :key="row.offset" :data-history-offset="row.offset" class="history-line"><span v-if="row.timestamp" class="history-time">{{ row.timestamp }}</span><span>{{ row.text }}</span></div>
-    <div v-if="!rows.length && !busy" class="history-status">当前没有可浏览的历史日志</div>
-    <div class="history-live-tip">往下滚动回到实时串口 · Esc / End 返回实时打印</div>
+    <div v-if="!rows.length && !busy" class="history-status">{{ t('history.empty') }}</div>
+    <div class="history-live-tip">{{ t('history.liveTip') }}</div>
   </div>
 </template>
 

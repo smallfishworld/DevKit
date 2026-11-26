@@ -12,8 +12,10 @@ import type { QuickCmd, QuickCmdStep, PluginActionReference, PluginMacroAction }
 import { TERM_KEYS, keyName, stepPreview, resolveDropInsertion, validatePlayback } from '../../../shared/term-macro'
 import { useTermMacros } from '../composables/useTermMacros'
 import { pluginActionKey } from './plugin-config-form'
+import { useI18n } from 'vue-i18n'
 
 const ElMessage = usePanelMessage()
+const { t } = useI18n()
 const ownerDocument = usePanelDocument()
 
 const props = defineProps<{
@@ -72,7 +74,7 @@ async function refreshPluginActions(): Promise<void> {
     pluginConfigError.value = result.error || ''
   } catch (failure) {
     pluginActions.value = []
-    pluginConfigError.value = failure instanceof Error ? failure.message : '无法读取插件动作'
+    pluginConfigError.value = failure instanceof Error ? failure.message : t('quickCmd.loadPluginsFailed')
   }
 }
 function selectedPluginAction(step: QuickCmdStep): string {
@@ -94,17 +96,17 @@ const newGroupName = ref('')
 async function onNewGroup(): Promise<void> {
   const name = newGroupName.value.trim()
   if (!name) {
-    ElMessage.warning('请输入分组名')
+    ElMessage.warning(t('quickCmd.groupRequired'))
     return
   }
   const ok = await createGroup(name)
   if (!ok) {
-    ElMessage.warning(`分组「${name}」已存在`)
+    ElMessage.warning(t('quickCmd.groupExists', { name }))
     return
   }
   newGroupDlg.value = false
   newGroupName.value = ''
-  ElMessage.success(`分组「${name}」已创建，可点组内 + 添加命令`)
+  ElMessage.success(t('quickCmd.groupCreated', { name }))
 }
 
 // ---------- 重命名分组 ----------
@@ -121,11 +123,11 @@ function openRenameDlg(name: string): void {
 async function onRename(): Promise<void> {
   const ok = await renameGroup(renameTarget.value, renameCache.value)
   if (!ok) {
-    ElMessage.warning('名称无效或已存在')
+    ElMessage.warning(t('quickCmd.invalidName'))
     return
   }
   renameDlg.value = false
-  ElMessage.success('分组已重命名')
+  ElMessage.success(t('quickCmd.renamed'))
 }
 
 // ---------- 分组展示 ----------
@@ -197,11 +199,11 @@ function openCmdDlg(idx = -1, steps?: QuickCmdStep[], prefillGroup?: string): vo
 
 async function onSaveCmd(): Promise<void> {
   if (!cmdDraft.name.trim() || cmdDraft.steps.length === 0) {
-    ElMessage.warning('名称与至少一个步骤必填')
+    ElMessage.warning(t('quickCmd.required'))
     return
   }
   if (cmdDraft.steps.some(step => step.type === 'plugin-action' && (!step.instanceId || !step.actionId))) {
-    ElMessage.warning(pluginConfigError.value || '请选择插件配置与动作')
+    ElMessage.warning(pluginConfigError.value || t('quickCmd.choosePlugin'))
     return
   }
   await saveCmd(
@@ -213,7 +215,7 @@ async function onSaveCmd(): Promise<void> {
     cmdEditIdx.value
   )
   cmdDlg.value = false
-  ElMessage.success(cmdEditIdx.value >= 0 ? '已更新' : '已添加')
+  ElMessage.success(t(cmdEditIdx.value >= 0 ? 'quickCmd.updated' : 'quickCmd.added'))
 }
 
 function addStep(type: QuickCmdStep['type']): void {
@@ -234,11 +236,11 @@ function delStep(idx: number): void {
 function onRecord(): void {
   const r = toggleRecord()
   if (!r.stopped) {
-    ElMessage.success('录制中：直接在终端输入命令或按键；再点录制键停止并保存')
+    ElMessage.success(t('quickCmd.recording'))
     return
   }
   if (r.steps.length === 0) {
-    ElMessage.info('未录到任何内容，已取消录制')
+    ElMessage.info(t('quickCmd.recordingEmpty'))
     return
   }
   openCmdDlg(-1, r.steps)
@@ -249,7 +251,7 @@ defineExpose({ finishRecording: () => { if (recording.value) onRecord() } })
 // ---------- 回放 ----------
 async function onPlay(cmd: QuickCmd): Promise<void> {
   if (!props.enabled) {
-    ElMessage.warning('连接未打开')
+    ElMessage.warning(t('quickCmd.disconnected'))
     return
   }
   const usesPlugin = cmd.steps.some((step) => step?.type === 'plugin-action')
@@ -263,11 +265,11 @@ async function onPlay(cmd: QuickCmd): Promise<void> {
     return
   }
   if (!canContinue()) {
-    ElMessage.warning('连接已变化，请重新运行快捷命令')
+    ElMessage.warning(t('quickCmd.connectionChanged'))
     return
   }
   try { await playCmd(cmd, props.writer, canContinue, props.runPluginAction) } catch (failure) {
-    ElMessage.warning(failure instanceof Error ? failure.message : '快捷命令执行失败')
+    ElMessage.warning(failure instanceof Error ? failure.message : t('quickCmd.runFailed'))
   }
 }
 
@@ -399,16 +401,16 @@ watchEffect((onCleanup) => {
 // ---------- 导入 / 导出 ----------
 async function onExport(): Promise<void> {
   const res = await exportCmds()
-  if (res.ok) ElMessage.success(`已导出 ${res.count} 条快捷命令`)
-  else if (res.error && res.error !== '已取消') ElMessage.warning(res.error)
+  if (res.ok) ElMessage.success(t('quickCmd.exported', { count: res.count }))
+  else if (res.code !== 'CANCELLED' && res.error) ElMessage.warning(res.error)
 }
 
 async function onImport(): Promise<void> {
   const res = await importCmds()
   if (res.ok) {
-    const srcName = res.source === 'mobaxterm' ? 'MobaXterm 宏' : 'DevKit 配置'
-    ElMessage.success(`已从${srcName}导入 ${res.count} 条（同名已覆盖）`)
-  } else if (res.error && res.error !== '已取消') {
+    const srcName = res.source === 'mobaxterm' ? 'MobaXterm' : t('quickCmd.devkitConfig')
+    ElMessage.success(t('quickCmd.imported', { source: srcName, count: res.count }))
+  } else if (res.code !== 'CANCELLED' && res.error) {
     ElMessage.warning(res.error)
   }
 }
@@ -417,24 +419,24 @@ async function onImport(): Promise<void> {
 <template>
   <div class="quick-cmd">
     <div class="sessions-head cmd-head">
-      <span>快捷命令</span>
+      <span>{{ t('quickCmd.title') }}</span>
       <span class="cmd-head-actions">
         <el-tooltip
-          :content="recording ? '停止录制并整理保存' : '录制宏：终端键入与发送都会记入（含自动延时与按键）'"
+          :content="t(recording ? 'quickCmd.stopRecording' : 'quickCmd.startRecording')"
           placement="top"
         >
           <el-button size="small" text :type="recording ? 'danger' : 'default'" @click="onRecord">
             <el-icon><VideoCamera /></el-icon>
           </el-button>
         </el-tooltip>
-        <el-button size="small" text :icon="Plus" aria-label="新建快捷命令" @click="openCmdDlg(-1)" />
+        <el-button size="small" text :icon="Plus" :aria-label="t('quickCmd.newAria')" @click="openCmdDlg(-1)" />
         <el-dropdown trigger="click">
-          <el-button size="small" text aria-label="快捷命令分组与导入导出">⋯</el-button>
+          <el-button size="small" text :aria-label="t('quickCmd.menuAria')">⋯</el-button>
           <template #dropdown>
             <el-dropdown-menu>
-              <el-dropdown-item @click="newGroupDlg = true">新建分组…</el-dropdown-item>
-              <el-dropdown-item @click="onImport">导入命令…</el-dropdown-item>
-              <el-dropdown-item @click="onExport">导出命令…</el-dropdown-item>
+              <el-dropdown-item @click="newGroupDlg = true">{{ t('quickCmd.newGroup') }}</el-dropdown-item>
+              <el-dropdown-item @click="onImport">{{ t('quickCmd.import') }}</el-dropdown-item>
+              <el-dropdown-item @click="onExport">{{ t('quickCmd.export') }}</el-dropdown-item>
             </el-dropdown-menu>
           </template>
         </el-dropdown>
@@ -455,7 +457,7 @@ async function onImport(): Promise<void> {
           class="cmd-group-head"
           :class="{ 'grp-drop-hover': grpDropOver === g.name }"
           draggable="true"
-          title="拖动可调整分组顺序"
+          :title="t('quickCmdUi.dragGroupTitle')"
           @click="toggleGroup(g.name)"
           @dragstart="onGrpDragStart(g.name, $event)"
           @dragend="onGrpDragEnd"
@@ -482,7 +484,7 @@ async function onImport(): Promise<void> {
             link
             type="danger"
             size="small"
-            title="删除空分组"
+            :title="t('quickCmdUi.deleteEmptyGroupTitle')"
             @click.stop="removeGroup(g.name)"
           >
             <el-icon><Delete /></el-icon>
@@ -521,7 +523,7 @@ async function onImport(): Promise<void> {
             </span>
           </div>
           <div v-if="g.empty" class="cmd-item empty-item" @click="openCmdDlg(-1, undefined, g.name)">
-            <span class="hint">＋ 添加命令到此分组</span>
+            <span class="hint">{{ t('quickCmdUi.addToGroup') }}</span>
           </div>
         </template>
       </div>
@@ -559,15 +561,15 @@ async function onImport(): Promise<void> {
         </span>
       </div>
       <div v-if="quickCmds.length === 0" class="hint" style="padding: 4px 8px">
-        {{ emptyHint ?? '点 + 添加多步骤命令，或用录制按钮录下操作序列' }}
+        {{ emptyHint ?? t('quickCmdUi.defaultEmptyHint') }}
       </div>
       <div v-if="selected.size > 0" class="hint sel-hint">
-        已选中 {{ selected.size }} 条 — 拖动到分组名下方即可移动，Esc 取消
+        {{ t('quickCmdUi.selectedHint', { count: selected.size }) }}
       </div>
       <div v-if="recording" class="hint rec-hint">
-        ● 录制中（{{ recordedCount }} 步）— 再点录制键停止并保存
+        {{ t('quickCmdUi.recordingHint', { count: recordedCount }) }}
       </div>
-      <div v-if="playing" class="hint rec-hint">▶ 正在回放快捷命令…</div>
+      <div v-if="playing" class="hint rec-hint">{{ t('quickCmdUi.playingHint') }}</div>
     </div>
 
     <!-- 列表下方的空白：平时就是留白，拖命令时才变成「移出分组」落区。
@@ -579,54 +581,54 @@ async function onImport(): Promise<void> {
       @dragleave="dragOver === '__tail__' ? (dragOver = '') : null"
       @drop.prevent="onDrop('')"
     >
-      <span v-if="dragging">拖到此处移出分组 ▼</span>
+      <span v-if="dragging">{{ t('quickCmdUi.dropOutGroup') }}</span>
     </div>
 
     <!-- 新建分组 -->
-    <el-dialog v-model="newGroupDlg" title="新建分组" width="320px" append-to-body>
+    <el-dialog v-model="newGroupDlg" :title="t('quickCmdUi.newGroupTitle')" width="320px" append-to-body>
       <el-input
         v-model="newGroupName"
-        placeholder="输入分组名，如：烧录、测试、日志"
+        :placeholder="t('quickCmdUi.newGroupPlaceholder')"
         @keydown.enter="onNewGroup"
       />
       <template #footer>
-        <el-button @click="newGroupDlg = false">取消</el-button>
-        <el-button type="primary" @click="onNewGroup">创建分组</el-button>
+        <el-button @click="newGroupDlg = false">{{ t('quickCmdUi.cancel') }}</el-button>
+        <el-button type="primary" @click="onNewGroup">{{ t('quickCmdUi.createGroup') }}</el-button>
       </template>
     </el-dialog>
 
     <!-- 重命名分组 -->
-    <el-dialog v-model="renameDlg" title="重命名分组" width="320px" append-to-body>
+    <el-dialog v-model="renameDlg" :title="t('quickCmdUi.renameGroupTitle')" width="320px" append-to-body>
       <el-input
         v-model="renameCache"
-        placeholder="输入新的分组名"
+        :placeholder="t('quickCmdUi.renameGroupPlaceholder')"
         @keydown.enter="onRename"
       />
       <template #footer>
-        <el-button @click="renameDlg = false">取消</el-button>
-        <el-button type="primary" @click="onRename">保存</el-button>
+        <el-button @click="renameDlg = false">{{ t('quickCmdUi.cancel') }}</el-button>
+        <el-button type="primary" @click="onRename">{{ t('quickCmdUi.save') }}</el-button>
       </template>
     </el-dialog>
 
     <!-- 步骤编辑弹窗 -->
     <el-dialog
       v-model="cmdDlg"
-      :title="cmdEditIdx >= 0 ? '编辑快捷命令' : '添加快捷命令'"
+      :title="cmdEditIdx >= 0 ? t('quickCmdUi.editCmdTitle') : t('quickCmdUi.addCmdTitle')"
       width="560px"
       append-to-body
     >
       <el-form label-width="70px" size="small" @submit.prevent>
-        <el-form-item label="名称">
-          <el-input v-model="cmdDraft.name" placeholder="如：上电自检流程" />
+        <el-form-item :label="t('quickCmdUi.fieldName')">
+          <el-input v-model="cmdDraft.name" :placeholder="t('quickCmdUi.cmdNamePlaceholder')" />
         </el-form-item>
-        <el-form-item label="分组">
+        <el-form-item :label="t('quickCmdUi.fieldGroup')">
           <el-select
             v-model="cmdDraft.group"
             filterable
             allow-create
             default-first-option
             clearable
-            placeholder="选已有分组或输入新名；留空 = 不分组"
+            :placeholder="t('quickCmdUi.groupSelectPlaceholder')"
             style="width: 100%"
           >
             <el-option v-for="g in groupNames" :key="g" :value="g" :label="g" />
@@ -634,12 +636,12 @@ async function onImport(): Promise<void> {
         </el-form-item>
       </el-form>
       <div class="steps-head">
-        <span>步骤（按顺序执行）</span>
+        <span>{{ t('quickCmdUi.stepsLabel') }}</span>
         <span>
-          <el-button size="small" text :icon="Plus" @click="addStep('cmd')">命令</el-button>
-          <el-button size="small" text :icon="Timer" @click="addStep('sleep')">延时</el-button>
-          <el-button size="small" text :icon="EditPen" @click="addStep('key')">按键</el-button>
-          <el-button v-if="runPluginAction" size="small" text :icon="Plus" @click="addStep('plugin-action')">插件动作</el-button>
+          <el-button size="small" text :icon="Plus" @click="addStep('cmd')">{{ t('quickCmdUi.stepCmd') }}</el-button>
+          <el-button size="small" text :icon="Timer" @click="addStep('sleep')">{{ t('quickCmdUi.stepSleep') }}</el-button>
+          <el-button size="small" text :icon="EditPen" @click="addStep('key')">{{ t('quickCmdUi.stepKey') }}</el-button>
+          <el-button v-if="runPluginAction" size="small" text :icon="Plus" @click="addStep('plugin-action')">{{ t('quickCmdUi.stepPluginAction') }}</el-button>
         </span>
       </div>
       <div class="steps-list">
@@ -654,12 +656,12 @@ async function onImport(): Promise<void> {
               v-model="st.text"
               size="small"
               class="step-input"
-              :placeholder="st.mode === 'hex' ? 'AA 55 01' : '命令文本'"
+              :placeholder="st.mode === 'hex' ? 'AA 55 01' : t('quickCmdUi.cmdTextPlaceholder')"
             />
-            <el-checkbox v-model="st.crlf" size="small">换行</el-checkbox>
+            <el-checkbox v-model="st.crlf" size="small">{{ t('quickCmdUi.newline') }}</el-checkbox>
           </template>
           <template v-else-if="st.type === 'sleep'">
-            <el-tag size="small" type="info" effect="plain">延时</el-tag>
+            <el-tag size="small" type="info" effect="plain">{{ t('quickCmdUi.stepSleep') }}</el-tag>
             <el-input-number
               v-model="st.ms"
               :min="100"
@@ -671,33 +673,33 @@ async function onImport(): Promise<void> {
             <span class="hint">ms</span>
           </template>
           <template v-else-if="st.type === 'plugin-action'">
-            <el-tag size="small" effect="plain">插件动作</el-tag>
-            <el-select :model-value="selectedPluginAction(st)" size="small" class="step-input" placeholder="选择插件配置与动作" @change="(value: string) => selectPluginAction(st, value)">
-              <el-option v-if="selectedPluginAction(st) && !pluginActionAvailable(st)" :value="selectedPluginAction(st)" :label="(st.instanceId || '') + ' / ' + (st.actionId || '') + '（不可用）'" disabled />
+            <el-tag size="small" effect="plain">{{ t('quickCmdUi.stepPluginAction') }}</el-tag>
+            <el-select :model-value="selectedPluginAction(st)" size="small" class="step-input" :placeholder="t('quickCmdUi.pickPluginAction')" @change="(value: string) => selectPluginAction(st, value)">
+              <el-option v-if="selectedPluginAction(st) && !pluginActionAvailable(st)" :value="selectedPluginAction(st)" :label="(st.instanceId || '') + ' / ' + (st.actionId || '') + t('quickCmdUi.unavailableSuffix')" disabled />
               <el-option v-for="action in pluginActions" :key="pluginActionKey(action.instanceId, action.actionId)" :value="pluginActionKey(action.instanceId, action.actionId)" :label="action.instanceLabel + ' · ' + action.label" />
             </el-select>
-            <el-button link type="primary" size="small" @click="emit('request-plugin-config')">管理插件</el-button>
+            <el-button link type="primary" size="small" @click="emit('request-plugin-config')">{{ t('quickCmdUi.managePlugins') }}</el-button>
           </template>
           <template v-else-if="st.type === 'key'">
-            <el-tag size="small" type="warning" effect="plain">按键</el-tag>
+            <el-tag size="small" type="warning" effect="plain">{{ t('quickCmdUi.stepKey') }}</el-tag>
             <el-select v-model="st.key" size="small" filterable class="step-input">
               <el-option v-for="k in TERM_KEYS" :key="k.name" :value="k.seq" :label="k.name" />
             </el-select>
             <span class="hint">{{ keyName(st.key ?? '') }}</span>
           </template>
-          <span v-else class="hint">不支持的步骤</span>
+          <span v-else class="hint">{{ t('quickCmdUi.unsupportedStep') }}</span>
           <el-button link type="danger" size="small" @click="delStep(i)">
             <el-icon><Delete /></el-icon>
           </el-button>
         </div>
         <div v-if="pluginConfigError && cmdDraft.steps.some(step => step.type === 'plugin-action')" class="hint">{{ pluginConfigError }}</div>
         <div v-if="cmdDraft.steps.length === 0" class="hint" style="padding: 8px">
-          尚无步骤：用上方「命令 / 延时 / 按键」按钮添加，或用录制按钮录下操作序列
+          {{ t('quickCmdUi.noStepsHint') }}
         </div>
       </div>
       <template #footer>
-        <el-button @click="cmdDlg = false">取消</el-button>
-        <el-button type="primary" @click="onSaveCmd">保存</el-button>
+        <el-button @click="cmdDlg = false">{{ t('quickCmdUi.cancel') }}</el-button>
+        <el-button type="primary" @click="onSaveCmd">{{ t('quickCmdUi.save') }}</el-button>
       </template>
     </el-dialog>
   </div>

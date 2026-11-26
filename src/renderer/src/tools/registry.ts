@@ -1,5 +1,6 @@
 import { defineAsyncComponent, markRaw } from 'vue'
 import type { Component } from 'vue'
+import { i18n } from '@renderer/i18n'
 
 /** 工具定义：渲染端注册表，主进程侧服务以同 id 注册 */
 export interface ToolDef {
@@ -22,6 +23,9 @@ export interface ToolDef {
 }
 
 const lazy = (loader: () => Promise<Component>): Component => markRaw(defineAsyncComponent(loader))
+
+const toolKey = (id: string): string => id === 'local-terminal' ? 'localTerminal' : id
+const localized = (id: string, field: 'name' | 'description'): string => i18n.global.t(`tools.${toolKey(id)}.${field}`)
 
 const ALL_TOOLS: ToolDef[] = [
   {
@@ -171,6 +175,13 @@ const ALL_TOOLS: ToolDef[] = [
 ]
 
 const currentPlatform = typeof window !== 'undefined' && window.api?.platform ? window.api.platform : 'win32'
+
+for (const tool of ALL_TOOLS) {
+  Object.defineProperties(tool, {
+    name: { enumerable: true, get: () => localized(tool.id, 'name') },
+    description: { enumerable: true, get: () => localized(tool.id, 'description') }
+  })
+}
 
 /** 正式版隐藏 devOnly 工具，同时按当前操作系统过滤平台专属工具 */
 export const TOOLS: ToolDef[] = ALL_TOOLS.filter((t) => {

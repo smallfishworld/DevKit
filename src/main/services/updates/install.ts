@@ -9,8 +9,16 @@ import { leftoverNotice, parseLeftover, preflightRefusal } from '../../../shared
 import { portableLauncher } from '../../../shared/windows-branding'
 import { getMainWindow } from '../../ipc'
 import { packageName, type PackageFormat, type UpdatePackage } from './github'
+import { getAppLocale, mainText } from '../../app-locale'
 
 const HELPER = 'DevKitUpdater.exe'
+
+export class UpdatePreparationError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'UpdatePreparationError'
+  }
+}
 
 export interface InstallTarget {
   format: PackageFormat
@@ -46,10 +54,10 @@ export function getInstallTarget(): InstallTarget | undefined {
 
 export async function verifyUpdateFile(path: string, update: UpdatePackage): Promise<void> {
   const file = await stat(path)
-  if (!file.isFile() || file.size !== update.bytes) throw new Error('缓存的更新包大小不符，请重新下载。')
+  if (!file.isFile() || file.size !== update.bytes) throw new Error(mainText('updateCacheSizeMismatch'))
   const hash = createHash('sha256')
   for await (const chunk of createReadStream(path)) hash.update(chunk)
-  if (hash.digest('hex') !== update.hash) throw new Error('缓存的更新包校验失败，请重新下载。')
+  if (hash.digest('hex') !== update.hash) throw new Error(mainText('updateCacheVerifyFailed'))
 }
 
 export async function prepareUpdate(target: InstallTarget, path: string, update: UpdatePackage): Promise<void> {
@@ -82,13 +90,15 @@ export async function prepareUpdate(target: InstallTarget, path: string, update:
       // The helper explains why it cannot replace the directory in place while DevKit is still running
       if (ready && ready !== 'ok') {
         const refusal = preflightRefusal(ready,
-          (await readFile(join(handoff, 'directory-detail'), 'utf8').catch(() => '')).trim())
-        if (refusal) throw new Error(refusal)
+          (await readFile(join(handoff, 'directory-detail'), 'utf8').catch(() => '')).trim(), getAppLocale())
+        if (refusal) throw new UpdatePreparationError(refusal)
       }
       if (ready === 'failed' || child.exitCode !== null) break
       await delay(125)
     } while (Date.now() < deadline)
-    throw new Error('无法准备原路径更新。请检查目录写入权限和可用空间，或另存更新包。')
+    throw new UpdatePreparationError(getAppLocale() === 'en'
+      ? 'Could not prepare an in-place update. Check write access and available space, or save the update package.'
+      : mainText('updatePrepareInPlaceFailed'))
   } catch (error) {
     // An independent helper may still be preparing. Without the apply marker it leaves the target in place.
     await writeFile(join(handoff, 'cancel'), '', { flag: 'wx' }).catch(() => {})
@@ -145,7 +155,7 @@ export async function reportLeftoverFiles(target: InstallTarget | undefined): Pr
     if (!trusted || (window && !window.isDestroyed())) await rm(marker, { force: true })
     if (!window || window.isDestroyed()) return
     const { response } = await dialog.showMessageBox(window, {
-      type: 'warning', title: 'DevKit 应用更新', noLink: true, cancelId: 1, ...leftoverNotice(leftover)
+      type: 'warning', title: mainText('updateTitle'), noLink: true, cancelId: 1, ...leftoverNotice(leftover, getAppLocale())
     })
     if (response === 0) await shell.openPath(backup)
   } catch {

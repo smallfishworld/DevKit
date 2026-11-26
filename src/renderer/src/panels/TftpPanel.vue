@@ -1,19 +1,17 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { usePanelMessage } from '@renderer/composables/panelOverlays'
 import { Folder, FolderOpened } from '@element-plus/icons-vue'
 import type { TransferInfo } from '../../../shared/types'
 import { useTabStore } from '@renderer/stores/tabs'
 
 const ElMessage = usePanelMessage()
+const { t } = useI18n()
 
 const props = defineProps<{ panelId: string }>()
 const tabStore = useTabStore()
 
-const FIREWALL_HINT =
-  '设备连不上时请放行 Windows 防火墙，管理员运行：netsh advfirewall firewall add rule ' +
-  'name="DevKit-TFTP" dir=in action=allow protocol=UDP localport=69' +
-  '（数据会话使用随机高位端口，建议直接放行本程序）。'
 
 const port = ref(69)
 const root = ref('')
@@ -90,7 +88,7 @@ async function refreshIps(): Promise<void> {
   ipOptions.value = ips.ips ?? []
   if (address.value !== '0.0.0.0' && !ipOptions.value.some((ip) => ip.address === address.value)) {
     address.value = '0.0.0.0'
-    ElMessage.warning('记忆的绑定 IP 已不在本机网卡上，已回落到全部网卡 (0.0.0.0)')
+    ElMessage.warning(t('tftp.ipFallback'))
   }
 }
 
@@ -122,16 +120,16 @@ async function startServer(): Promise<void> {
     running.value = true
     persistConfig()
     const shown = res.address ?? address.value
-    ElMessage.success(`TFTP 服务器已启动 ${shown}:${port.value}`)
+    ElMessage.success(t('tftp.startedMsg', { address: shown, port: port.value }))
   } else {
-    ElMessage.error(`启动失败: ${res.error}`)
+    ElMessage.error(t('tftp.startFailed', { error: res.error ?? '' }))
   }
 }
 
 async function stopServer(): Promise<void> {
   await window.api.invoke('tftp', 'stop', props.panelId)
   running.value = false
-  ElMessage.info('TFTP 服务器已停止')
+  ElMessage.info(t('tftp.stoppedMsg'))
 }
 
 function pickDir(): void {
@@ -144,7 +142,7 @@ function openDir(): void {
 
 /** 复制服务器地址到剪贴板（点击 IP 标签） */
 function copyIp(text: string): void {
-  void window.api.win.writeClipboard(text).then(() => ElMessage.success(`已复制 ${text}`))
+  void window.api.win.writeClipboard(text).then(() => ElMessage.success(t('tftp.copied', { text })))
 }
 
 onUnmounted(() => {
@@ -157,38 +155,38 @@ onUnmounted(() => {
   <div class="panel converter-page">
     <header class="converter-head">
       <div>
-        <h1>TFTP 服务器</h1>
-        <p>RFC1350 固件传输服务，支持多实例独立端口与网卡绑定</p>
+        <h1>{{ t('tftp.title') }}</h1>
+        <p>{{ t('tftp.subtitle') }}</p>
       </div>
     </header>
     <!-- 配置区 -->
     <div class="panel-section">
-      <h3>服务器配置</h3>
+      <h3>{{ t('tftp.serverConfig') }}</h3>
       <div class="panel-row">
-        <span class="lbl">端口</span>
+        <span class="lbl">{{ t('tftp.port') }}</span>
         <el-input-number v-model="port" :min="1" :max="65535" :disabled="running" size="small" />
-        <span class="lbl">本机 IP</span>
+        <span class="lbl">{{ t('tftp.localIp') }}</span>
         <el-select v-model="address" :disabled="running" size="small" style="width: 210px">
-          <el-option value="0.0.0.0" label="全部网卡 (0.0.0.0)" />
+          <el-option value="0.0.0.0" :label="t('tftp.allInterfaces')" />
           <el-option
             v-for="ip in ipOptions"
             :key="ip.address"
             :value="ip.address"
-            :label="`${ip.address}（${ip.name}）`"
+            :label="`${ip.address} (${ip.name})`"
           />
         </el-select>
-        <span class="lbl">根目录</span>
+        <span class="lbl">{{ t('tftp.rootDir') }}</span>
         <el-input
           v-model="root"
           size="small"
           style="width: 320px"
           :disabled="running"
-          placeholder="设备下载/上传的目录"
+          :placeholder="t('tftp.rootPlaceholder')"
         />
         <el-button size="small" :icon="Folder" :disabled="running" @click="pickDir">
-          选择目录
+          {{ t('tftp.pickDir') }}
         </el-button>
-        <el-button size="small" :icon="FolderOpened" @click="openDir">打开目录</el-button>
+        <el-button size="small" :icon="FolderOpened" @click="openDir">{{ t('tftp.openDir') }}</el-button>
         <el-button
           v-if="!running"
           type="primary"
@@ -196,32 +194,32 @@ onUnmounted(() => {
           :loading="starting"
           @click="startServer"
         >
-          启动
+          {{ t('tftp.start') }}
         </el-button>
-        <el-button v-else type="danger" size="small" @click="stopServer">停止</el-button>
+        <el-button v-else type="danger" size="small" @click="stopServer">{{ t('tftp.stop') }}</el-button>
         <el-tag size="small" :type="running ? 'success' : 'info'">
-          {{ running ? `运行中 ${address}:${port}` : '已停止' }}
+          {{ running ? t('tftp.runningStatus', { address, port }) : t('tftp.stopped') }}
         </el-tag>
       </div>
       <!-- 运行中提示设备端可用的服务器地址（绑定全部网卡时列出每个 IP） -->
       <div v-if="running" class="server-ip-row">
         <template v-if="address === '0.0.0.0'">
-          设备端服务器地址：
+          {{ t('tftp.deviceServerAddress') }}
           <el-tag
             v-for="ip in ipOptions"
             :key="ip.address"
             size="small"
             class="ip-tag"
-            title="点击复制"
+            :title="t('tftp.clickToCopy')"
             @click="copyIp(`${ip.address}:${port}`)"
           >
             {{ ip.address }}:{{ port }}
           </el-tag>
-          <span v-if="ipOptions.length === 0" class="ip-none">未检测到可用网卡</span>
+          <span v-if="ipOptions.length === 0" class="ip-none">{{ t('tftp.noInterfaces') }}</span>
         </template>
         <template v-else>
-          设备端服务器地址：
-          <el-tag size="small" class="ip-tag" title="点击复制" @click="copyIp(`${address}:${port}`)">
+          {{ t('tftp.deviceServerAddress') }}
+          <el-tag size="small" class="ip-tag" :title="t('tftp.clickToCopy')" @click="copyIp(`${address}:${port}`)">
             {{ address }}:{{ port }}
           </el-tag>
         </template>
@@ -230,43 +228,43 @@ onUnmounted(() => {
         type="info"
         :closable="false"
         class="fw-alert"
-        title="防火墙提示"
-        :description="FIREWALL_HINT"
+        :title="t('tftp.firewallTitle')"
+        :description="t('tftp.firewallHint')"
       />
     </div>
 
     <!-- 传输列表 -->
     <div class="panel-section">
-      <h3>传输记录</h3>
+      <h3>{{ t('tftp.transfers') }}</h3>
       <el-table :data="transfers" height="240" size="small" style="width: 100%">
-        <el-table-column label="方向" width="110">
+        <el-table-column :label="t('tftp.direction')" width="110">
           <template #default="{ row }">
             <el-tag size="small" :type="row.dir === 'rrq' ? 'primary' : 'warning'">
-              {{ row.dir === 'rrq' ? '设备下载' : '设备上传' }}
+              {{ row.dir === 'rrq' ? t('tftp.deviceDownload') : t('tftp.deviceUpload') }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="filename" label="文件" min-width="160" show-overflow-tooltip />
-        <el-table-column prop="peer" label="客户端" width="140" />
-        <el-table-column label="进度" width="180">
+        <el-table-column prop="filename" :label="t('tftp.file')" min-width="160" show-overflow-tooltip />
+        <el-table-column prop="peer" :label="t('tftp.client')" width="140" />
+        <el-table-column :label="t('tftp.progress')" width="180">
           <template #default="{ row }">
             <el-progress
               v-if="row.totalBytes > 0"
               :percentage="Math.min(100, Math.round((row.transferred / row.totalBytes) * 100))"
               :status="row.done ? (row.ok ? 'success' : 'exception') : undefined"
             />
-            <span v-else>{{ row.done ? (row.ok ? '完成' : '失败') : '传输中…' }}</span>
+            <span v-else>{{ row.done ? (row.ok ? t('tftp.done') : t('tftp.failed')) : t('tftp.transferring') }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="已传" width="110">
+        <el-table-column :label="t('tftp.transferred')" width="110">
           <template #default="{ row }">{{ fmtBytes(row.transferred) }}</template>
         </el-table-column>
-        <el-table-column label="状态" width="130">
+        <el-table-column :label="t('tftp.status')" width="130">
           <template #default="{ row }">
-            <el-tag v-if="!row.done" size="small">进行中</el-tag>
-            <el-tag v-else-if="row.ok" size="small" type="success">完成</el-tag>
+            <el-tag v-if="!row.done" size="small">{{ t('tftp.inProgress') }}</el-tag>
+            <el-tag v-else-if="row.ok" size="small" type="success">{{ t('tftp.done') }}</el-tag>
             <el-tooltip v-else :content="row.error ?? ''">
-              <el-tag size="small" type="danger">失败</el-tag>
+              <el-tag size="small" type="danger">{{ t('tftp.failed') }}</el-tag>
             </el-tooltip>
           </template>
         </el-table-column>
@@ -275,13 +273,13 @@ onUnmounted(() => {
 
     <!-- 日志 -->
     <div class="panel-section">
-      <h3>日志</h3>
+      <h3>{{ t('tftp.logs') }}</h3>
       <div class="log-box mono">
         <div v-for="(log, i) in logs" :key="i" class="log-line">
           <span class="log-time">{{ new Date(log.time).toLocaleTimeString() }}</span>
           {{ log.line }}
         </div>
-        <div v-if="logs.length === 0" class="log-empty">暂无日志</div>
+        <div v-if="logs.length === 0" class="log-empty">{{ t('tftp.noLogs') }}</div>
       </div>
     </div>
   </div>

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { usePanelMessage, usePanelMessageBox } from '@renderer/composables/panelOverlays'
 import type { CheckboxValueType } from 'element-plus'
 import {
@@ -27,6 +28,7 @@ import { vkName } from '../../../shared/keynames'
 
 const ElMessage = usePanelMessage()
 const ElMessageBox = usePanelMessageBox()
+const { t } = useI18n()
 
 const props = defineProps<{ panelId: string }>()
 
@@ -72,11 +74,14 @@ const playPercent = computed(() =>
     : 0
 )
 
-const TYPE_LABEL: Record<StepType, string> = {
-  input: '键鼠',
-  delay: '延时',
-  text: '文本',
-  'wait-color': '等颜色'
+function typeLabel(type: StepType): string {
+  const map: Record<StepType, string> = {
+    input: t('macro.typeInput'),
+    delay: t('macro.typeDelay'),
+    text: t('macro.typeText'),
+    'wait-color': t('macro.typeWaitColor')
+  }
+  return map[type]
 }
 
 const TYPE_TAG: Record<StepType, 'primary' | 'success' | 'warning' | 'info'> = {
@@ -100,28 +105,28 @@ function modsOf(d: KeyEventData): string {
 }
 
 function btnName(b: MouseEventData['button']): string {
-  return b === 'left' ? '左键' : b === 'right' ? '右键' : '中键'
+  return b === 'left' ? t('macro.btnLeft') : b === 'right' ? t('macro.btnRight') : t('macro.btnMiddle')
 }
 
 function describeData(d: InputEventData): string {
-  if (d.kind === 'key') return `${d.down ? '按下' : '抬起'} ${modsOf(d)}${vkName(d.vk)}`
+  if (d.kind === 'key') return `${d.down ? t('macro.keyDown') : t('macro.keyUp')} ${modsOf(d)}${vkName(d.vk)}`
   if (d.kind === 'mouse') {
-    if (d.action === 'move') return `移动到 (${d.x}, ${d.y})`
-    return `${btnName(d.button)}${d.action === 'down' ? '按下' : '抬起'} @(${d.x}, ${d.y})`
+    if (d.action === 'move') return t('macro.moveTo', { x: d.x, y: d.y })
+    return t('macro.mouseAction', { button: btnName(d.button), action: d.action === 'down' ? t('macro.keyDown') : t('macro.keyUp'), x: d.x, y: d.y })
   }
   const w = d as WheelEventData
-  return `滚轮${w.delta > 0 ? '向上' : '向下'} ${Math.abs(w.delta) / 120} 格 @(${w.x}, ${w.y})`
+  return t('macro.wheelAction', { dir: w.delta > 0 ? t('macro.wheelUp') : t('macro.wheelDown'), steps: Math.abs(w.delta) / 120, x: w.x, y: w.y })
 }
 
 function describeStep(s: MacroStep): string {
-  if (s.type === 'delay') return `延时 ${s.delayMs} ms`
-  if (s.type === 'text') return `输入文本 "${(s.text ?? '').slice(0, 40)}"`
+  if (s.type === 'delay') return t('macro.delayStep', { ms: s.delayMs })
+  if (s.type === 'text') return t('macro.textStep', { text: (s.text ?? '').slice(0, 40) })
   if (s.type === 'wait-color') {
     const w = s.wait
-    if (!w) return '等待颜色（未配置）'
-    return `${w.mode === 'appear' ? '等待出现' : '等待消失'} ${w.color} @(${w.x},${w.y}) 容差${w.tolerance} 超时${w.timeoutMs}ms`
+    if (!w) return t('macro.waitColorUnconfigured')
+    return t('macro.waitColorStep', { mode: w.mode === 'appear' ? t('macro.waitAppear') : t('macro.waitDisappear'), color: w.color, x: w.x, y: w.y, tolerance: w.tolerance, timeout: w.timeoutMs })
   }
-  return s.data ? describeData(s.data) : '（空输入步骤）'
+  return s.data ? describeData(s.data) : t('macro.emptyInputStep')
 }
 
 // ---------- 事件订阅与初始化 ----------
@@ -138,9 +143,9 @@ function onRecordEvent(payload: unknown): void {
     if (p.count > 0 && p.macro) {
       current.value = clone(p.macro)
       currentFilename.value = null
-      ElMessage.success(`录制完成，共 ${p.count} 个事件，已载入编辑器`)
+      ElMessage.success(t('macro.recordDone', { count: p.count }))
     } else {
-      ElMessage.warning('未捕获到输入事件')
+      ElMessage.warning(t('macro.recordEmpty'))
     }
   }
 }
@@ -154,9 +159,9 @@ function onPlayEvent(payload: unknown): void {
     progress.value = null
     const r = p.result
     if (!r) return
-    if (r.error) ElMessage.error(`回放失败：${r.error}`)
-    else if (r.completed) ElMessage.success(`回放完成（${(r.elapsedMs / 1000).toFixed(1)} 秒）`)
-    else ElMessage.info('回放已停止')
+    if (r.error) ElMessage.error(t('macro.playFailed', { error: r.error }))
+    else if (r.completed) ElMessage.success(t('macro.playDone', { seconds: (r.elapsedMs / 1000).toFixed(1) }))
+    else ElMessage.info(t('macro.playStopped'))
   }
 }
 
@@ -197,7 +202,7 @@ async function startRecord(): Promise<void> {
     recording: boolean
   }
   recording.value = res.recording
-  if (!res.recording) ElMessage.warning('启动录制失败（可能正在回放中）')
+  if (!res.recording) ElMessage.warning(t('macro.startRecordFailed'))
 }
 
 function stopRecord(): void {
@@ -206,7 +211,7 @@ function stopRecord(): void {
 
 function playMacro(macro: MacroFile): void {
   if (!macro.steps.length) {
-    ElMessage.warning('宏没有可回放的步骤')
+    ElMessage.warning(t('macro.noStepsToPlay'))
     return
   }
   window.api
@@ -252,7 +257,7 @@ function loadFile(item: LibItem): void {
 
 async function deleteFile(item: LibItem): Promise<void> {
   try {
-    await ElMessageBox.confirm(`确定删除宏「${item.macro.meta.name}」？`, '删除', {
+    await ElMessageBox.confirm(t('macro.deleteConfirm', { name: item.macro.meta.name }), t('macro.deleteTitle'), {
       type: 'warning'
     })
   } catch {
@@ -260,7 +265,7 @@ async function deleteFile(item: LibItem): Promise<void> {
   }
   await window.api.invoke('macro', 'macro:delete', props.panelId, { filename: item.filename })
   if (currentFilename.value === item.filename) currentFilename.value = null
-  ElMessage.success('已删除')
+  ElMessage.success(t('macro.deleted'))
   await refreshList()
 }
 
@@ -268,19 +273,19 @@ function exportFile(item: LibItem): void {
   void window.api
     .invoke('macro', 'macro:export', props.panelId, { macro: item.macro })
     .then((res) => {
-      if ((res as { ok: boolean }).ok) ElMessage.success('已导出')
+      if ((res as { ok: boolean }).ok) ElMessage.success(t('macro.exported'))
     })
 }
 
 function exportCurrent(): void {
   if (!current.value || !current.value.steps.length) {
-    ElMessage.warning('当前没有可导出的宏')
+    ElMessage.warning(t('macro.noMacroToExport'))
     return
   }
   void window.api
     .invoke('macro', 'macro:export', props.panelId, { macro: clone(current.value) })
     .then((res) => {
-      if ((res as { ok: boolean }).ok) ElMessage.success('已导出')
+      if ((res as { ok: boolean }).ok) ElMessage.success(t('macro.exported'))
     })
 }
 
@@ -292,7 +297,7 @@ async function importMacro(): Promise<void> {
   if (res.ok && res.macro) {
     current.value = clone(res.macro)
     currentFilename.value = null
-    ElMessage.success(`已导入「${res.macro.meta.name}」`)
+    ElMessage.success(t('macro.imported', { name: res.macro.meta.name }))
     await refreshList()
   }
 }
@@ -300,11 +305,11 @@ async function importMacro(): Promise<void> {
 async function saveCurrent(): Promise<void> {
   if (!current.value) return
   if (!current.value.steps.length) {
-    ElMessage.warning('宏没有步骤，先录制或插入')
+    ElMessage.warning(t('macro.noStepsToSave'))
     return
   }
   if (!current.value.meta.name.trim()) {
-    current.value.meta.name = `宏 ${new Date().toLocaleString()}`
+    current.value.meta.name = t('macro.defaultName', { time: new Date().toLocaleString() })
   }
   const res = (await window.api.invoke('macro', 'macro:save', props.panelId, {
     macro: clone(current.value),
@@ -316,13 +321,13 @@ async function saveCurrent(): Promise<void> {
     hotkey?: { ok: boolean; reason?: string }
   }
   if (!res.ok) {
-    ElMessage.error(`保存失败：${res.error}`)
+    ElMessage.error(t('macro.saveFailed', { error: res.error ?? '' }))
     return
   }
   currentFilename.value = res.filename ?? null
-  ElMessage.success('已保存到宏库')
+  ElMessage.success(t('macro.savedToLib'))
   if (res.hotkey && !res.hotkey.ok) {
-    ElMessage.warning(`热键注册失败：${res.hotkey.reason ?? '被占用'}`)
+    ElMessage.warning(t('macro.hotkeyFailed', { reason: res.hotkey.reason ?? t('macro.hotkeyTaken') }))
   }
   await refreshList()
 }
@@ -355,7 +360,7 @@ const dlg = reactive<StepDialog>({
   visible: false,
   id: '',
   type: 'delay',
-  segment: '手动',
+  segment: t('macro.manualSegment'),
   enabled: true,
   delayMs: 0,
   text: '',
@@ -365,7 +370,7 @@ const dlg = reactive<StepDialog>({
   wait: { x: 0, y: 0, color: '#FF0000', tolerance: 10, mode: 'appear', timeoutMs: 10000 }
 })
 
-const dlgTitle = computed(() => `编辑步骤（${TYPE_LABEL[dlg.type]}）`)
+const dlgTitle = computed(() => t('macro.editStepTitle', { type: typeLabel(dlg.type) }))
 
 function openStepDialog(step: MacroStep): void {
   dlg.id = step.id
@@ -399,7 +404,7 @@ function saveStep(): void {
     dlg.visible = false
     return
   }
-  target.segment = dlg.segment.trim() || '默认'
+  target.segment = dlg.segment.trim() || t('macro.defaultSegment')
   target.enabled = dlg.enabled
   target.delayMs = Math.max(0, Math.round(dlg.delayMs))
   if (dlg.type === 'text') target.text = dlg.text
@@ -433,7 +438,7 @@ function insertStep(type: StepType): void {
   const macro = current.value as MacroFile
   const step: MacroStep = {
     id: genId(),
-    segment: '手动',
+    segment: t('macro.manualSegment'),
     enabled: true,
     type,
     delayMs: type === 'delay' ? 500 : 0
@@ -535,14 +540,14 @@ async function saveSettings(): Promise<void> {
     results?: { id: string; accelerator: string; ok: boolean; reason?: string }[]
   }
   if (!res.ok) {
-    ElMessage.error('设置保存失败')
+    ElMessage.error(t('macro.settingsSaveFailed'))
     return
   }
   settings.value = clone(draft)
   settingsDlg.value = false
-  ElMessage.success('设置已保存')
+  ElMessage.success(t('macro.settingsSaved'))
   for (const r of res.results ?? []) {
-    if (!r.ok) ElMessage.warning(`热键 ${r.accelerator} 注册失败：${r.reason ?? '被占用'}`)
+    if (!r.ok) ElMessage.warning(t('macro.hotkeyRegFailed', { acc: r.accelerator, reason: r.reason ?? t('macro.hotkeyTaken') }))
   }
 }
 </script>
@@ -560,10 +565,10 @@ async function saveSettings(): Promise<void> {
           :disabled="playing"
           @click="startRecord"
         >
-          开始录制 ({{ settings?.hotkeyRecord ?? 'F9' }})
+          {{ t('macro.startRecord', { key: settings?.hotkeyRecord ?? 'F9' }) }}
         </el-button>
         <el-button v-else size="small" type="warning" :icon="SwitchButton" @click="stopRecord">
-          停止录制（已捕获 {{ recordCount }} 事件）
+          {{ t('macro.stopRecord', { count: recordCount }) }}
         </el-button>
         <el-button
           size="small"
@@ -572,13 +577,13 @@ async function saveSettings(): Promise<void> {
           :disabled="recording || playing || !current || current.steps.length === 0"
           @click="playEditor"
         >
-          回放当前 ({{ settings?.hotkeyPlay ?? 'F10' }})
+          {{ t('macro.playCurrent', { key: settings?.hotkeyPlay ?? 'F10' }) }}
         </el-button>
         <el-button size="small" :icon="VideoPause" :disabled="!playing" @click="stopPlay">
-          停止回放 ({{ settings?.hotkeyStop ?? 'F11' }})
+          {{ t('macro.stopPlay', { key: settings?.hotkeyStop ?? 'F11' }) }}
         </el-button>
         <el-divider direction="vertical" />
-        <span class="lbl">倍速</span>
+        <span class="lbl">{{ t('macro.speed') }}</span>
         <el-input-number
           v-model="speed"
           :min="0.1"
@@ -588,7 +593,7 @@ async function saveSettings(): Promise<void> {
           :disabled="playing"
           style="width: 104px"
         />
-        <span class="lbl">循环</span>
+        <span class="lbl">{{ t('macro.loops') }}</span>
         <el-input-number
           v-model="loops"
           :min="0"
@@ -597,14 +602,14 @@ async function saveSettings(): Promise<void> {
           :disabled="playing"
           style="width: 90px"
         />
-        <el-tag v-if="loops === 0" size="small" type="info">∞ 无限</el-tag>
+        <el-tag v-if="loops === 0" size="small" type="info">{{ t('macro.infinite') }}</el-tag>
         <el-divider direction="vertical" />
         <el-button size="small" :icon="Setting" :disabled="recording || playing" @click="openSettings">
-          设置
+          {{ t('macro.settings') }}
         </el-button>
-        <el-tag v-if="recording" size="small" type="danger" effect="dark">● 录制中</el-tag>
-        <el-tag v-else-if="playing" size="small" type="success" effect="dark">▶ 回放中</el-tag>
-        <el-tag v-else size="small" type="info">空闲</el-tag>
+        <el-tag v-if="recording" size="small" type="danger" effect="dark">{{ t('macro.statusRecording') }}</el-tag>
+        <el-tag v-else-if="playing" size="small" type="success" effect="dark">{{ t('macro.statusPlaying') }}</el-tag>
+        <el-tag v-else size="small" type="info">{{ t('macro.statusIdle') }}</el-tag>
       </div>
       <el-progress
         v-if="playing && progress"
@@ -619,22 +624,22 @@ async function saveSettings(): Promise<void> {
       <!-- 宏库 -->
       <div class="panel-section col-lib">
         <h3>
-          宏库
+          {{ t('macro.library') }}
           <el-button size="small" text :icon="Refresh" @click="refreshList" />
         </h3>
         <div class="lib-ops">
           <el-button size="small" :icon="DocumentAdd" :disabled="recording || playing" @click="newMacro">
-            新建
+            {{ t('macro.newMacro') }}
           </el-button>
           <el-button size="small" :icon="Upload" :disabled="recording || playing" @click="importMacro">
-            导入
+            {{ t('macro.import') }}
           </el-button>
         </div>
         <el-table :data="macros" size="small" height="430" style="width: 100%">
-          <el-table-column label="名称" min-width="130" show-overflow-tooltip>
+          <el-table-column :label="t('macro.colName')" min-width="130" show-overflow-tooltip>
             <template #default="{ row }">{{ (row as LibItem).macro.meta.name }}</template>
           </el-table-column>
-          <el-table-column label="热键" width="92">
+          <el-table-column :label="t('macro.colHotkey')" width="92">
             <template #default="{ row }">
               <el-tag v-if="(row as LibItem).macro.meta.hotkey" size="small">
                 {{ (row as LibItem).macro.meta.hotkey }}
@@ -642,16 +647,16 @@ async function saveSettings(): Promise<void> {
               <span v-else>-</span>
             </template>
           </el-table-column>
-          <el-table-column label="步数" width="56">
+          <el-table-column :label="t('macro.colSteps')" width="56">
             <template #default="{ row }">{{ (row as LibItem).macro.steps.length }}</template>
           </el-table-column>
-          <el-table-column label="更新" width="92">
+          <el-table-column :label="t('macro.colUpdated')" width="92">
             <template #default="{ row }">{{ fmtTime((row as LibItem).macro.meta.updatedAt) }}</template>
           </el-table-column>
-          <el-table-column label="操作" width="150" fixed="right">
+          <el-table-column :label="t('macro.colActions')" width="150" fixed="right">
             <template #default="{ row }">
               <el-button link type="primary" size="small" @click="loadFile(row as LibItem)">
-                载入
+                {{ t('macro.load') }}
               </el-button>
               <el-button
                 link
@@ -660,15 +665,15 @@ async function saveSettings(): Promise<void> {
                 :disabled="recording || playing"
                 @click="playMacro((row as LibItem).macro)"
               >
-                播放
+                {{ t('macro.play') }}
               </el-button>
-              <el-button link size="small" @click="exportFile(row as LibItem)">导出</el-button>
+              <el-button link size="small" @click="exportFile(row as LibItem)">{{ t('macro.export') }}</el-button>
               <el-button link type="danger" size="small" @click="deleteFile(row as LibItem)">
-                删除
+                {{ t('macro.delete') }}
               </el-button>
             </template>
           </el-table-column>
-          <template #empty>宏库为空，先录制一个宏并保存</template>
+          <template #empty>{{ t('macro.emptyLib') }}</template>
         </el-table>
       </div>
 
@@ -678,13 +683,13 @@ async function saveSettings(): Promise<void> {
           <div class="edit-head">
             <el-input
               v-model="current.meta.name"
-              placeholder="宏名称"
+              :placeholder="t('macro.macroNamePlaceholder')"
               size="small"
               style="width: 170px"
             />
             <el-input
               v-model="current.meta.hotkey"
-              placeholder="热键，如 Ctrl+Alt+1"
+              :placeholder="t('macro.hotkeyPlaceholder')"
               size="small"
               style="width: 160px"
             />
@@ -694,16 +699,16 @@ async function saveSettings(): Promise<void> {
               :disabled="recording || playing"
               @click="saveCurrent"
             >
-              保存
+              {{ t('macro.save') }}
             </el-button>
             <el-button size="small" :icon="Download" :disabled="recording || playing" @click="exportCurrent">
-              导出
+              {{ t('macro.export') }}
             </el-button>
-            <span class="hint">{{ currentFilename ? `文件：${currentFilename}` : '未保存' }}</span>
+            <span class="hint">{{ currentFilename ? t('macro.fileLabel', { name: currentFilename }) : t('macro.unsaved') }}</span>
           </div>
 
           <div class="seg-row" v-if="segments.length">
-            <span class="lbl">段开关:</span>
+            <span class="lbl">{{ t('macro.segmentSwitch') }}</span>
             <el-checkbox
               v-for="seg in segments"
               :key="seg"
@@ -717,10 +722,10 @@ async function saveSettings(): Promise<void> {
 
           <div class="edit-ops">
             <el-button size="small" :icon="Plus" :disabled="recording || playing" @click="insertStep('delay')">
-              插入延时
+              {{ t('macro.insertDelay') }}
             </el-button>
             <el-button size="small" :icon="Plus" :disabled="recording || playing" @click="insertStep('text')">
-              插入文本
+              {{ t('macro.insertText') }}
             </el-button>
             <el-button
               size="small"
@@ -728,36 +733,36 @@ async function saveSettings(): Promise<void> {
               :disabled="recording || playing"
               @click="insertStep('wait-color')"
             >
-              插入等待颜色
+              {{ t('macro.insertWaitColor') }}
             </el-button>
-            <span class="hint">回放热键作用于最近载入/回放的宏</span>
+            <span class="hint">{{ t('macro.playHotkeyHint') }}</span>
           </div>
 
           <el-table :data="steps" size="small" height="380" style="width: 100%">
             <el-table-column type="index" label="#" width="48" />
-            <el-table-column label="段" width="82">
+            <el-table-column :label="t('macro.colSegment')" width="82">
               <template #default="{ row }">
                 <el-tag size="small" type="info">{{ (row as MacroStep).segment }}</el-tag>
               </template>
             </el-table-column>
-            <el-table-column label="启用" width="54">
+            <el-table-column :label="t('macro.colEnabled')" width="54">
               <template #default="{ row }">
                 <el-checkbox v-model="(row as MacroStep).enabled" />
               </template>
             </el-table-column>
-            <el-table-column label="类型" width="82">
+            <el-table-column :label="t('macro.colType')" width="82">
               <template #default="{ row }">
                 <el-tag size="small" :type="TYPE_TAG[(row as MacroStep).type]">
-                  {{ TYPE_LABEL[(row as MacroStep).type] }}
+                  {{ typeLabel((row as MacroStep).type) }}
                 </el-tag>
               </template>
             </el-table-column>
-            <el-table-column label="内容" min-width="230" show-overflow-tooltip>
+            <el-table-column :label="t('macro.colContent')" min-width="230" show-overflow-tooltip>
               <template #default="{ row }">
                 <span class="mono">{{ describeStep(row as MacroStep) }}</span>
               </template>
             </el-table-column>
-            <el-table-column label="延时(ms)" width="136">
+            <el-table-column :label="t('macro.colDelayMs')" width="136">
               <template #default="{ row }">
                 <el-input-number
                   v-model="(row as MacroStep).delayMs"
@@ -768,7 +773,7 @@ async function saveSettings(): Promise<void> {
                 />
               </template>
             </el-table-column>
-            <el-table-column label="操作" width="168" fixed="right">
+            <el-table-column :label="t('macro.colActions')" width="168" fixed="right">
               <template #default="{ $index }">
                 <el-button link size="small" :disabled="$index === 0" @click="moveStep($index, -1)">
                   ↑
@@ -781,44 +786,44 @@ async function saveSettings(): Promise<void> {
                 >
                   ↓
                 </el-button>
-                <el-button link type="primary" size="small" @click="editStepAt($index)">编辑</el-button>
-                <el-button link type="danger" size="small" @click="removeStep($index)">删除</el-button>
+                <el-button link type="primary" size="small" @click="editStepAt($index)">{{ t('macro.edit') }}</el-button>
+                <el-button link type="danger" size="small" @click="removeStep($index)">{{ t('macro.delete') }}</el-button>
               </template>
             </el-table-column>
-            <template #empty>暂无步骤：点击「开始录制」或插入步骤</template>
+            <template #empty>{{ t('macro.emptySteps') }}</template>
           </el-table>
         </template>
-        <el-empty v-else description="尚未载入宏 — 点击「开始录制」或从左侧宏库载入" />
+        <el-empty v-else :description="t('macro.emptyEditor')" />
       </div>
     </div>
 
     <!-- 步骤编辑对话框 -->
     <el-dialog v-model="dlg.visible" :title="dlgTitle" width="500px" :close-on-click-modal="false">
       <el-form label-width="84px" size="small">
-        <el-form-item label="段名">
+        <el-form-item :label="t('macro.fieldSegment')">
           <el-input v-model="dlg.segment" style="width: 180px" />
         </el-form-item>
-        <el-form-item label="启用">
+        <el-form-item :label="t('macro.fieldEnabled')">
           <el-checkbox v-model="dlg.enabled" />
         </el-form-item>
-        <el-form-item label="前置延时">
+        <el-form-item :label="t('macro.fieldPreDelay')">
           <el-input-number v-model="dlg.delayMs" :min="0" :step="50" />
-          <span class="hint" style="margin-left: 8px">执行本步骤前等待（受倍速影响）</span>
+          <span class="hint" style="margin-left: 8px">{{ t('macro.preDelayHint') }}</span>
         </el-form-item>
 
         <template v-if="dlg.type === 'input' && dlgKind === 'key'">
-          <el-form-item label="键名">
+          <el-form-item :label="t('macro.fieldKeyName')">
             <el-input :model-value="vkName(dlg.key.vk)" disabled style="width: 140px" />
             <span style="margin-left: 8px">VK</span>
             <el-input-number v-model="dlg.key.vk" :min="0" :max="255" style="margin-left: 8px" />
           </el-form-item>
-          <el-form-item label="动作">
+          <el-form-item :label="t('macro.fieldAction')">
             <el-radio-group v-model="dlg.key.down">
-              <el-radio-button :value="true">按下</el-radio-button>
-              <el-radio-button :value="false">抬起</el-radio-button>
+              <el-radio-button :value="true">{{ t('macro.keyDown') }}</el-radio-button>
+              <el-radio-button :value="false">{{ t('macro.keyUp') }}</el-radio-button>
             </el-radio-group>
           </el-form-item>
-          <el-form-item label="修饰键">
+          <el-form-item :label="t('macro.fieldModifiers')">
             <el-checkbox v-model="dlg.key.ctrl">Ctrl</el-checkbox>
             <el-checkbox v-model="dlg.key.alt">Alt</el-checkbox>
             <el-checkbox v-model="dlg.key.shift">Shift</el-checkbox>
@@ -827,126 +832,126 @@ async function saveSettings(): Promise<void> {
         </template>
 
         <template v-else-if="dlg.type === 'input' && dlgKind === 'mouse'">
-          <el-form-item label="动作">
+          <el-form-item :label="t('macro.fieldAction')">
             <el-radio-group v-model="dlg.mouse.action">
-              <el-radio-button value="move">移动</el-radio-button>
-              <el-radio-button value="down">按下</el-radio-button>
-              <el-radio-button value="up">抬起</el-radio-button>
+              <el-radio-button value="move">{{ t('macro.mouseMove') }}</el-radio-button>
+              <el-radio-button value="down">{{ t('macro.keyDown') }}</el-radio-button>
+              <el-radio-button value="up">{{ t('macro.keyUp') }}</el-radio-button>
             </el-radio-group>
           </el-form-item>
-          <el-form-item label="按键">
+          <el-form-item :label="t('macro.fieldButton')">
             <el-radio-group v-model="dlg.mouse.button">
-              <el-radio-button value="left">左键</el-radio-button>
-              <el-radio-button value="right">右键</el-radio-button>
-              <el-radio-button value="middle">中键</el-radio-button>
+              <el-radio-button value="left">{{ t('macro.btnLeft') }}</el-radio-button>
+              <el-radio-button value="right">{{ t('macro.btnRight') }}</el-radio-button>
+              <el-radio-button value="middle">{{ t('macro.btnMiddle') }}</el-radio-button>
             </el-radio-group>
           </el-form-item>
-          <el-form-item label="坐标 X / Y">
+          <el-form-item :label="t('macro.fieldCoords')">
             <el-input-number v-model="dlg.mouse.x" :step="1" style="width: 130px" />
             <el-input-number v-model="dlg.mouse.y" :step="1" style="width: 130px; margin-left: 8px" />
           </el-form-item>
         </template>
 
         <template v-else-if="dlg.type === 'input' && dlgKind === 'wheel'">
-          <el-form-item label="滚动量">
+          <el-form-item :label="t('macro.fieldWheelDelta')">
             <el-input-number v-model="dlg.wheel.delta" :step="120" />
-            <span class="hint" style="margin-left: 8px">负 = 向下，一格 ±120</span>
+            <span class="hint" style="margin-left: 8px">{{ t('macro.wheelDeltaHint') }}</span>
           </el-form-item>
-          <el-form-item label="坐标 X / Y">
+          <el-form-item :label="t('macro.fieldCoords')">
             <el-input-number v-model="dlg.wheel.x" style="width: 130px" />
             <el-input-number v-model="dlg.wheel.y" style="width: 130px; margin-left: 8px" />
           </el-form-item>
         </template>
 
-        <el-form-item v-else-if="dlg.type === 'text'" label="文本">
+        <el-form-item v-else-if="dlg.type === 'text'" :label="t('macro.typeText')">
           <el-input
             v-model="dlg.text"
             type="textarea"
             :rows="3"
-            placeholder="回放时按 Unicode 逐字符注入"
+            :placeholder="t('macro.textPlaceholder')"
           />
         </el-form-item>
 
         <template v-else-if="dlg.type === 'wait-color'">
-          <el-form-item label="坐标 X / Y">
+          <el-form-item :label="t('macro.fieldCoords')">
             <el-input-number v-model="dlg.wait.x" :step="1" style="width: 130px" />
             <el-input-number v-model="dlg.wait.y" :step="1" style="width: 130px; margin-left: 8px" />
-            <el-button :icon="Aim" style="margin-left: 8px" @click="pickForWait">截屏取点</el-button>
+            <el-button :icon="Aim" style="margin-left: 8px" @click="pickForWait">{{ t('macro.pickPoint') }}</el-button>
           </el-form-item>
-          <el-form-item label="颜色">
+          <el-form-item :label="t('macro.fieldColor')">
             <el-color-picker v-model="dlg.wait.color" />
             <span class="mono" style="margin-left: 8px">{{ dlg.wait.color }}</span>
           </el-form-item>
-          <el-form-item label="容差">
+          <el-form-item :label="t('macro.fieldTolerance')">
             <el-input-number v-model="dlg.wait.tolerance" :min="0" :max="255" />
-            <span class="hint" style="margin-left: 8px">各通道最大允许偏差</span>
+            <span class="hint" style="margin-left: 8px">{{ t('macro.toleranceHint') }}</span>
           </el-form-item>
-          <el-form-item label="模式">
+          <el-form-item :label="t('macro.fieldMode')">
             <el-radio-group v-model="dlg.wait.mode">
-              <el-radio-button value="appear">等待出现</el-radio-button>
-              <el-radio-button value="disappear">等待消失</el-radio-button>
+              <el-radio-button value="appear">{{ t('macro.waitAppear') }}</el-radio-button>
+              <el-radio-button value="disappear">{{ t('macro.waitDisappear') }}</el-radio-button>
             </el-radio-group>
           </el-form-item>
-          <el-form-item label="超时(ms)">
+          <el-form-item :label="t('macro.fieldTimeout')">
             <el-input-number v-model="dlg.wait.timeoutMs" :min="500" :step="500" />
-            <span class="hint" style="margin-left: 8px">超时后回放终止</span>
+            <span class="hint" style="margin-left: 8px">{{ t('macro.timeoutHint') }}</span>
           </el-form-item>
         </template>
       </el-form>
       <template #footer>
-        <el-button @click="dlg.visible = false">取消</el-button>
-        <el-button type="primary" @click="saveStep">确定</el-button>
+        <el-button @click="dlg.visible = false">{{ t('macro.cancel') }}</el-button>
+        <el-button type="primary" @click="saveStep">{{ t('macro.confirm') }}</el-button>
       </template>
     </el-dialog>
 
     <!-- 设置对话框 -->
-    <el-dialog v-model="settingsDlg" title="宏设置" width="540px" :close-on-click-modal="false">
+    <el-dialog v-model="settingsDlg" :title="t('macro.settingsTitle')" width="540px" :close-on-click-modal="false">
       <el-form label-width="170px" size="small">
-        <el-form-item label="录制开始/停止热键">
+        <el-form-item :label="t('macro.hotkeyRecordLabel')">
           <el-input
             :model-value="draft.hotkeyRecord"
             class="hk-input"
-            placeholder="点击输入框后按下组合键"
+            :placeholder="t('macro.pressHotkeyPlaceholder')"
             @keydown.capture.prevent="capKey($event, 'hotkeyRecord')"
           />
         </el-form-item>
-        <el-form-item label="回放热键">
+        <el-form-item :label="t('macro.hotkeyPlayLabel')">
           <el-input
             :model-value="draft.hotkeyPlay"
             class="hk-input"
-            placeholder="点击输入框后按下组合键"
+            :placeholder="t('macro.pressHotkeyPlaceholder')"
             @keydown.capture.prevent="capKey($event, 'hotkeyPlay')"
           />
         </el-form-item>
-        <el-form-item label="急停热键">
+        <el-form-item :label="t('macro.hotkeyStopLabel')">
           <el-input
             :model-value="draft.hotkeyStop"
             class="hk-input"
-            placeholder="点击输入框后按下组合键"
+            :placeholder="t('macro.pressHotkeyPlaceholder')"
             @keydown.capture.prevent="capKey($event, 'hotkeyStop')"
           />
         </el-form-item>
-        <el-form-item label="录制时忽略鼠标移动">
+        <el-form-item :label="t('macro.ignoreMovesLabel')">
           <el-switch v-model="draft.ignoreMoves" />
         </el-form-item>
-        <el-form-item label="录制时屏蔽自身热键 (MR-07)">
+        <el-form-item :label="t('macro.suppressOwnLabel')">
           <el-switch v-model="draft.suppressOwnHotkeys" />
-          <span class="hint" style="margin-left: 8px">避免把 F9/F10 按键录进宏</span>
+          <span class="hint" style="margin-left: 8px">{{ t('macro.suppressOwnHint') }}</span>
         </el-form-item>
-        <el-form-item label="回放中 Esc 急停">
+        <el-form-item :label="t('macro.escStopLabel')">
           <el-switch v-model="draft.escStop" />
         </el-form-item>
-        <el-form-item label="默认倍速">
+        <el-form-item :label="t('macro.defaultSpeedLabel')">
           <el-input-number v-model="draft.speed" :min="0.1" :max="10" :step="0.1" />
         </el-form-item>
-        <el-form-item label="默认循环次数">
+        <el-form-item :label="t('macro.defaultLoopsLabel')">
           <el-input-number v-model="draft.loops" :min="0" :step="1" />
-          <span class="hint" style="margin-left: 8px">0 = 无限循环</span>
+          <span class="hint" style="margin-left: 8px">{{ t('macro.infiniteLoopsHint') }}</span>
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="settingsDlg = false">取消</el-button>
-        <el-button type="primary" @click="saveSettings">保存设置</el-button>
+        <el-button @click="settingsDlg = false">{{ t('macro.cancel') }}</el-button>
+        <el-button type="primary" @click="saveSettings">{{ t('macro.saveSettings') }}</el-button>
       </template>
     </el-dialog>
   </div>

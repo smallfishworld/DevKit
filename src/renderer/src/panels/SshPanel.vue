@@ -26,9 +26,11 @@ import type { QuickCmdStep } from '../../../shared/term-macro'
 import { useTermMacros } from '../composables/useTermMacros'
 import { activateTermMacroTarget, registerTermMacroTarget } from '../composables/useTermMacroTargets'
 import { useSidebarDrag } from '../composables/useSidebarDrag'
+import { useI18n } from 'vue-i18n'
 import { useTabStore } from '@renderer/stores/tabs'
 
 const ElMessage = usePanelMessage()
+const { t } = useI18n()
 
 const props = defineProps<{ panelId: string }>()
 const tabStore = useTabStore()
@@ -121,7 +123,7 @@ onUnmounted(
     enabled: () => open.value,
     writer: macroWriter,
     // 自带侧栏底部的明文密码提醒，换成共享栏后照常显示
-    footnote: () => (sessions.value.length ? '预设里的密码以明文保存在本机 config.json，请勿保存生产环境密码' : '')
+    footnote: () => (sessions.value.length ? t('sshPanel.passwordWarning') : '')
   })
 )
 
@@ -147,12 +149,12 @@ onMounted(async () => {
       const s = p as { open: boolean; error?: string }
       open.value = s.open
       if (!s.open) {
-        if (s.error) ElMessage.error(`SSH 已断开：${s.error}`)
-        else termView.value?.info('连接已关闭')
+        if (s.error) ElMessage.error(t('sshPanel.disconnectedError', { error: s.error }))
+        else termView.value?.info(t('sshPanel.closed'))
       }
     }),
     window.api.on('ssh', props.panelId, 'error', (p) => {
-      ElMessage.warning(`SSH 错误：${(p as { message: string }).message}`)
+      ElMessage.warning(t('sshPanel.error', { error: (p as { message: string }).message }))
     }),
 
   )
@@ -166,7 +168,7 @@ onMounted(async () => {
   showTime.value = config.value.showTime === true
   if (config.value.sidebarWidth) sidebarWidth.value = config.value.sidebarWidth
   sidebarHidden.value = config.value.sidebarHidden === true
-  termView.value?.info('就绪。填写主机信息后点击「连接」，终端内直接输入命令。')
+  termView.value?.info(t('sshPanel.ready'))
 })
 
 onUnmounted(() => {
@@ -187,7 +189,7 @@ function rememberConnection(): void {
 // ---------- 连接 ----------
 async function connect(): Promise<void> {
   if (!params.host.trim()) {
-    ElMessage.warning('请填写主机地址')
+    ElMessage.warning(t('sshPanel.hostRequired'))
     return
   }
   connecting.value = true
@@ -198,12 +200,12 @@ async function connect(): Promise<void> {
   connecting.value = false
   if (res.ok) {
     open.value = true
-    termView.value?.info(`已连接 ${params.username}@${params.host}:${params.port}`)
+    termView.value?.info(t('sshPanel.connected', { user: params.username, host: params.host, port: params.port }))
     rememberConnection()
     persistConfig()
     termView.value?.focus()
   } else {
-    ElMessage.error(`连接失败：${res.error}`)
+    ElMessage.error(t('sshPanel.connectFailed', { error: res.error }))
   }
 }
 
@@ -211,7 +213,7 @@ async function disconnect(): Promise<void> {
   await window.api.invoke('ssh', 'close', props.panelId)
   open.value = false
   tabStore.rename(props.panelId, `${params.username}@${params.host}`)
-  termView.value?.info('已断开')
+  termView.value?.info(t('sshPanel.disconnected'))
 }
 
 /** 键盘直入：原样发 SSH 通道（Enter 为 \r，由远端 pty 处理）；录制时同步记录 */
@@ -242,9 +244,9 @@ function saveLog(): void {
   void window.api
     .invoke('ssh', 'log:mem-save', props.panelId)
     .then((res) => {
-      const r = res as { ok: boolean; error?: string }
-      if (r.ok) ElMessage.success('日志已保存')
-      else if (r.error && r.error !== '已取消') ElMessage.warning(`存日志失败：${r.error}`)
+      const r = res as { ok: boolean; code?: string; error?: string }
+      if (r.ok) ElMessage.success(t('sshPanel.logSaved'))
+      else if (r.code !== 'CANCELLED' && r.error) ElMessage.warning(t('sshPanel.logSaveFailed', { error: r.error }))
     })
     .catch(() => {})
 }
@@ -260,7 +262,7 @@ async function setLogDir(): Promise<void> {
     dir?: string
     error?: string
   }
-  if (res.ok && res.dir) ElMessage.success(`日志保存目录已设为：${res.dir}（新会话生效）`)
+  if (res.ok && res.dir) ElMessage.success(t('sshPanel.logDirectory', { dir: res.dir }))
 }
 
 // ---------- 会话与配置 ----------
@@ -279,7 +281,7 @@ async function persistConfig(): Promise<void> {
 /** 展开「预设名」输入行（点「存为预设」先命名，避免弹框抢焦点把工具栏状态弄乱） */
 function openSavePreset(): void {
   if (!params.host.trim()) {
-    ElMessage.warning('请先填写主机')
+    ElMessage.warning(t('sshPanel.hostFirst'))
     return
   }
   presetSaveName.value = presetName.value.trim() || `${params.username}@${params.host}`
@@ -290,7 +292,7 @@ function openSavePreset(): void {
 async function saveSession(): Promise<void> {
   if (!config.value) return
   if (!params.host.trim()) {
-    ElMessage.warning('请先填写主机')
+    ElMessage.warning(t('sshPanel.hostFirst'))
     return
   }
   const name = presetSaveName.value.trim() || `${params.username}@${params.host}`
@@ -300,7 +302,7 @@ async function saveSession(): Promise<void> {
   config.value.sessions = list
   presetName.value = name
   await persistConfig()
-  ElMessage.success(`预设「${name}」已保存`)
+  ElMessage.success(t('sshPanel.presetSaved', { name }))
 }
 
 /** 选中预设：套用其中的连接参数（不自动连接） */
@@ -346,7 +348,7 @@ async function pickKeyFile(): Promise<void> {
         <template v-if="!open">
           <el-input
             v-model="params.host"
-            placeholder="主机 IP 或主机名"
+            :placeholder="t('sshPanel.hostPlaceholder')"
             size="small"
             style="width: 180px"
             @keydown.enter="connect"
@@ -361,21 +363,21 @@ async function pickKeyFile(): Promise<void> {
           />
           <el-input
             v-model="params.username"
-            placeholder="用户名"
+            :placeholder="t('sshPanel.username')"
             size="small"
             style="width: 110px"
             @keydown.enter="connect"
           />
           <el-select v-model="params.authType" size="small" style="width: 96px">
-            <el-option value="password" label="密码" />
-            <el-option value="key" label="私钥" />
+            <el-option value="password" :label="t('sshPanel.password')" />
+            <el-option value="key" :label="t('sshPanel.key')" />
           </el-select>
           <el-input
             v-if="params.authType === 'password'"
             v-model="params.password"
             type="password"
             show-password
-            placeholder="密码"
+            :placeholder="t('sshPanel.password')"
             size="small"
             style="width: 150px"
             @keydown.enter="connect"
@@ -383,7 +385,7 @@ async function pickKeyFile(): Promise<void> {
           <template v-else>
             <el-input
               v-model="params.privateKeyPath"
-              placeholder="私钥文件路径"
+              :placeholder="t('sshPanel.keyPath')"
               size="small"
               style="width: 200px"
             />
@@ -396,7 +398,7 @@ async function pickKeyFile(): Promise<void> {
             :loading="connecting"
             @click="connect"
           >
-            连接
+            {{ t('sshPanel.connect') }}
           </el-button>
         </template>
         <template v-else>
@@ -404,7 +406,7 @@ async function pickKeyFile(): Promise<void> {
             {{ params.username }}@{{ params.host }}
           </el-tag>
           <el-button type="danger" size="small" :icon="CircleClose" @click="disconnect">
-            断开
+            {{ t('sshPanel.disconnect') }}
           </el-button>
         </template>
         <el-divider direction="vertical" />
@@ -413,8 +415,8 @@ async function pickKeyFile(): Promise<void> {
           size="small"
           filterable
           clearable
-          placeholder="套用已存预设"
-          aria-label="已存预设"
+          :placeholder="t('sshPanel.preset')"
+          :aria-label="t('sshPanel.preset')"
           style="width: 168px"
           @change="applyPreset"
         >
@@ -425,25 +427,25 @@ async function pickKeyFile(): Promise<void> {
             :label="`${item.name}（${item.params.username}@${item.params.host}:${item.params.port}）`"
           />
         </el-select>
-        <el-button size="small" :icon="Plus" title="把当前填写的参数保存为预设（同名覆盖）" @click="openSavePreset">存为预设</el-button>
+        <el-button size="small" :icon="Plus" @click="openSavePreset">{{ t('sshPanel.savePreset') }}</el-button>
         <el-button size="small" :type="presetDeleteArmed ? 'danger' : undefined"
-          :aria-label="presetDeleteArmed ? '确认删除所选预设' : '删除所选预设'"
-          :title="presetDeleteArmed ? '再点一次确认删除' : '删除所选预设'"
+          :aria-label="presetDeleteArmed ? t('sshExtra.confirmDeletePreset') : t('sshExtra.deletePreset')"
+          :title="presetDeleteArmed ? t('sshExtra.clickAgainDelete') : t('sshExtra.deletePreset')"
           :disabled="!presetName" @click="requestDeletePreset">
-          <span v-if="presetDeleteArmed">确认</span><el-icon v-else><Delete /></el-icon>
+          <span v-if="presetDeleteArmed">{{ t('sshPanel.confirm') }}</span><el-icon v-else><Delete /></el-icon>
         </el-button>
         <template v-if="presetSaving">
           <el-input
             v-model="presetSaveName"
             size="small"
-            placeholder="预设名"
-            aria-label="预设名"
+            :placeholder="t('sshPanel.presetName')"
+            :aria-label="t('sshPanel.presetName')"
             style="width: 150px"
             @keydown.enter="saveSession"
             @keydown.esc="presetSaving = false"
           />
-          <el-button size="small" type="primary" @click="saveSession">保存</el-button>
-          <el-button size="small" @click="presetSaving = false">取消</el-button>
+          <el-button size="small" type="primary" @click="saveSession">{{ t('sshPanel.save') }}</el-button>
+          <el-button size="small" @click="presetSaving = false">{{ t('sshPanel.cancel') }}</el-button>
         </template>
       </div>
     </div>
@@ -455,12 +457,12 @@ async function pickKeyFile(): Promise<void> {
       <template v-if="!sidebarHidden && !sharedCmds">
         <div class="sessions" :style="{ width: sidebarWidth + 'px' }">
           <QuickCmdManager :enabled="open" :writer="macroWriter" />
-          <p v-if="sessions.length" class="hint preset-note">⚠ 预设里的密码以明文保存在本机 config.json，请勿保存生产环境密码</p>
+          <p v-if="sessions.length" class="hint preset-note">⚠ {{ t('sshPanel.passwordWarning') }}</p>
         </div>
 
         <!-- 拖动调整侧栏宽度（VS Code 式分隔条）；中央折叠把手 -->
-        <div class="sidebar-split" title="拖动调整宽度" @mousedown="onSidebarResize">
-          <button class="split-toggle" title="折叠快捷命令栏" @mousedown.stop @click="toggleSidebar">
+        <div class="sidebar-split" :title="t('sshExtra.resizeSidebar')" @mousedown="onSidebarResize">
+          <button class="split-toggle" :title="t('sshExtra.collapseCmds')" @mousedown.stop @click="toggleSidebar">
             <svg viewBox="0 0 8 12" width="7" height="10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
               <path d="M6.5 1L1.5 6l5 5" />
             </svg>
@@ -469,7 +471,7 @@ async function pickKeyFile(): Promise<void> {
       </template>
 
       <!-- 折叠后的细条：点击展开侧栏 -->
-      <div v-else-if="!sharedCmds" class="sidebar-collapsed" :title="'展开快捷命令栏'" @click="toggleSidebar">
+      <div v-else-if="!sharedCmds" class="sidebar-collapsed" :title="t('sshExtra.expandCmds')" @click="toggleSidebar">
         <el-icon :size="16"><ArrowRight /></el-icon>
       </div>
 
@@ -480,24 +482,24 @@ async function pickKeyFile(): Promise<void> {
         @focusin="activateTermMacroTarget(props.panelId)"
       >
         <div class="term-opts">
-          <el-button size="small" text :icon="Search" title="查找（Ctrl+F）" @click="openTermSearch">查找</el-button>
-          <el-button size="small" text @click="clearTerm">清屏</el-button>
-          <el-button size="small" text :icon="Download" @click="saveLog">保存日志</el-button>
+          <el-button size="small" text :icon="Search" :title="t('terminal.findTitle')" @click="openTermSearch">{{ t('terminal.find') }}</el-button>
+          <el-button size="small" text @click="clearTerm">{{ t('terminal.clear') }}</el-button>
+          <el-button size="small" text :icon="Download" @click="saveLog">{{ t('sshPanel.saveLog') }}</el-button>
           <TerminalHistory tool="ssh" :panel-id="props.panelId" />
           <el-popover placement="bottom-start" :width="270" trigger="click">
-            <template #reference><el-button size="small" text :icon="FolderOpened">日志设置</el-button></template>
-          <el-tooltip content="连接期间所有收发自动落盘（关闭后仅手动「存日志」）" placement="top">
-            <el-checkbox v-model="autoLog" size="small" title="新会话生效；关闭后使用临时历史，关闭面板或开始新会话时删除" @change="persistConfig">保留日志</el-checkbox>
+            <template #reference><el-button size="small" text :icon="FolderOpened">{{ t('sshPanel.logSettings') }}</el-button></template>
+          <el-tooltip :content="t('sshExtra.keepLogTooltip')" placement="top">
+            <el-checkbox v-model="autoLog" size="small" @change="persistConfig">{{ t('sshPanel.keepLog') }}</el-checkbox>
           </el-tooltip>
             <div class="panel-row">
-              <el-button size="small" @click="setLogDir">设置保存路径</el-button>
-              <el-button size="small" @click="openLogDir">打开保存路径</el-button>
+              <el-button size="small" @click="setLogDir">{{ t('sshPanel.setLogPath') }}</el-button>
+              <el-button size="small" @click="openLogDir">{{ t('sshPanel.openLogPath') }}</el-button>
             </div>
           </el-popover>
           <el-popover placement="bottom-end" :width="280" trigger="click">
-            <template #reference><el-button size="small" text>显示设置</el-button></template>
+            <template #reference><el-button size="small" text>{{ t('terminal.display') }}</el-button></template>
             <div class="ssh-display-settings">
-          <el-tooltip content="终端字体（可手输系统内已安装的字体名）" placement="top">
+          <el-tooltip :content="t('sshExtra.fontTooltip')" placement="top">
             <el-select
               v-model="termFont"
               size="small"
@@ -508,16 +510,16 @@ async function pickKeyFile(): Promise<void> {
               <el-option value="Consolas" label="Consolas" />
               <el-option value="Cascadia Mono" label="Cascadia Mono" />
               <el-option value="Courier New" label="Courier New" />
-              <el-option value="SimSun" label="宋体" />
+              <el-option value="SimSun" :label="t('sshExtra.fontSimSun')" />
             </el-select>
           </el-tooltip>
-          <el-tooltip content="字号（Ctrl+滚轮 或 Ctrl+= / Ctrl+- / Ctrl+0 缩放）" placement="top">
+          <el-tooltip :content="t('sshExtra.fontSizeTooltip')" placement="top">
             <el-select v-model="termFontSize" size="small" filterable style="width: 74px">
               <el-option v-for="s in TERM_SIZES" :key="s" :value="s" :label="String(s)" />
             </el-select>
           </el-tooltip>
-          <el-tooltip content="每行前显示本地时间 [HH:MM:SS.mmm]，与日志落盘格式一致" placement="top">
-            <el-checkbox v-model="showTime" size="small" @change="persistConfig">时间戳</el-checkbox>
+          <el-tooltip :content="t('sshExtra.timestampTooltip')" placement="top">
+            <el-checkbox v-model="showTime" size="small" @change="persistConfig">{{ t('sshPanel.timestamp') }}</el-checkbox>
           </el-tooltip>
             </div>
           </el-popover>

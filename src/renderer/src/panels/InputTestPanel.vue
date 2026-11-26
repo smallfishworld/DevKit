@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import type { InputSelfTest, InputEventData } from '../../../shared/types'
 import { vkName } from '../../../shared/keynames'
+import { useI18n } from 'vue-i18n'
 
 const props = defineProps<{ panelId: string }>()
+const { t } = useI18n()
 
 // ---------- 原生模块状态 ----------
 const selfTest = ref<InputSelfTest | null>(null)
@@ -37,16 +39,16 @@ function describe(data: InputEventData): string {
     ]
       .filter(Boolean)
       .join('+')
-    return `${data.down ? '↓按下' : '↑抬起'} ${mods ? mods + '+' : ''}${vkName(data.vk)} (VK 0x${data.vk
+    return `${t(data.down ? 'inputTest.pressed' : 'inputTest.released')} ${mods ? mods + '+' : ''}${vkName(data.vk)} (VK 0x${data.vk
       .toString(16)
       .toUpperCase()})`
   }
   if (data.kind === 'mouse') {
-    const btnName = { left: '左键', right: '右键', middle: '中键' }[data.button]
-    if (data.action === 'move') return `移动 (${data.x}, ${data.y})`
-    return `${data.action === 'down' ? '按下' : '抬起'} ${btnName} @(${data.x}, ${data.y})`
+    const btnName = t(`inputTest.${data.button}Button`)
+    if (data.action === 'move') return t('inputTest.move', { x: data.x, y: data.y })
+    return t('inputTest.mouseAction', { action: t(data.action === 'down' ? 'inputTest.pressed' : 'inputTest.released'), button: btnName, x: data.x, y: data.y })
   }
-  return `滚轮 ${data.delta > 0 ? '↑上' : '↓下'} (${data.x}, ${data.y})`
+  return t('inputTest.wheel', { direction: t(data.delta > 0 ? 'inputTest.wheelUp' : 'inputTest.wheelDown'), x: data.x, y: data.y })
 }
 
 function onInput(payload: unknown): void {
@@ -94,7 +96,7 @@ const injY = ref(100)
 const injText = ref('Hello DevKit!')
 const injVk = ref(65)
 
-const VK_OPTIONS = [
+const VK_OPTIONS = computed(() => [
   { label: 'A', value: 65 },
   { label: 'Enter', value: 13 },
   { label: 'Space', value: 32 },
@@ -102,9 +104,9 @@ const VK_OPTIONS = [
   { label: 'Tab', value: 9 },
   { label: 'F5', value: 116 },
   { label: 'Delete', value: 46 },
-  { label: '方向上', value: 38 },
-  { label: '方向下', value: 40 }
-]
+  { label: t('inputTest.up'), value: 38 },
+  { label: t('inputTest.down'), value: 40 }
+])
 
 const lastResult = ref('')
 
@@ -113,9 +115,9 @@ async function doInject(action: string, payload: unknown, label: string): Promis
     const res = (await window.api.invoke('input', action, props.panelId, payload)) as {
       ok: boolean
     }
-    lastResult.value = `${label}: ${res.ok ? '成功' : '失败（SendInput 被拒绝）'}`
+    lastResult.value = `${label}: ${res.ok ? t('extraCommon.success') : t('inputTest.rejected')}`
   } catch (err) {
-    lastResult.value = `${label}: 异常 ${String(err)}`
+    lastResult.value = `${label}: ${t('extraCommon.error', { error: String(err) })}`
   }
 }
 </script>
@@ -124,25 +126,25 @@ async function doInject(action: string, payload: unknown, label: string): Promis
   <div class="panel converter-page">
     <header class="converter-head">
       <div>
-        <h1>键鼠输入测试</h1>
-        <p>全局键鼠事件捕获与 SendInput 注入自检</p>
+        <h1>{{ t('inputTest.title') }}</h1>
+        <p>{{ t('inputTest.subtitle') }}</p>
       </div>
     </header>
 
     <div class="panel-section">
-      <h3>原生模块状态</h3>
+      <h3>{{ t('inputTest.nativeStatus') }}</h3>
       <div v-if="selfTest" class="panel-row">
         <el-tag size="small" :type="selfTest.koffiLoaded ? 'success' : 'danger'">
-          koffi {{ selfTest.koffiLoaded ? '加载正常' : '加载失败' }}
+          koffi {{ t(selfTest.koffiLoaded ? 'inputTest.loaded' : 'inputTest.loadFailed') }}
         </el-tag>
         <el-tag size="small" :type="selfTest.sendInputResolved ? 'success' : 'danger'">
-          SendInput {{ selfTest.sendInputResolved ? '可用' : '不可用' }}
+          SendInput {{ t(selfTest.sendInputResolved ? 'inputTest.available' : 'inputTest.unavailable') }}
         </el-tag>
         <el-tag size="small" :type="selfTest.inputStructSize === 40 ? 'success' : 'warning'">
-          sizeof(INPUT) = {{ selfTest.inputStructSize }}（x64 应为 40）
+          sizeof(INPUT) = {{ selfTest.inputStructSize }}{{ t('inputTest.expectedSize') }}
         </el-tag>
         <el-tag size="small" :type="selfTest.uiohookLoaded ? 'success' : 'danger'">
-          uiohook {{ selfTest.uiohookLoaded ? '加载正常' : '加载失败' }}
+          uiohook {{ t(selfTest.uiohookLoaded ? 'inputTest.loaded' : 'inputTest.loadFailed') }}
         </el-tag>
         <span v-if="selfTest.error" class="err-text">
           {{ selfTest.error }}
@@ -152,62 +154,62 @@ async function doInject(action: string, payload: unknown, label: string): Promis
     </div>
 
     <div class="panel-section">
-      <h3>全局事件捕获</h3>
+      <h3>{{ t('inputTest.captureTitle') }}</h3>
       <div class="panel-row mb-12">
-        <el-button v-if="!capturing" size="small" type="primary" @click="startCapture">开始捕获</el-button>
-        <el-button v-else size="small" type="danger" @click="stopCapture">停止捕获</el-button>
-        <el-checkbox v-model="ignoreMoves" size="small">忽略鼠标移动（只记录点击/按键）</el-checkbox>
-        <el-button size="small" text @click="clearEvents">清空</el-button>
-        <el-tag size="small">累计 {{ total }} 个事件</el-tag>
+        <el-button v-if="!capturing" size="small" type="primary" @click="startCapture">{{ t('inputTest.startCapture') }}</el-button>
+        <el-button v-else size="small" type="danger" @click="stopCapture">{{ t('inputTest.stopCapture') }}</el-button>
+        <el-checkbox v-model="ignoreMoves" size="small">{{ t('inputTest.ignoreMoves') }}</el-checkbox>
+        <el-button size="small" text @click="clearEvents">{{ t('extraCommon.clear') }}</el-button>
+        <el-tag size="small">{{ t('inputTest.total', { count: total }) }}</el-tag>
         <span v-if="capturing" class="warn-hint">
-          正在捕获全局键鼠，切到任意窗口按键盘试试
+          {{ t('inputTest.capturingHint') }}
         </span>
       </div>
       <el-table :data="events" height="300" size="small" class="full-w">
         <el-table-column prop="seq" label="#" width="70" />
-        <el-table-column prop="kind" label="类型" width="90" />
-        <el-table-column prop="desc" label="事件" min-width="280" />
-        <el-table-column prop="delta" label="间隔" width="90" />
+        <el-table-column prop="kind" :label="t('inputTest.type')" width="90" />
+        <el-table-column prop="desc" :label="t('inputTest.event')" min-width="280" />
+        <el-table-column prop="delta" :label="t('inputTest.interval')" width="90" />
       </el-table>
     </div>
 
     <div class="panel-section">
-      <h3>事件注入</h3>
+      <h3>{{ t('inputTest.injectionTitle') }}</h3>
       <div class="hint mb-12">
-        注入目标是当前拥有焦点的窗口。建议先打开一个记事本，再把本窗口摆在旁边点击按钮。
+        {{ t('inputTest.injectionHint') }}
       </div>
       <div class="panel-row mb-8">
         <span class="lbl">X</span>
         <el-input-number v-model="injX" :min="0" :max="7680" size="small" />
         <span class="lbl">Y</span>
         <el-input-number v-model="injY" :min="0" :max="4320" size="small" />
-        <el-button size="small" @click="doInject('inject:move', { x: injX, y: injY }, '移动光标')">
-          移动光标
+        <el-button size="small" @click="doInject('inject:move', { x: injX, y: injY }, t('inputTest.moveCursor'))">
+          {{ t('inputTest.moveCursor') }}
         </el-button>
         <el-button
           size="small"
           type="primary"
-          @click="doInject('inject:click', { x: injX, y: injY }, '左键点击')"
+          @click="doInject('inject:click', { x: injX, y: injY }, t('inputTest.leftClick'))"
         >
-          左键点击
+          {{ t('inputTest.leftClick') }}
         </el-button>
         <el-button
           size="small"
-          @click="doInject('inject:click', { x: injX, y: injY, button: 'right' }, '右键点击')"
+          @click="doInject('inject:click', { x: injX, y: injY, button: 'right' }, t('inputTest.rightClick'))"
         >
-          右键点击
+          {{ t('inputTest.rightClick') }}
         </el-button>
       </div>
       <div class="panel-row">
         <el-select v-model="injVk" size="small" class="vk-select">
           <el-option v-for="opt in VK_OPTIONS" :key="opt.value" :label="opt.label" :value="opt.value" />
         </el-select>
-        <el-button size="small" @click="doInject('inject:key', { vk: injVk }, '轻敲按键')">
-          轻敲按键
+        <el-button size="small" @click="doInject('inject:key', { vk: injVk }, t('inputTest.tapKey'))">
+          {{ t('inputTest.tapKey') }}
         </el-button>
         <el-input v-model="injText" size="small" class="text-input" />
-        <el-button size="small" @click="doInject('inject:text', { text: injText }, '注入文本')">
-          打字
+        <el-button size="small" @click="doInject('inject:text', { text: injText }, t('inputTest.injectText'))">
+          {{ t('inputTest.typeText') }}
         </el-button>
         <span v-if="lastResult" class="result-text">{{ lastResult }}</span>
       </div>

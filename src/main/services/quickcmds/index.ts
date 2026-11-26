@@ -9,6 +9,8 @@ import iconv from 'iconv-lite'
 import type { ToolService } from '../../ipc'
 import { QuickCmdsConfig, DEFAULT_QUICKCMDS_CONFIG, QuickCmd, migrateQuickCmd, parseMobaMacros } from '../../../shared/term-macro'
 import { getSection, setSection } from '../macro/configStore'
+import { IPC_RESULT_CODES, type IpcResultCode } from '../../../shared/ipc-result'
+import { mainText } from '../../app-locale'
 
 /** 旧版 serial 节内的 quickCmds 结构（任意旧格式） */
 interface LegacySerialSection {
@@ -48,21 +50,21 @@ class QuickCmdsService implements ToolService {
   }
 
   /** 导出宏库为 DevKit JSON（列表为空时导出当前库） */
-  private async exportConfig(p: { list?: QuickCmd[] }): Promise<{ ok: boolean; path?: string; count?: number; error?: string }> {
+  private async exportConfig(p: { list?: QuickCmd[] }): Promise<{ ok: boolean; path?: string; count?: number; code?: IpcResultCode; error?: string }> {
     let list = p.list
     if (!list || list.length === 0) {
       const cfg = await this.getConfig()
       list = cfg.list
     }
-    if (list.length === 0) return { ok: false, error: '宏库为空，无可导出内容' }
+    if (list.length === 0) return { ok: false, code: IPC_RESULT_CODES.EMPTY, error: mainText('noQuickCommands') }
     const stamp = new Date()
     const p2 = (n: number, w = 2): string => n.toString().padStart(w, '0')
     const { canceled, filePath } = await dialog.showSaveDialog({
-      title: '导出快捷命令配置',
+      title: mainText('exportQuickCommands'),
       defaultPath: `devkit-quickcmds-${p2(stamp.getMonth() + 1)}${p2(stamp.getDate())}-${p2(stamp.getHours())}${p2(stamp.getMinutes())}${p2(stamp.getSeconds())}.json`,
-      filters: [{ name: 'DevKit 快捷命令', extensions: ['json'] }]
+      filters: [{ name: mainText('quickCommands'), extensions: ['json'] }]
     })
-    if (canceled || !filePath) return { ok: false, error: '已取消' }
+    if (canceled || !filePath) return { ok: false, code: IPC_RESULT_CODES.CANCELLED, error: mainText('cancelled') }
     try {
       await fs.writeFile(filePath, JSON.stringify({ list }, null, 2), 'utf8')
       return { ok: true, path: filePath, count: list.length }
@@ -72,16 +74,16 @@ class QuickCmdsService implements ToolService {
   }
 
   /** 导入：文件选择框 → 自动识别 DevKit JSON / MobaXterm 宏文件，返回解析后的列表 */
-  private async importConfig(): Promise<{ ok: boolean; list?: QuickCmd[]; source?: string; error?: string }> {
+  private async importConfig(): Promise<{ ok: boolean; list?: QuickCmd[]; source?: string; code?: IpcResultCode; error?: string }> {
     const { canceled, filePaths } = await dialog.showOpenDialog({
-      title: '导入快捷命令（支持 DevKit JSON / MobaXterm 宏文件）',
+      title: mainText('importQuickCommands'),
       properties: ['openFile'],
       filters: [
-        { name: '快捷命令与宏', extensions: ['json', 'mxtmacros', 'ini', 'txt'] },
-        { name: '所有文件', extensions: ['*'] }
+        { name: mainText('quickCommandFiles'), extensions: ['json', 'mxtmacros', 'ini', 'txt'] },
+        { name: mainText('allFiles'), extensions: ['*'] }
       ]
     })
-    if (canceled || !filePaths[0]) return { ok: false, error: '已取消' }
+    if (canceled || !filePaths[0]) return { ok: false, code: IPC_RESULT_CODES.CANCELLED, error: mainText('cancelled') }
     try {
       const buf = await fs.readFile(filePaths[0])
       // 先按 UTF-8 试 JSON（DevKit 导出）；失败则按 GBK 解码走 MobaXterm 宏解析

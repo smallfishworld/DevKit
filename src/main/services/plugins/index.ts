@@ -15,6 +15,8 @@ import { applyDefaults } from './schema'
 import { MAX_PACKAGE_BYTES, PluginStore, safePackagePath } from './store'
 import { PluginSources } from './sources'
 import { PluginAuthHost } from './auth'
+import { IPC_RESULT_CODES } from '../../../shared/ipc-result'
+import { mainText } from '../../app-locale'
 export type { BuiltinPluginDefinition } from '../../../shared/plugins'
 
 export interface PluginHostProcess {
@@ -33,6 +35,12 @@ export interface PluginServiceOptions {
 }
 type DataEvent = Extract<StreamEvent, { type: 'data' }>
 type PendingCall = { resolve(value: unknown): void; reject(error: Error): void; timer: NodeJS.Timeout }
+class PluginCallTimeout extends Error {
+  constructor(method: string) {
+    super('插件调用超时：' + method)
+    this.name = 'PluginCallTimeout'
+  }
+}
 interface Runtime {
   instance: PluginInstance
   descriptor: PluginDescriptor
@@ -332,9 +340,9 @@ export class PluginService implements ToolService {
     let path: string
     if (value === undefined || value === '') {
       const result = await dialog.showOpenDialog(file
-        ? { title: '选择可信的 JSON 插件包', properties: ['openFile'], filters: [{ name: 'DevKit 插件包', extensions: ['json'] }] }
-        : { title: '选择可信的本地插件目录', properties: ['openDirectory'] })
-      if (result.canceled || !result.filePaths[0]) return { ok: false, error: '已取消安装' }
+        ? { title: mainText('selectPluginPackage'), properties: ['openFile'], filters: [{ name: mainText('pluginPackage'), extensions: ['json'] }] }
+        : { title: mainText('selectPluginDirectory'), properties: ['openDirectory'] })
+      if (result.canceled || !result.filePaths[0]) return { ok: false, code: IPC_RESULT_CODES.CANCELLED, error: mainText('cancelledInstall') }
       path = result.filePaths[0]
     } else path = string(value, 'path')
     const blocked = new Set(this.builtins.keys())
@@ -527,7 +535,7 @@ export class PluginService implements ToolService {
     if (!runtime.host) return Promise.reject(new Error('插件进程未启动'))
     const id = 'call-' + (++runtime.nextCall)
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => { runtime.pending.delete(id); reject(new Error('插件调用超时：' + method)) }, timeoutMs)
+      const timer = setTimeout(() => { runtime.pending.delete(id); reject(new PluginCallTimeout(method)) }, timeoutMs)
       runtime.pending.set(id, { resolve, reject, timer })
       try { runtime.host!.postMessage({ type: 'call', id, method, input }) }
       catch (error) { clearTimeout(timer); runtime.pending.delete(id); reject(error as Error) }
@@ -839,8 +847,8 @@ export class PluginService implements ToolService {
       }
     } catch (error) {
       const detail = errorMessage(error)
-      await this.stopRuntime(runtime, 'error', detail.includes('调用超时')
-        ? `自动应答回调超时（${Math.round(this.callbackTimeout(runtime) / 1000)}秒），实例已安全停止；请检查插件阻塞、设备响应和协议超时后手动重新绑定`
+      await this.stopRuntime(runtime, 'error', error instanceof PluginCallTimeout
+        ? mainText('pluginAutoReplyTimeout', { seconds: Math.round(this.callbackTimeout(runtime) / 1000) })
         : detail)
     } finally { runtime.draining = false }
   }

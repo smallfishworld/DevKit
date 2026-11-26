@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { Delete, Plus } from '@element-plus/icons-vue'
 import {
   configFields,
@@ -15,6 +16,7 @@ const emit = defineEmits<{
   (event: 'update:modelValue', value: Record<string, unknown>): void
   (event: 'validity', valid: boolean): void
 }>()
+const { t } = useI18n()
 const allFields = computed(() => configFields(props.schema))
 const fields = computed(() => visibleConfigFields(props.schema, props.modelValue))
 const advancedPanel = ref<string[]>([])
@@ -46,7 +48,7 @@ function setJson(key: string, text: string): void {
     delete errors[key]
     setValue(key, value)
   } catch (error) {
-    errors[key] = error instanceof Error ? error.message : 'JSON 语法错误'
+    errors[key] = error instanceof Error ? error.message : t('pluginEditor.jsonSyntaxError')
   }
   emit('validity', Object.keys(errors).length === 0)
 }
@@ -84,7 +86,7 @@ function numeric(field: Record<string, unknown>, key: string): number | undefine
 
 <template>
   <el-form label-position="top" size="small" class="plugin-config-form" @submit.prevent>
-    <el-empty v-if="!fields.length" description="此插件没有普通配置字段，可使用完整 JSON 编辑" :image-size="50" />
+    <el-empty v-if="!fields.length" :description="t('pluginEditor.noFormFields')" :image-size="50" />
     <el-form-item v-for="field in normalFields" :key="field.key" :label="field.title" :required="field.required" :error="errors[field.key]">
       <el-select
         v-if="field.widget === 'enum'"
@@ -119,8 +121,8 @@ function numeric(field: Record<string, unknown>, key: string): number | undefine
       <div v-else-if="field.widget === 'array'" class="array-editor">
         <div v-for="(row, rowIdx) in arrayRows(field.key)" :key="rowIdx" class="array-row">
           <div class="array-row-head">
-            <span>规则 #{{ rowIdx + 1 }}</span>
-            <el-button size="small" text type="danger" :icon="Delete" @click="removeArrayRow(field.key, rowIdx)">删除</el-button>
+            <span>{{ t('pluginEditor.ruleIndex', { index: rowIdx + 1 }) }}</span>
+            <el-button size="small" text type="danger" :icon="Delete" @click="removeArrayRow(field.key, rowIdx)">{{ t('pluginEditor.delete') }}</el-button>
           </div>
           <div class="array-row-fields">
             <template v-for="sub in normalItemFields(field)" :key="sub.key">
@@ -158,7 +160,7 @@ function numeric(field: Record<string, unknown>, key: string): number | undefine
             </template>
           </div>
           <details v-if="advancedItemFields(field).length" class="array-advanced">
-            <summary>规则高级选项</summary>
+            <summary>{{ t('pluginEditor.ruleAdvanced') }}</summary>
             <div class="array-row-fields">
               <template v-for="sub in advancedItemFields(field)" :key="sub.key">
                 <div v-if="isFieldVisible(sub.schema, row)" class="array-sub-field">
@@ -196,7 +198,7 @@ function numeric(field: Record<string, unknown>, key: string): number | undefine
             </div>
           </details>
         </div>
-        <el-button size="small" plain :icon="Plus" @click="addArrayRow(field)">添加{{ field.title }}</el-button>
+        <el-button size="small" plain :icon="Plus" @click="addArrayRow(field)">{{ t('pluginEditor.addItem', { title: field.title }) }}</el-button>
       </div>
       <el-input
         v-else
@@ -205,13 +207,13 @@ function numeric(field: Record<string, unknown>, key: string): number | undefine
         :rows="5"
         spellcheck="false"
         class="json-input"
-        placeholder="以 JSON 编辑数组、对象或复杂字段"
+        :placeholder="t('pluginEditor.jsonPlaceholder')"
         @update:model-value="(value: string) => setJson(field.key, value)"
       />
       <div v-if="field.description" class="field-help">{{ field.description }}</div>
     </el-form-item>
     <el-collapse v-if="advancedFields.length" class="advanced-collapse" v-model="advancedPanel">
-      <el-collapse-item name="advanced" title="高级选项（保持默认即可）">
+      <el-collapse-item name="advanced" :title="t('pluginEditor.advancedOptions')">
         <el-form-item v-for="field in advancedFields" :key="field.key" :label="field.title" :required="field.required" :error="errors[field.key]">
           <el-select
             v-if="field.widget === 'enum'"
@@ -250,7 +252,7 @@ function numeric(field: Record<string, unknown>, key: string): number | undefine
             :rows="5"
             spellcheck="false"
             class="json-input"
-            placeholder="以 JSON 编辑数组、对象或复杂字段"
+            :placeholder="t('pluginEditor.jsonPlaceholder')"
             @update:model-value="(value: string) => setJson(field.key, value)"
           />
           <div v-if="field.description" class="field-help">{{ field.description }}</div>

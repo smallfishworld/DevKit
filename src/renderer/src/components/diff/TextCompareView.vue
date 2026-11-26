@@ -9,6 +9,7 @@
  * - 保存：按读入编码写回左右文件（复制只改内存，显式「保存」才落盘）
  */
 import { computed, nextTick, onMounted, ref, shallowRef, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { usePanelMessage } from '@renderer/composables/panelOverlays'
 import { ArrowDown, ArrowUp, FolderOpened } from '@element-plus/icons-vue'
 import type { AlignRow, DiffEncoding, InlineSeg, TextDiffRes } from '../../../../shared/diff'
@@ -17,6 +18,7 @@ import { ENCODINGS, useDiff } from '../../composables/useDiff'
 import { useDropSides } from '../../composables/useDiffDrop'
 
 const ElMessage = usePanelMessage()
+const { t } = useI18n()
 
 const props = defineProps<{
   /** 父层（文件夹视图"对比文件"）传入的待比较文件；seq 递增防同路径不触发 */
@@ -379,15 +381,15 @@ const inlineItems = computed<InlineItem[]>(() => {
 async function openFromPath(side: 'left' | 'right', path: string): Promise<boolean> {
   const res = await readFile({ path, encoding: enc.value })
   if (!res.ok) {
-    ElMessage.warning(`读取失败：${res.error}`)
+    ElMessage.warning(t('diffUi.readFailed', { error: res.error ?? '' }))
     return false
   }
   if (res.kind === 'binary') {
-    binaryHint.value = `「${path}」为二进制文件，请用「十六进制」模式查看`
+    binaryHint.value = t('diffUi.binaryHint', { path })
     return false
   }
   binaryHint.value = ''
-  tooLargeHint.value = res.tooLarge ? '文件超过 8MB 文本上限，已截断显示' : ''
+  tooLargeHint.value = res.tooLarge ? t('diffUi.tooLargeHint') : ''
   const text = res.text ?? ''
   if (side === 'left') {
     leftPath.value = path
@@ -404,7 +406,7 @@ async function openFromPath(side: 'left' | 'right', path: string): Promise<boole
 }
 
 async function openFile(side: 'left' | 'right'): Promise<void> {
-  const picked = await pickFile(side === 'left' ? '选择左侧文本文件' : '选择右侧文本文件')
+  const picked = await pickFile(side === 'left' ? t('diffUi.pickLeftText') : t('diffUi.pickRightText'))
   if (!picked.ok) return
   const ok = await openFromPath(side, picked.path!)
   if (ok) result.value = null
@@ -429,24 +431,24 @@ function swapSides(): void {
 // ---------- 保存（复制只改内存，显式保存才写盘） ----------
 async function save(): Promise<void> {
   if (!dirty.value) {
-    ElMessage.info('没有需要保存的修改（复制到对侧后才会产生改动）')
+    ElMessage.info(t('diffUi.noDirtyToSave'))
     return
   }
   const jobs: Promise<{ ok: boolean; error?: string }>[] = []
   if (leftPath.value) jobs.push(writeFile({ path: leftPath.value, content: left.value, encoding: leftEnc.value }))
   if (rightPath.value) jobs.push(writeFile({ path: rightPath.value, content: right.value, encoding: rightEnc.value }))
   if (!jobs.length) {
-    ElMessage.warning('左右两侧均未关联文件路径，无法保存（请先打开文件）')
+    ElMessage.warning(t('diffUi.noFilePathToSave'))
     return
   }
   const res = await Promise.all(jobs)
   const failed = res.filter((x) => !x.ok)
   if (failed.length) {
-    ElMessage.error(`保存失败：${failed[0].error ?? '未知错误'}`)
+    ElMessage.error(t('diffUi.saveFailed', { error: failed[0].error ?? t('terminal.unknownError') }))
     return
   }
   dirty.value = false
-  ElMessage.success('已保存到文件')
+  ElMessage.success(t('diffUi.savedToFile'))
 }
 
 // ---------- 拖放文件（拖 1 个 → 落点侧；拖 2 个 → 首给落点侧、次给对侧） ----------
@@ -483,25 +485,25 @@ onMounted(() => void consumePending())
       <el-select v-model="enc" size="small" style="width: 190px">
         <el-option v-for="e in ENCODINGS" :key="e.value" :value="e.value" :label="e.label" />
       </el-select>
-      <el-button type="primary" size="small" :loading="busy" @click="run">对比</el-button>
+      <el-button type="primary" size="small" :loading="busy" @click="run">{{ t('diffUi.compare') }}</el-button>
       <el-button size="small" text @click="showEditors = !showEditors">
-        {{ showEditors ? '收起编辑区' : '编辑原文' }}
+        {{ showEditors ? t('diffUi.collapseEditors') : t('diffUi.editSource') }}
       </el-button>
-      <el-checkbox v-model="ignoreSpace" size="small">忽略空白</el-checkbox>
-      <el-checkbox v-model="ignoreCase" size="small">忽略大小写</el-checkbox>
+      <el-checkbox v-model="ignoreSpace" size="small">{{ t('diffUi.ignoreSpace') }}</el-checkbox>
+      <el-checkbox v-model="ignoreCase" size="small">{{ t('diffUi.ignoreCase') }}</el-checkbox>
       <template v-if="result">
         <el-divider direction="vertical" />
         <el-button size="small" text :icon="ArrowUp" :disabled="!liveBlocks.length" @click="navBlock(-1)" />
         <el-button size="small" text :icon="ArrowDown" :disabled="!liveBlocks.length" @click="navBlock(1)" />
         <span class="nav-count">
-          {{ liveBlocks.length === 0 ? '无差异' : `第 ${cur + 1} / ${liveBlocks.length} 处` }}
+          {{ liveBlocks.length === 0 ? t('diffUi.noDiff') : t('diffUi.navPos', { cur: cur + 1, total: liveBlocks.length }) }}
         </span>
-        <el-checkbox v-model="foldSame" size="small">折叠相同区</el-checkbox>
-        <el-checkbox v-model="ignoreMinor" size="small">忽略次要差异</el-checkbox>
-        <el-checkbox v-model="onlyDiff" size="small">只看差异</el-checkbox>
-        <el-checkbox v-model="inlineView" size="small">内联视图</el-checkbox>
+        <el-checkbox v-model="foldSame" size="small">{{ t('diffUi.foldSame') }}</el-checkbox>
+        <el-checkbox v-model="ignoreMinor" size="small">{{ t('diffUi.ignoreMinor') }}</el-checkbox>
+        <el-checkbox v-model="onlyDiff" size="small">{{ t('diffUi.onlyDiff') }}</el-checkbox>
+        <el-checkbox v-model="inlineView" size="small">{{ t('diffUi.inlineView') }}</el-checkbox>
         <el-button size="small" text :type="dirty ? 'primary' : 'default'" :disabled="!dirty" @click="save">
-          保存{{ dirty ? '*' : '' }}
+          {{ t('diffUi.save') }}{{ dirty ? '*' : '' }}
         </el-button>
       </template>
     </div>
@@ -512,7 +514,7 @@ onMounted(() => void consumePending())
         size="small"
         class="path-input"
         :class="{ 'drop-over': overLeft }"
-        placeholder="左侧文件路径（可输入、浏览或拖入文件）"
+        :placeholder="t('diffUi.leftFilePlaceholder')"
         clearable
         @change="onPathInput('left')"
         @dragover="onDropOver('left', $event)"
@@ -523,13 +525,13 @@ onMounted(() => void consumePending())
           <el-button size="small" :icon="FolderOpened" @click="openFile('left')" />
         </template>
       </el-input>
-      <el-button size="small" text title="交换左右" @click="swapSides">⇄</el-button>
+      <el-button size="small" text :title="t('diffUi.swapSides')" @click="swapSides">⇄</el-button>
       <el-input
         v-model="rightPath"
         size="small"
         class="path-input"
         :class="{ 'drop-over': overRight }"
-        placeholder="右侧文件路径（可输入、浏览或拖入文件）"
+        :placeholder="t('diffUi.rightFilePlaceholder')"
         clearable
         @change="onPathInput('right')"
         @dragover="onDropOver('right', $event)"
@@ -543,13 +545,13 @@ onMounted(() => void consumePending())
     </div>
 
     <div v-if="showEditors" class="editors">
-      <el-input v-model="left" type="textarea" :rows="8" class="mono" placeholder="原文（左侧），或点「浏览」打开文件" />
-      <el-input v-model="right" type="textarea" :rows="8" class="mono" placeholder="新文（右侧），或点「浏览」打开文件" />
+      <el-input v-model="left" type="textarea" :rows="8" class="mono" :placeholder="t('diffUi.leftEditorPlaceholder')" />
+      <el-input v-model="right" type="textarea" :rows="8" class="mono" :placeholder="t('diffUi.rightEditorPlaceholder')" />
     </div>
 
     <div v-if="binaryHint" class="hint warn">{{ binaryHint }}</div>
     <div v-if="tooLargeHint" class="hint warn">{{ tooLargeHint }}</div>
-    <div v-if="displayCapped" class="hint warn">行数过多已截断——建议勾选「只看差异」查看全部差异</div>
+    <div v-if="displayCapped" class="hint warn">{{ t('diffUi.displayCapped') }}</div>
 
     <!-- 双栏对齐视图 -->
     <div v-if="result && !inlineView" class="sbs-wrap">
@@ -558,16 +560,16 @@ onMounted(() => void consumePending())
           <!-- 变更块头：整块复制 -->
           <div v-if="item.kind === 'head'" class="sbs-row head-row">
             <span class="h-title">
-              第 {{ (item.block ?? 0) + 1 }} 处<template v-if="item.chg"> · {{ item.chg }} 行变更</template><template v-if="item.dels"> · −{{ item.dels }}</template><template v-if="item.adds"> · +{{ item.adds }}</template>
+              {{ t('diffUi.blockTitle', { index: (item.block ?? 0) + 1 }) }}<template v-if="item.chg">{{ t('diffUi.blockChanged', { count: item.chg }) }}</template><template v-if="item.dels"> · −{{ item.dels }}</template><template v-if="item.adds"> · +{{ item.adds }}</template>
             </span>
             <span class="h-ops">
-              <button class="h-btn" @click="blockCopy(item.block ?? 0, 'r')">整块 → 右</button>
-              <button class="h-btn" @click="blockCopy(item.block ?? 0, 'l')">整块 → 左</button>
+              <button class="h-btn" @click="blockCopy(item.block ?? 0, 'r')">{{ t('diffUi.copyBlockRight') }}</button>
+              <button class="h-btn" @click="blockCopy(item.block ?? 0, 'l')">{{ t('diffUi.copyBlockLeft') }}</button>
             </span>
           </div>
           <!-- 折叠相同区 -->
           <div v-else-if="item.kind === 'fold'" class="sbs-row fold-row">
-            <span class="fold-pill" @click="expandFold(item.ri ?? 0)">⋯ {{ item.hidden }} 行相同，点击展开 ⋯</span>
+            <span class="fold-pill" @click="expandFold(item.ri ?? 0)">{{ t('diffUi.foldedSame', { count: item.hidden ?? 0 }) }}</span>
           </div>
           <!-- 对齐行 -->
           <div
@@ -581,8 +583,8 @@ onMounted(() => void consumePending())
               <span v-for="(s, j) in item.row?.left?.segs" :key="j" :class="{ 'seg-ch': s.changed && item.row?.op !== 'minor', 'seg-un': s.changed && item.row?.op === 'minor' }">{{ s.text }}</span>
             </span>
             <span class="c-gap">
-              <span v-if="item.row && canCopyTo(item.row, 'l')" class="cp to-l" title="复制到左侧" @click="rowCopy(item.ri ?? 0, 'l')">◀</span>
-              <span v-if="item.row && canCopyTo(item.row, 'r')" class="cp to-r" title="复制到右侧" @click="rowCopy(item.ri ?? 0, 'r')">▶</span>
+              <span v-if="item.row && canCopyTo(item.row, 'l')" class="cp to-l" :title="t('diffUi.copyToLeft')" @click="rowCopy(item.ri ?? 0, 'l')">◀</span>
+              <span v-if="item.row && canCopyTo(item.row, 'r')" class="cp to-r" :title="t('diffUi.copyToRight')" @click="rowCopy(item.ri ?? 0, 'r')">▶</span>
             </span>
             <span class="c-no c-right">{{ item.row?.right?.no ?? '' }}</span>
             <span class="c-txt c-r">
@@ -591,7 +593,7 @@ onMounted(() => void consumePending())
           </div>
         </template>
         <div v-if="display.length === 0" class="hint" style="padding: 8px">
-          {{ onlyDiff ? '没有差异行' : '（空）' }}
+          {{ onlyDiff ? t('diffUi.noDiffLines') : t('diffUi.empty') }}
         </div>
       </div>
       <!-- 概览条 -->
@@ -602,7 +604,7 @@ onMounted(() => void consumePending())
           class="map-mark"
           :class="`mk-${m.kind}`"
           :style="{ top: m.top, height: m.height }"
-          :title="`跳到第 ${m.block + 1} 处`"
+          :title="t('diffUi.jumpToBlock', { index: m.block + 1 })"
           @click="jumpToBlock(m.block)"
         />
         <div class="map-vp" :style="vpStyle" />
@@ -619,20 +621,20 @@ onMounted(() => void consumePending())
             <span v-for="(s, j) in it.segs" :key="j" :class="{ 'seg-ch': s.changed && !it.minor, 'seg-un': s.changed && it.minor }">{{ s.text }}</span>
           </span>
         </div>
-        <div v-if="inlineItems.length === 0" class="hint" style="padding: 8px">没有差异行</div>
+        <div v-if="inlineItems.length === 0" class="hint" style="padding: 8px">{{ t('diffUi.noDiffLines') }}</div>
       </div>
     </div>
 
     <!-- 统计 -->
     <div v-if="result" class="stats-row">
-      <el-tag v-if="liveBlocks.length === 0" type="success" size="small">✔ 两侧已同步</el-tag>
+      <el-tag v-if="liveBlocks.length === 0" type="success" size="small">{{ t('diffUi.synced') }}</el-tag>
       <template v-else>
-        <el-tag type="danger" size="small">共 {{ result.blocks }} 处</el-tag>
-        <el-tag type="danger" size="small">删 {{ result.del }}</el-tag>
-        <el-tag type="success" size="small">增 {{ result.add }}</el-tag>
-        <el-tag v-if="result.minor" size="small" class="tag-minor">次要 {{ result.minor }}</el-tag>
-        <el-tag type="info" size="small" effect="plain">相同 {{ result.same }}</el-tag>
-        <el-tag type="primary" size="small">剩余 {{ liveBlocks.length }} 处未同步</el-tag>
+        <el-tag type="danger" size="small">{{ t('diffUi.totalBlocks', { count: result.blocks }) }}</el-tag>
+        <el-tag type="danger" size="small">{{ t('diffUi.deleted', { count: result.del }) }}</el-tag>
+        <el-tag type="success" size="small">{{ t('diffUi.added', { count: result.add }) }}</el-tag>
+        <el-tag v-if="result.minor" size="small" class="tag-minor">{{ t('diffUi.minor', { count: result.minor }) }}</el-tag>
+        <el-tag type="info" size="small" effect="plain">{{ t('diffUi.same', { count: result.same }) }}</el-tag>
+        <el-tag type="primary" size="small">{{ t('diffUi.remainingUnsynced', { count: liveBlocks.length }) }}</el-tag>
       </template>
     </div>
   </div>

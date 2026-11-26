@@ -3,9 +3,14 @@ import { computed, ref } from 'vue'
 import { Check, Close, Refresh } from '@element-plus/icons-vue'
 import { useAppearanceStore } from '@renderer/stores/appearance'
 import { relativeLuminance } from '../../../shared/theme'
+import { useI18n } from 'vue-i18n'
+import { useLocaleStore } from '@renderer/stores/locale'
+import type { AppLocale } from '../../../shared/locale'
 
 const visible = defineModel<boolean>({ required: true })
 const appearance = useAppearanceStore()
+const locale = useLocaleStore()
+const { t } = useI18n()
 const keyword = ref('')
 
 /** 全部配色一次性铺开成色板栅格（按明暗排序），不再折叠进「更多终端配色」下拉 */
@@ -35,27 +40,46 @@ function toggleFollow(on: boolean): void {
   if (on) appearance.followSystem()
   else appearance.setTerminalTheme(appearance.terminalTheme.id)
 }
+
+function chooseLocale(value: string | number | boolean | undefined): void {
+  if (value === 'zh-CN' || value === 'en') void locale.setLocale(value as AppLocale)
+}
 </script>
 
 <template>
   <el-popover v-model:visible="visible" placement="bottom-end" :width="404" trigger="click" popper-class="appearance-popper">
     <template #reference><slot /></template>
-    <section class="appearance-settings" aria-label="外观与终端配色">
+    <section class="appearance-settings" :aria-label="t('settings.aria')">
       <header>
-        <h2>外观与终端配色</h2>
-        <el-button text size="small" :icon="Close" aria-label="关闭外观浮层" @click="visible = false" />
+        <h2>{{ t('settings.title') }}</h2>
+        <el-button text size="small" :icon="Close" :aria-label="t('settings.close')" @click="visible = false" />
       </header>
+
+      <div class="language-row">
+        <span><strong>{{ t('language.label') }}</strong></span>
+        <el-segmented
+          :model-value="locale.locale"
+          :options="[
+            { label: t('language.zhCN'), value: 'zh-CN' },
+            { label: t('language.en'), value: 'en' }
+          ]"
+          size="small"
+          @change="chooseLocale"
+        />
+      </div>
+
+      <div class="section-title">{{ t('settings.appearance') }}</div>
 
       <div class="follow-row">
         <span>
-          <strong>跟随系统</strong>
-          <small>按 Windows 浅色/深色自动切换（深色用 DevKit 默认，浅色用 Solarized Light）</small>
+          <strong>{{ t('settings.followSystem') }}</strong>
+          <small>{{ t('settings.followSystemHint') }}</small>
         </span>
         <el-switch :model-value="appearance.settings.followSystem" size="small" @update:model-value="toggleFollow" />
       </div>
 
       <div class="theme-filter">
-        <el-input v-model="keyword" size="small" clearable placeholder="筛选配色（如 nord、solar）" aria-label="筛选配色" />
+        <el-input v-model="keyword" size="small" clearable :placeholder="t('settings.filterPlaceholder')" :aria-label="t('settings.filterAria')" />
       </div>
 
       <div class="theme-scroll">
@@ -81,16 +105,16 @@ function toggleFollow(on: boolean): void {
             <el-icon v-if="!appearance.settings.followSystem && selectedId === theme.id" class="tile-check"><Check /></el-icon>
           </button>
         </div>
-        <p v-if="!sortedThemes.length" class="empty">没有匹配的配色</p>
+        <p v-if="!sortedThemes.length" class="empty">{{ t('settings.noTheme') }}</p>
       </div>
 
       <footer>
         <span class="current">
           <el-icon><Refresh /></el-icon>
-          <template v-if="appearance.settings.followSystem">跟随系统 · 当前 {{ appearance.terminalTheme.name }}</template>
-          <template v-else>当前 · {{ appearance.terminalTheme.name }}</template>
+          <template v-if="appearance.settings.followSystem">{{ t('settings.following', { name: appearance.terminalTheme.name }) }}</template>
+          <template v-else>{{ t('settings.currentTheme', { name: appearance.terminalTheme.name }) }}</template>
         </span>
-        <small>配色同时应用到整个界面与终端</small>
+        <small>{{ t('settings.themeHint') }}</small>
       </footer>
     </section>
   </el-popover>
@@ -100,6 +124,9 @@ function toggleFollow(on: boolean): void {
 .appearance-settings { display:flex; flex-direction:column; gap:10px; }
 header { display:flex; align-items:center; justify-content:space-between; gap:8px; }
 h2 { margin:0; font-size:14px; }
+.section-title { font-size:12px; font-weight:600; color:var(--el-text-color-secondary); }
+.language-row { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:2px 0 4px; }
+.language-row strong { font-size:13px; }
 
 .follow-row { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:8px 10px; border:1px solid var(--el-border-color-lighter); border-radius:8px; background:var(--el-fill-color-lighter); cursor:pointer; }
 .follow-row strong { display:block; font-size:13px; }

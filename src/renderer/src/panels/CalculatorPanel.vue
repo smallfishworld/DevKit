@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { usePanelMessage } from '@renderer/composables/panelOverlays'
 import {
   evalExpr,
@@ -12,6 +13,7 @@ import {
 } from '@renderer/tools/calc/engine'
 
 const ElMessage = usePanelMessage()
+const { t } = useI18n()
 
 const expr = ref('0xDEAD & 0xFF')
 const width = ref<Width>(32)
@@ -98,8 +100,8 @@ function loadHistory(item: HistoryItem): void {
   <div class="panel converter-page calc-page">
     <header class="converter-head">
       <div>
-        <h1>程序员计算器</h1>
-        <p>多进制实时转换、位运算表达式与 64 位 Bit 翻转</p>
+        <h1>{{ t('calc.title') }}</h1>
+        <p>{{ t('calc.subtitle') }}</p>
       </div>
     </header>
 
@@ -114,16 +116,16 @@ function loadHistory(item: HistoryItem): void {
               <el-radio-button :value="32">32 bit</el-radio-button>
               <el-radio-button :value="64">64 bit</el-radio-button>
             </el-radio-group>
-            <span class="hint">输入表达式，回车存入历史；支持 0x/0o/0b 前缀</span>
+            <span class="hint">{{ t('calc.inputHint') }}</span>
           </div>
           <el-input
             v-model="expr"
             class="expr-input"
-            placeholder="例：0x1F & ~(1<<3) | (1<<5)"
+            :placeholder="t('calc.placeholder')"
             autofocus
             @keydown.enter="evaluate"
           >
-            <template #prepend>表达式</template>
+            <template #prepend>{{ t('calc.expression') }}</template>
           </el-input>
           <div class="op-row">
             <el-button
@@ -135,34 +137,34 @@ function loadHistory(item: HistoryItem): void {
             >
               {{ op }}
             </el-button>
-            <el-button size="small" type="primary" @click="evaluate">存入历史</el-button>
+            <el-button size="small" type="primary" @click="evaluate">{{ t('calc.saveHistory') }}</el-button>
           </div>
           <div v-if="error" class="err-line">{{ error }}</div>
           <div v-else-if="truncated" class="warn-line">
-            结果超出 {{ width }} 位，已按位宽截断
+            {{ t('calc.truncated', { width }) }}
           </div>
         </div>
 
         <!-- 进制显示 -->
         <div class="panel-section">
-          <h3>数值显示</h3>
+          <h3>{{ t('calc.numericDisplay') }}</h3>
           <div class="base-grid">
             <div class="base-card">
-              <div class="base-label">HEX 十六进制</div>
+              <div class="base-label">{{ t('calc.hexLabel') }}</div>
               <div class="base-value mono">{{ hexStr }}</div>
             </div>
             <div class="base-card">
-              <div class="base-label">DEC 无符号 / 有符号</div>
+              <div class="base-label">{{ t('calc.decLabel') }}</div>
               <div class="base-value mono">
                 {{ decUnsigned }} <span class="dec-signed">/ {{ decSigned }}</span>
               </div>
             </div>
             <div class="base-card">
-              <div class="base-label">OCT 八进制</div>
+              <div class="base-label">{{ t('calc.octLabel') }}</div>
               <div class="base-value mono">{{ octStr }}</div>
             </div>
             <div class="base-card base-card-wide">
-              <div class="base-label">BIN 二进制（4 位分组）</div>
+              <div class="base-label">{{ t('calc.binLabel') }}</div>
               <div class="base-value mono bin">{{ binStr }}</div>
             </div>
           </div>
@@ -170,7 +172,7 @@ function loadHistory(item: HistoryItem): void {
 
         <!-- bit 编辑器 -->
         <div class="panel-section">
-          <h3>Bit 编辑器（点击翻转）</h3>
+          <h3>{{ t('calc.bitEditor') }}</h3>
           <div class="bit-editor">
             <div
               v-for="(bit, i) in bits"
@@ -194,13 +196,13 @@ function loadHistory(item: HistoryItem): void {
 
         <!-- 字节布局 -->
         <div class="panel-section">
-          <h3>内存字节布局（{{ width / 8 }} 字节）</h3>
+          <h3>{{ t('calc.byteLayout', { bytes: width / 8 }) }}</h3>
           <div class="panel-row mb-8">
-            <el-tag size="small">大端 BE</el-tag>
+            <el-tag size="small">{{ t('calc.bigEndian') }}</el-tag>
             <span v-for="(b, i) in layout.be" :key="'be' + i" class="byte-chip mono">{{ b }}</span>
           </div>
           <div class="panel-row">
-            <el-tag size="small" type="warning">小端 LE</el-tag>
+            <el-tag size="small" type="warning">{{ t('calc.littleEndian') }}</el-tag>
             <span v-for="(b, i) in layout.le" :key="'le' + i" class="byte-chip mono">{{ b }}</span>
           </div>
         </div>
@@ -208,8 +210,8 @@ function loadHistory(item: HistoryItem): void {
 
       <!-- 历史 -->
       <div class="panel-section calc-history">
-        <h3>历史记录</h3>
-        <el-empty v-if="history.length === 0" description="无历史" :image-size="60" />
+        <h3>{{ t('calc.history') }}</h3>
+        <el-empty v-if="history.length === 0" :description="t('calc.noHistory')" :image-size="60" />
         <div
           v-for="(item, i) in history"
           :key="i"

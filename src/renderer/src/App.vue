@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, shallowRef } from 'vue'
+import { computed, onMounted, onUnmounted, ref, shallowRef, watchEffect } from 'vue'
 import { Brush, Download, Refresh } from '@element-plus/icons-vue'
 import brandMark from '../../../resources/branding/mark.svg'
 import { PLUGIN_CATALOG_PANEL, useDevicePlugins } from '@renderer/stores/devicePlugins'
 import type { PluginLogEntry, PluginRuntimeStatus } from '../../shared/plugins'
-import { downloadPercent, downloadSourceLabel, updateNotice, type UpdateState } from '../../shared/app-updates'
+import { downloadPercent, formatSpeed, type UpdateState } from '../../shared/app-updates'
 import { useTabStore, tabIsSplit } from '@renderer/stores/tabs'
 import { useAppearanceStore } from '@renderer/stores/appearance'
 import { toolById, type ToolDef } from '@renderer/tools/registry'
@@ -20,8 +20,18 @@ import ExtensionCenter from './components/ExtensionCenter.vue'
 import SettingsDialog from './components/SettingsDialog.vue'
 import AppUpdateDialog from './components/AppUpdateDialog.vue'
 import type { WinInfo } from '../../shared/types'
+import { useI18n } from 'vue-i18n'
+import zhCn from 'element-plus/es/locale/lang/zh-cn'
+import en from 'element-plus/es/locale/lang/en'
+import { useLocaleStore } from '@renderer/stores/locale'
 
 const tabs = useTabStore()
+const locale = useLocaleStore()
+const { t } = useI18n()
+const elementLocale = computed(() => locale.locale === 'en' ? en : zhCn)
+watchEffect(() => {
+  document.title = t('shell.suite')
+})
 const devicePlugins = useDevicePlugins()
 const tabBarRef = ref<InstanceType<typeof TabBar>>()
 const updateDialogRef = ref<InstanceType<typeof AppUpdateDialog>>()
@@ -67,28 +77,47 @@ const hasUpdateHighlight = computed(
   () => updateState.value.phase === 'available' || updateState.value.phase === 'downloading' || updateState.value.phase === 'ready'
 )
 
+function localizedUpdateNotice(s: UpdateState): string {
+  switch (s.phase) {
+    case 'available': return t('updater.available', { version: s.release.version })
+    case 'ready': return t('updater.ready', { version: s.release.version })
+    case 'publishing': return t('updater.publishing')
+    case 'checking': return t('updater.checking')
+    case 'current': return t('updater.current')
+    case 'check-failed': return s.messageCode ? t(`updater.messages.${s.messageCode}`) : s.message
+    case 'preparing': return t('updater.preparing')
+    case 'downloading': {
+      const pct = downloadPercent(s.received, s.release.bytes)
+      const percent = pct === undefined ? '' : ` ${pct}%`
+      const speed = s.speed ? ` (${formatSpeed(s.speed)})` : ''
+      return t('updater.downloading', { percent, speed })
+    }
+    default: return ''
+  }
+}
+
 const updateStatusLabel = computed(() => {
   const s = updateState.value
-  if (s.phase === 'ready') return `v${s.release.version} 已下载 · 重启更新`
-  if (s.phase === 'available') return `发现新版本 v${s.release.version}`
-  if (s.phase === 'checking') return '检查更新中…'
+  if (s.phase === 'ready') return t('appShell.readyStatus', { version: s.release.version })
+  if (s.phase === 'available') return t('appShell.availableStatus', { version: s.release.version })
+  if (s.phase === 'checking') return t('appShell.checkingStatus')
   if (s.phase === 'downloading') {
-    const via = downloadSourceLabel(s.source)
-    return updateNotice(s) + (via ? ` · ${via}` : '')
+    const via = s.source ? t('updater.mirror', { source: s.source }) : ''
+    return localizedUpdateNotice(s) + (via ? ` · ${via}` : '')
   }
-  if (s.phase === 'preparing') return '准备更新…'
-  return winInfo.value.version ? `v${winInfo.value.version}` : '检查更新'
+  if (s.phase === 'preparing') return t('appShell.preparingStatus')
+  return winInfo.value.version ? `v${winInfo.value.version}` : t('appShell.checkUpdates')
 })
 
 /** 右上角按钮上的短文案：下载中直接给百分比 */
 const updateHeaderLabel = computed(() => {
   const s = updateState.value
-  if (s.phase === 'ready') return '重启更新'
+  if (s.phase === 'ready') return t('appShell.restartUpdate')
   if (s.phase === 'downloading') {
     const percent = downloadPercent(s.received, s.release.bytes)
-    return percent === undefined ? '下载中' : `下载 ${percent}%`
+    return percent === undefined ? t('appShell.downloadingShort') : t('appShell.downloadingPercent', { percent })
   }
-  return '有新版本'
+  return t('appShell.newVersionShort')
 })
 
 /** 右上角按钮底部那条进度线的宽度 */
@@ -97,7 +126,7 @@ const downloadProgress = computed(() => {
   return s.phase === 'downloading' && s.release.bytes > 0 ? `${Math.min(100, (s.received / s.release.bytes) * 100)}%` : '0%'
 })
 
-const aboutUpdateHint = computed(() => updateNotice(updateState.value) || '检查 GitHub 最新版本')
+const aboutUpdateHint = computed(() => localizedUpdateNotice(updateState.value) || t('appShell.checkGithubHint'))
 
 function openUpdateDialog(): void {
   aboutOpen.value = false
@@ -124,9 +153,9 @@ const appearance = useAppearanceStore()
 const settingsOpen = ref(false)
 const extensions: ToolDef = {
   id: 'extensions',
-  name: '扩展中心',
+  get name() { return t('shell.extensionCenter') },
   icon: 'Box',
-  description: '内置模块目录',
+  get description() { return t('appShell.extensionsDesc') },
   component: ExtensionCenter,
   singleton: true,
   phase: '',
@@ -136,7 +165,7 @@ const extensions: ToolDef = {
 const activeConnectionsText = computed(() => {
   const list = tabs.connectedSessions
   if (!list.length) return ''
-  const labels: Record<string, string> = { serial: '串口', ssh: 'SSH', 'local-terminal': '终端' }
+  const labels: Record<string, string> = { serial: t('shell.serial'), ssh: 'SSH', 'local-terminal': t('shell.terminal') }
   const counts = new Map<string, number>()
   for (const tab of list) {
     const label = labels[tab.toolId] ?? tab.toolId
@@ -182,20 +211,21 @@ onMounted(() => {
 </script>
 
 <template>
+  <el-config-provider :locale="elementLocale">
   <div class="app-shell">
     <!-- 无边框标题栏：整条可拖动，交互元素 no-drag；Windows 下双击拖动区原生最大化/还原 -->
     <header class="app-header">
       <el-popover v-model:visible="aboutOpen" placement="bottom-start" :width="276" trigger="click">
         <template #reference>
-          <button class="app-logo" :title="hasUpdateHighlight ? updateStatusLabel : '版本信息与检查更新'">
+          <button class="app-logo" :title="hasUpdateHighlight ? updateStatusLabel : t('shell.versionInfo')">
             <img :src="brandMark" class="app-brand-mark" width="22" height="18" alt="" aria-hidden="true" draggable="false" />
             <span>DevKit</span>
-            <span v-if="hasUpdateHighlight" class="logo-update-dot" aria-label="有可用更新" />
+            <span v-if="hasUpdateHighlight" class="logo-update-dot" :aria-label="t('shell.updateAvailableAria')" />
           </button>
         </template>
         <div class="about-box">
-          <div class="about-name">DevKit 嵌入式开发套件</div>
-          <div class="about-ver">版本 {{ winInfo.version || '…' }}</div>
+          <div class="about-name">{{ t('shell.suite') }}</div>
+          <div class="about-ver">{{ t('shell.version', { version: winInfo.version || '…' }) }}</div>
           <el-divider style="margin: 10px 0" />
           <div class="about-row"><span>Electron</span><span class="mono">{{ winInfo.electron }}</span></div>
           <div class="about-row"><span>Chromium</span><span class="mono">{{ winInfo.chrome }}</span></div>
@@ -204,7 +234,7 @@ onMounted(() => {
           <div class="about-update-row">
             <span class="about-copy" :class="{ 'is-highlight': hasUpdateHighlight }">{{ aboutUpdateHint }}</span>
             <el-button size="small" :type="hasUpdateHighlight ? 'primary' : undefined" @click="openUpdateDialog">
-              {{ hasUpdateHighlight ? '查看更新' : '检查更新' }}
+              {{ hasUpdateHighlight ? t('appShell.viewUpdates') : t('appShell.checkUpdates') }}
             </el-button>
           </div>
         </div>
@@ -232,24 +262,24 @@ onMounted(() => {
       <button
         class="header-action"
         :class="{ active: tabs.activeToolId === extensions.id }"
-        title="扩展中心"
+        :title="t('shell.extensionCenter')"
         @click="tabs.openTool(extensions)"
       >
-        <el-icon><Box /></el-icon><span>扩展</span>
+        <el-icon><Box /></el-icon><span>{{ t('shell.extensions') }}</span>
       </button>
       <SettingsDialog v-model="settingsOpen">
-        <button class="header-action" title="外观与终端配色" :aria-expanded="settingsOpen">
-          <el-icon><Brush /></el-icon><span>外观</span>
+        <button class="header-action" :title="t('settings.aria')" :aria-expanded="settingsOpen">
+          <el-icon><Brush /></el-icon><span>{{ t('settings.button') }}</span>
         </button>
       </SettingsDialog>
       <div class="win-controls">
-        <button class="win-btn" title="最小化" @click="winMinimize">
+        <button class="win-btn" :title="t('shell.minimize')" @click="winMinimize">
           <el-icon :size="15"><Minus /></el-icon>
         </button>
-        <button class="win-btn" :title="maximized ? '还原' : '最大化'" @click="winToggleMax">
+        <button class="win-btn" :title="maximized ? t('shell.restore') : t('shell.maximize')" @click="winToggleMax">
           <el-icon :size="13"><CopyDocument v-if="maximized" /><FullScreen v-else /></el-icon>
         </button>
-        <button class="win-btn close" title="关闭" @click="winClose">
+        <button class="win-btn close" :title="t('shell.close')" @click="winClose">
           <el-icon :size="15"><Close /></el-icon>
         </button>
       </div>
@@ -286,17 +316,17 @@ onMounted(() => {
         </span>
       </div>
       <div class="status-right">
-        <button type="button" class="status-btn" title="快速打开工具或切换会话" @click="tabBarRef?.openLauncher()">
-          <kbd>Ctrl+K</kbd> 快速切换
+        <button type="button" class="status-btn" :title="t('shell.quickOpen')" @click="tabBarRef?.openLauncher()">
+          <kbd>Ctrl+K</kbd> {{ t('shell.quickSwitch') }}
         </button>
-        <button type="button" class="status-btn" title="切换外观与终端配色" @click="settingsOpen = !settingsOpen">
+        <button type="button" class="status-btn" :title="t('shell.switchAppearance')" @click="settingsOpen = !settingsOpen">
           {{ appearance.terminalTheme.name }}
         </button>
         <button
           type="button"
           class="status-btn status-version update-entry"
           :class="{ 'has-update': hasUpdateHighlight }"
-          :title="hasUpdateHighlight ? updateStatusLabel : '点击检查应用更新'"
+          :title="hasUpdateHighlight ? updateStatusLabel : t('shell.clickCheckUpdate')"
           @click="openUpdateDialog"
         >
           {{ updateStatusLabel }}
@@ -310,6 +340,7 @@ onMounted(() => {
       @state-change="updateState = $event"
     />
   </div>
+  </el-config-provider>
 </template>
 
 <style scoped>

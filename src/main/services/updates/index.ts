@@ -5,7 +5,8 @@ import { APP_UPDATES, APP_UPDATES_PANEL, applyFailureMessage, createSpeedEstimat
 import { emitToolEvent, getMainWindow, type ToolService } from '../../ipc'
 import { GitHubReleases, RELEASE_HOME, RateLimitError, packageName, readPendingUpdate, sanitizeMirrors, type ReleaseResult, type UpdatePackage } from './github'
 import { getSection } from '../macro/configStore'
-import { cleanUpdateHandoffs, getInstallTarget, prepareUpdate, reportLeftoverFiles, verifyUpdateFile, type InstallTarget } from './install'
+import { cleanUpdateHandoffs, getInstallTarget, prepareUpdate, reportLeftoverFiles, UpdatePreparationError, verifyUpdateFile, type InstallTarget } from './install'
+import { getAppLocale, mainText } from '../../app-locale'
 
 // 12 小时一次：GitHub API 匿名配额按出口 IP 共享（企业 NAT 下尤甚），降频减少配额消耗
 const CHECK_INTERVAL = 12 * 60 * 60 * 1000
@@ -77,7 +78,8 @@ export class AppUpdateService implements ToolService {
         const reason = failed ? (await readFile(join(cache, 'apply-detail'), 'utf8').catch(() => '')).trim() : ''
         this.setState({
           phase: 'ready', release: update,
-          message: failed ? applyFailureMessage(reason) : undefined
+          message: failed ? applyFailureMessage(reason, getAppLocale()) : undefined,
+          messageCode: failed ? (reason === 'locked' ? 'UPDATE_APPLY_LOCKED' : 'UPDATE_APPLY_FAILED') : undefined
         })
         return
       }
@@ -109,7 +111,7 @@ export class AppUpdateService implements ToolService {
       } catch {
         // 回退通道网络失败 → 走统一限流提示
       }
-      throw new Error('GitHub API 受限，且发布页回退通道未取到可校验的更新信息；可到发布页手动下载。')
+      throw new RateLimitError()
     }
   }
 
@@ -125,8 +127,12 @@ export class AppUpdateService implements ToolService {
         ? { phase: 'available', release: result.update, installable: Boolean(this.target) }
         : { phase: result.status })
     } catch (error) {
-      const message = error instanceof Error && error.message.startsWith('GitHub') ? error.message : '无法连接 GitHub，请稍后重试。'
-      this.setState({ phase: 'check-failed', message })
+      const limited = error instanceof RateLimitError
+      this.setState({
+        phase: 'check-failed',
+        messageCode: limited ? 'UPDATE_RATE_LIMITED' : 'UPDATE_CHECK_FAILED',
+        message: mainText(limited ? 'updateRateLimited' : 'updateCheckFailed')
+      })
     } finally {
       this.busy = false
     }
@@ -182,9 +188,8 @@ export class AppUpdateService implements ToolService {
       this.setState({ phase: 'ready', release: update })
     } catch (error) {
       await rm(partial, { force: true }).catch(() => {})
-      const message = error instanceof Error && error.message.startsWith('更新包')
-        ? error.message : '下载失败，请检查网络和磁盘空间后重试。'
-      this.setState({ phase: 'available', release: update, message })
+      this.setState({ phase: 'available', release: update,
+        messageCode: 'UPDATE_DOWNLOAD_FAILED', message: mainText('updateDownloadFailed') })
     } finally {
       this.busy = false
     }
@@ -208,7 +213,8 @@ export class AppUpdateService implements ToolService {
       return true
     } catch {
       await rm(join(this.target!.cache, 'pending.json'), { force: true }).catch(() => {})
-      this.setState({ phase: 'available', release: update, message: '缓存更新包校验失败，请重新下载。' })
+      this.setState({ phase: 'available', release: update,
+        messageCode: 'UPDATE_VERIFY_FAILED', message: mainText('updateVerifyFailed') })
       return false
     }
   }
@@ -227,8 +233,8 @@ export class AppUpdateService implements ToolService {
       }
     } catch (error) {
       this.setState({ phase: 'ready', release: update,
-        message: error instanceof Error && /^(程序目录|无法准备)/.test(error.message)
-          ? error.message : '无法启动更新助手。可重试或另存更新包。'
+        messageCode: 'UPDATE_PREPARE_FAILED',
+        message: error instanceof UpdatePreparationError ? error.message : mainText('updatePrepareFailed')
       })
     } finally {
       this.busy = false
@@ -246,14 +252,16 @@ export class AppUpdateService implements ToolService {
       if (!await this.verified(update)) return this.state
       const file = packageName(this.target.format)
       const { filePath, canceled } = await dialog.showSaveDialog(window, {
-        title: '另存更新包', defaultPath: join(app.getPath('downloads'), file)
+        title: mainText('saveUpdatePackage'), defaultPath: join(app.getPath('downloads'), file)
       })
       if (filePath && !canceled) {
         await copyFile(this.path(update), filePath)
-        this.setState({ phase: 'ready', release: update, message: '已保存更新包。' })
+        this.setState({ phase: 'ready', release: update,
+          messageCode: 'UPDATE_SAVED', message: mainText('updateSaved') })
       }
     } catch {
-      this.setState({ phase: 'ready', release: update, message: '无法保存更新包，请选择其他路径。' })
+      this.setState({ phase: 'ready', release: update,
+        messageCode: 'UPDATE_SAVE_FAILED', message: mainText('updateSaveFailed') })
     } finally {
       this.busy = false
     }

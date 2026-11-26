@@ -5,6 +5,7 @@ import type { ToolDef } from '@renderer/tools/registry'
 import { dedupeRecent, sessionIdentity } from '@renderer/components/session-identity'
 import { hostSharesQuickCmds, planMerge, readStoredSplitPct, splitTabTitle, type MergePlan } from '@renderer/components/split-tab'
 import { reorderTabIds } from '@renderer/components/workbench-navigation'
+import { i18n } from '@renderer/i18n'
 
 export interface TabItem {
   id: string
@@ -34,7 +35,11 @@ export function tabIsSplit(tab: WorkTab): tab is SplitTab {
 const RECENT_STORAGE_KEY = 'devkit:recent-sessions:v1'
 const PINNED_STORAGE_KEY = 'devkit:pinned-tools:v1'
 
-export const connectionLabels = { connected: '已连接', connecting: '连接中', disconnected: '未连接' }
+export const connectionLabels = {
+  get connected(): string { return i18n.global.t('connection.connected') },
+  get connecting(): string { return i18n.global.t('connection.connecting') },
+  get disconnected(): string { return i18n.global.t('connection.disconnected') }
+}
 
 let seq = 0
 
@@ -113,7 +118,7 @@ function findEntry(tabs: WorkTab[], id: string): { host: WorkTab; member?: TabIt
 
 export const useTabStore = defineStore('tabs', {
   state: () => ({
-    tabs: [{ id: 'home', toolId: 'home', title: '工具箱' }] as WorkTab[],
+    tabs: [{ id: 'home', toolId: 'home', title: i18n.global.t('home.title') }] as WorkTab[],
     detachedIds: [] as string[],
     activeId: 'home',
     recent: sanitizeRecent(readStorage(RECENT_STORAGE_KEY, [])),

@@ -5,6 +5,7 @@
  * 大文件（行数过多）只渲染差异行。
  */
 import { computed, onMounted, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { usePanelMessage } from '@renderer/composables/panelOverlays'
 import { FolderOpened } from '@element-plus/icons-vue'
 import type { DiffEncoding, HexDiffRes, HexRow } from '../../../../shared/diff'
@@ -12,6 +13,7 @@ import { ENCODINGS, useDiff } from '../../composables/useDiff'
 import { useDropSides } from '../../composables/useDiffDrop'
 
 const ElMessage = usePanelMessage()
+const { t } = useI18n()
 
 const props = defineProps<{
   /** 父层（文件夹视图"对比文件"）传入的待比较文件；seq 递增防同路径不触发 */
@@ -47,7 +49,7 @@ watch(
 onMounted(() => consumePending())
 
 async function open(side: 'left' | 'right'): Promise<void> {
-  const picked = await pickFile(side === 'left' ? '选择左侧二进制/文件' : '选择右侧二进制/文件')
+  const picked = await pickFile(side === 'left' ? t('diffUi.pickLeftBinary') : t('diffUi.pickRightBinary'))
   if (!picked.ok) return
   const ok = await openFromPath(side, picked.path!)
   if (ok) result.value = null
@@ -57,7 +59,7 @@ async function open(side: 'left' | 'right'): Promise<void> {
 async function openFromPath(side: 'left' | 'right', p: string): Promise<boolean> {
   const res = await readFile({ path: p, encoding: enc.value })
   if (!res.ok) {
-    ElMessage.warning(`读取失败：${res.error}`)
+    ElMessage.warning(t('diffUi.readFailed', { error: res.error ?? '' }))
     return false
   }
   if (side === 'left') {
@@ -90,7 +92,7 @@ const { overLeft, overRight, onDragOver: onDropOver, onDragLeave, onDrop: onDrop
 
 async function run(): Promise<void> {
   if (busy.value || !leftPath.value || !rightPath.value) {
-    if (!leftPath.value || !rightPath.value) ElMessage.info('请先打开左右两侧文件')
+    if (!leftPath.value || !rightPath.value) ElMessage.info(t('diffUi.openBothFilesFirst'))
     return
   }
   busy.value = true
@@ -100,12 +102,12 @@ async function run(): Promise<void> {
       readFile({ path: rightPath.value, encoding: enc.value })
     ])
     if (!l.ok || !r.ok) {
-      ElMessage.warning(`读取失败：${!l.ok ? l.error : r.error}`)
+      ElMessage.warning(t('diffUi.readFailed', { error: (!l.ok ? l.error : r.error) ?? '' }))
       return
     }
     result.value = await diffHex({ leftHex: l.hex ?? '', rightHex: r.hex ?? '' })
   } catch (err) {
-    ElMessage.warning(`对比失败：${err instanceof Error ? err.message : String(err)}`)
+    ElMessage.warning(t('diffUi.compareFailed', { error: err instanceof Error ? err.message : String(err) }))
   } finally {
     busy.value = false
   }
@@ -140,7 +142,7 @@ const shownRows = computed<HexRow[]>(() => {
       <el-select v-model="enc" size="small" style="width: 190px">
         <el-option v-for="e in ENCODINGS" :key="e.value" :value="e.value" :label="e.label" />
       </el-select>
-      <el-button type="primary" size="small" :loading="busy" @click="run">对比</el-button>
+      <el-button type="primary" size="small" :loading="busy" @click="run">{{ t('diffUi.compare') }}</el-button>
     </div>
 
     <div class="path-row mono">
@@ -149,7 +151,7 @@ const shownRows = computed<HexRow[]>(() => {
         size="small"
         class="path-input"
         :class="{ 'drop-over': overLeft }"
-        placeholder="左侧文件路径（可输入、浏览或拖入文件）"
+        :placeholder="t('diffUi.leftFilePlaceholder')"
         clearable
         @change="onPathInput('left')"
         @dragover="onDropOver('left', $event)"
@@ -166,7 +168,7 @@ const shownRows = computed<HexRow[]>(() => {
         size="small"
         class="path-input"
         :class="{ 'drop-over': overRight }"
-        placeholder="右侧文件路径（可输入、浏览或拖入文件）"
+        :placeholder="t('diffUi.rightFilePlaceholder')"
         clearable
         @change="onPathInput('right')"
         @dragover="onDropOver('right', $event)"
@@ -178,23 +180,23 @@ const shownRows = computed<HexRow[]>(() => {
         </template>
       </el-input>
     </div>
-    <div v-if="leftBinary || rightBinary" class="hint warn">文件为二进制（十六进制对比正常）</div>
+    <div v-if="leftBinary || rightBinary" class="hint warn">{{ t('diffUi.binaryHexOk') }}</div>
 
     <div v-if="result" class="stats-row">
-      <span class="hint">左 {{ result.leftSize }} B / 右 {{ result.rightSize }} B</span>
-      <el-tag v-if="result.identical" type="success" size="small">完全相同</el-tag>
+      <span class="hint">{{ t('diffUi.hexSizes', { left: result.leftSize, right: result.rightSize }) }}</span>
+      <el-tag v-if="result.identical" type="success" size="small">{{ t('diffUi.identical') }}</el-tag>
       <template v-else>
-        <el-tag type="danger" size="small">差异字节 {{ result.diffCount }}</el-tag>
+        <el-tag type="danger" size="small">{{ t('diffUi.diffBytes', { count: result.diffCount }) }}</el-tag>
       </template>
-      <span v-if="rowCount > 100" class="hint">只显示差异行（{{ shownRows.length }} / {{ rowCount }}）</span>
+      <span v-if="rowCount > 100" class="hint">{{ t('diffUi.onlyDiffRowsShown', { shown: shownRows.length, total: rowCount }) }}</span>
     </div>
 
     <div v-if="result" class="hex-box mono">
       <div class="hex-head">
-        <span class="h-off">偏移</span>
-        <span class="h-side">左侧</span>
+        <span class="h-off">{{ t('diffUi.offset') }}</span>
+        <span class="h-side">{{ t('diffUi.leftSide') }}</span>
         <span class="h-asc">ASCII</span>
-        <span class="h-side">右侧</span>
+        <span class="h-side">{{ t('diffUi.rightSide') }}</span>
         <span class="h-asc">ASCII</span>
       </div>
       <div v-for="(r, i) in shownRows" :key="i" class="hex-row">
@@ -203,7 +205,7 @@ const shownRows = computed<HexRow[]>(() => {
           <template v-for="(b, j) in r.leftBytes" :key="'l' + j">
             <span
               :class="['byte', byteClass(b, r.rightBytes[j] ?? -1), b < 0 ? 'dash' : '']"
-              :title="b < 0 ? '缺失' : `0x${b.toString(16).toUpperCase()}`"
+              :title="b < 0 ? t('diffUi.missingByte') : `0x${b.toString(16).toUpperCase()}`"
               >{{ b < 0 ? '--' : b.toString(16).padStart(2, '0').toUpperCase() }}</span
             >
           </template>
@@ -213,14 +215,14 @@ const shownRows = computed<HexRow[]>(() => {
           <template v-for="(b, j) in r.rightBytes" :key="'r' + j">
             <span
               :class="['byte', byteClass(r.leftBytes[j] ?? -1, b), b < 0 ? 'dash' : '']"
-              :title="b < 0 ? '缺失' : `0x${b.toString(16).toUpperCase()}`"
+              :title="b < 0 ? t('diffUi.missingByte') : `0x${b.toString(16).toUpperCase()}`"
               >{{ b < 0 ? '--' : b.toString(16).padStart(2, '0').toUpperCase() }}</span
             >
           </template>
         </span>
         <span class="h-asc">{{ r.rightBytes.map(asc).join('') }}</span>
       </div>
-      <div v-if="shownRows.length === 0" class="hint" style="padding: 8px">（空）</div>
+      <div v-if="shownRows.length === 0" class="hint" style="padding: 8px">{{ t('diffUi.empty') }}</div>
     </div>
   </div>
 </template>

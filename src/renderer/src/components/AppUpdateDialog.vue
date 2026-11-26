@@ -3,17 +3,18 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import {
   APP_UPDATES,
   APP_UPDATES_PANEL,
-  downloadSourceLabel,
   formatMegabytes,
-  updateNotice,
+  formatSpeed,
   type UpdateState
 } from '../../../shared/app-updates'
+import { useI18n } from 'vue-i18n'
 
 defineProps<{ currentVersion: string }>()
 
 const emit = defineEmits<{
   (e: 'state-change', state: UpdateState): void
 }>()
+const { t } = useI18n()
 
 const state = ref<UpdateState>({ phase: 'idle' })
 const dialog = ref<HTMLDialogElement>()
@@ -24,17 +25,38 @@ const installable = computed(() =>
 )
 const activity = computed(() => ['checking', 'downloading', 'preparing'].includes(state.value.phase))
 const highlighted = computed(() => state.value.phase === 'available' || state.value.phase === 'ready')
-const notice = computed(() => updateNotice(state.value))
-const message = computed(() => invocationError.value || ('message' in state.value ? state.value.message : ''))
+const notice = computed(() => {
+  const current = state.value
+  switch (current.phase) {
+    case 'available': return t('updater.available', { version: current.release.version })
+    case 'ready': return t('updater.ready', { version: current.release.version })
+    case 'publishing': return t('updater.publishing')
+    case 'checking': return t('updater.checking')
+    case 'current': return t('updater.current')
+    case 'preparing': return t('updater.preparing')
+    case 'downloading': {
+      const percent = current.release.bytes > 0 ? ` ${Math.min(100, Math.floor(current.received / current.release.bytes * 100))}%` : ''
+      const speed = current.speed ? ` (${formatSpeed(current.speed)})` : ''
+      return t('updater.downloading', { percent, speed })
+    }
+    case 'check-failed': return ''
+    default: return ''
+  }
+})
+const message = computed(() => {
+  if (invocationError.value) return invocationError.value
+  if (!('message' in state.value)) return ''
+  return state.value.messageCode ? t(`updater.messages.${state.value.messageCode}`) : state.value.message
+})
 /** 下载中关掉窗口，下载照常在后台进行——所以叫「后台下载」而不是「稍后」 */
 const dismissLabel = computed(() =>
-  state.value.phase === 'downloading' ? '后台下载' : highlighted.value || activity.value ? '稍后' : '关闭'
+  t(state.value.phase === 'downloading' ? 'updater.background' : highlighted.value || activity.value ? 'updater.later' : 'updater.close')
 )
 /** 进度条下面的一行：已下载 / 总大小，经第三方镜像时标出来源 */
 const downloadDetail = computed(() => {
   const current = state.value
   if (current.phase !== 'downloading') return ''
-  return [`${formatMegabytes(current.received)} / ${formatMegabytes(current.release.bytes)}`, downloadSourceLabel(current.source)]
+  return [`${formatMegabytes(current.received)} / ${formatMegabytes(current.release.bytes)}`, current.source ? t('updater.mirror', { source: current.source }) : '']
     .filter(Boolean)
     .join(' · ')
 })
@@ -65,7 +87,7 @@ async function run(action: 'check' | 'download' | 'restart' | 'save' | 'release'
   try {
     await window.api.invoke(APP_UPDATES, action, APP_UPDATES_PANEL)
   } catch {
-    invocationError.value = '无法执行更新操作，请重试。'
+    invocationError.value = t('updater.invokeFailed')
   }
 }
 
@@ -82,28 +104,28 @@ defineExpose({ show, run })
 <template>
   <Teleport to="body">
     <dialog ref="dialog" class="update-dialog" aria-labelledby="app-update-title">
-      <h2 id="app-update-title">DevKit 应用更新</h2>
-      <p class="update-version">当前版本 v{{ currentVersion || '…' }}</p>
-      <p class="update-status" role="status">{{ notice || '点击下方按钮检查 GitHub 最新稳定版本。' }}</p>
+      <h2 id="app-update-title">{{ t('updater.title') }}</h2>
+      <p class="update-version">{{ t('updater.currentVersion', { version: currentVersion || '…' }) }}</p>
+      <p class="update-status" role="status">{{ notice || t('updater.prompt') }}</p>
 
       <section v-if="release" aria-labelledby="app-update-notes">
-        <h3 id="app-update-notes">v{{ release.version }} 更新内容</h3>
-        <p class="update-notes" tabindex="0">{{ release.notes || '此版本未提供更新说明。' }}</p>
-        <button type="button" class="update-link" @click="run('release')">在 GitHub 查看发布说明</button>
+        <h3 id="app-update-notes">{{ t('updater.notesTitle', { version: release.version }) }}</h3>
+        <p class="update-notes" tabindex="0">{{ release.notes || t('updater.noNotes') }}</p>
+        <button type="button" class="update-link" @click="run('release')">{{ t('updater.releaseNotes') }}</button>
       </section>
 
       <progress
         v-if="state.phase === 'downloading'"
         :value="state.received"
         :max="state.release.bytes"
-        aria-label="更新包下载进度"
+        :aria-label="t('updater.progress')"
       />
       <p v-if="downloadDetail" class="update-download-detail">{{ downloadDetail }}</p>
       <p v-if="state.phase === 'ready'" class="update-restart-note">
-        重启会结束当前的串口、SSH 和传输会话。
+        {{ t('updater.restartNote') }}
       </p>
       <p v-else-if="state.phase === 'available' && !installable" class="update-restart-note">
-        当前运行环境仅支持检查版本，请前往 GitHub Releases 下载对应安装包。
+        {{ t('updater.checkOnly') }}
       </p>
       <p class="update-message" role="status">{{ message && message !== notice ? message : '' }}</p>
 
@@ -112,20 +134,20 @@ defineExpose({ show, run })
           <button
             type="submit"
             autofocus
-            :title="state.phase === 'downloading' ? '关闭此窗口，下载在后台继续；完成后可从这里重启更新' : undefined"
+            :title="state.phase === 'downloading' ? t('updater.backgroundHint') : undefined"
           >
             {{ dismissLabel }}
           </button>
         </form>
-        <button v-if="state.phase === 'ready'" type="button" @click="run('save')">另存更新包</button>
-        <button v-if="state.phase === 'ready'" type="button" class="primary" @click="run('restart')">重启并更新</button>
+        <button v-if="state.phase === 'ready'" type="button" @click="run('save')">{{ t('updater.save') }}</button>
+        <button v-if="state.phase === 'ready'" type="button" class="primary" @click="run('restart')">{{ t('updater.restart') }}</button>
         <button
           v-else-if="state.phase === 'available' && installable"
           type="button"
           class="primary"
           @click="run('download')"
         >
-          下载更新 <span class="update-size">{{ (state.release.bytes / 1024 ** 2).toFixed(1) }} MB</span>
+          {{ t('updater.download') }} <span class="update-size">{{ (state.release.bytes / 1024 ** 2).toFixed(1) }} MB</span>
         </button>
         <button
           v-else-if="state.phase === 'available' && !installable"
@@ -133,10 +155,10 @@ defineExpose({ show, run })
           class="primary"
           @click="run('release')"
         >
-          前往 GitHub 下载
+          {{ t('updater.githubDownload') }}
         </button>
         <!-- 下载中只留「后台下载」：灰掉的「检查更新」在下载期间没有意义 -->
-        <button v-else-if="state.phase !== 'downloading'" type="button" class="primary" :disabled="activity" @click="run('check')">检查更新</button>
+        <button v-else-if="state.phase !== 'downloading'" type="button" class="primary" :disabled="activity" @click="run('check')">{{ t('updater.check') }}</button>
       </div>
     </dialog>
   </Teleport>

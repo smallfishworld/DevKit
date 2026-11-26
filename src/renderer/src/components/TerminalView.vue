@@ -20,6 +20,7 @@ import { VtGuard, reopenResetSequence, type VtGuardStats } from '../../../shared
 import { useAppearanceStore } from '@renderer/stores/appearance'
 import { toXtermTheme } from '@renderer/theme'
 import { usePanelDocument } from '../composables/usePanelWindow'
+import { useI18n } from 'vue-i18n'
 
 const props = withDefaults(
   defineProps<{
@@ -51,6 +52,7 @@ const props = withDefaults(
 
 const appearance = useAppearanceStore()
 const panelDocument = usePanelDocument()
+const { t } = useI18n()
 
 const emit = defineEmits<{
   /** 键盘原始输入（Enter 为 \r），由父组件决定发到哪 */
@@ -477,7 +479,7 @@ const liveSearchRefresh = new LiveSearchRefresh(() => {
 
 function onSearchResults(r: { resultCount: number; resultIndex: number }): void {
   // 无结果或结果未变化时不显示计数
-  if (r.resultCount === 0) searchInfo.value = '无结果'
+  if (r.resultCount === 0) searchInfo.value = t('terminal.noResults')
   else searchInfo.value = `${r.resultIndex + 1}/${r.resultCount}`
 }
 
@@ -720,15 +722,15 @@ defineExpose({ write, info, clear, reset, resync, resetVtState, focus, openSearc
         ref="searchInput"
         v-model="searchTerm"
         class="search-input"
-        placeholder="查找…"
+        :placeholder="t('terminal.search')"
         @keydown="onSearchKeydown"
         @input="doSearch(true)"
         @contextmenu="onSearchContextmenu"
       />
       <span class="search-info">{{ searchInfo }}</span>
-      <button class="search-btn" title="上一个（Shift+Enter）" @click="doSearch(false)">↑</button>
-      <button class="search-btn" title="下一个（Enter）" @click="doSearch(true)">↓</button>
-      <button class="search-btn" title="关闭（Esc）" @click="closeSearch()">×</button>
+      <button class="search-btn" :title="t('terminal.previousMatch')" @click="doSearch(false)">↑</button>
+      <button class="search-btn" :title="t('terminal.nextMatch')" @click="doSearch(true)">↓</button>
+      <button class="search-btn" :title="t('terminal.closeSearch')" @click="closeSearch()">×</button>
     </div>
     <div class="term-stage">
       <div

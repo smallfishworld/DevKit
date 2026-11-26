@@ -4,23 +4,25 @@
  * 文件夹视图"对比文件"时切到对应视图并传递路径（seq 递增防同路径不触发），
  * 目标视图载入双文件并自动对比。
  */
-import { ref, shallowRef } from 'vue'
+import { computed, ref, shallowRef } from 'vue'
 import { usePanelMessage } from '@renderer/composables/panelOverlays'
 import TextCompareView from '../components/diff/TextCompareView.vue'
 import HexCompareView from '../components/diff/HexCompareView.vue'
 import FolderCompareView from '../components/diff/FolderCompareView.vue'
 import { useDiff } from '../composables/useDiff'
+import { useI18n } from 'vue-i18n'
 
 const ElMessage = usePanelMessage()
+const { t } = useI18n()
 
 type Mode = 'text' | 'hex' | 'folder'
 const mode = ref<Mode>('text')
 
-const modes: { value: Mode; label: string }[] = [
-  { value: 'text', label: '文本对比' },
-  { value: 'hex', label: '十六进制' },
-  { value: 'folder', label: '文件夹' }
-]
+const modes = computed<{ value: Mode; label: string }[]>(() => [
+  { value: 'text', label: t('diffShell.text') },
+  { value: 'hex', label: t('diffShell.hex') },
+  { value: 'folder', label: t('diffShell.folder') }
+])
 
 /** 文件夹视图 → 文本/十六进制视图的待处理跳转 */
 const pending = shallowRef<{ left: string; right: string; hex: boolean; seq: number } | null>(null)
@@ -54,7 +56,7 @@ async function onPanelDrop(e: DragEvent): Promise<void> {
   if (paths.length === 0) return
   const st = await statPath(paths[0])
   if (!st.ok) {
-    ElMessage.warning('路径不存在或无法访问')
+    ElMessage.warning(t('diffShell.inaccessible'))
     return
   }
   // 目录 → 文件夹模式；文件 → 文本模式（路径经 pending 传给目标视图自动载入对比）

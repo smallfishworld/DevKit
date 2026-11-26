@@ -4,6 +4,13 @@ import {
   type AppearanceSettings
 } from '../../../shared/theme'
 import { getSection, setSection } from '../macro/configStore'
+import {
+  DEFAULT_LOCALE_SETTINGS,
+  sanitizeAppLocale,
+  sanitizeLocaleSettings,
+  type LocaleSettings
+} from '../../../shared/locale'
+import { setAppLocale } from '../../app-locale'
 
 function sanitizeAppearance(value: unknown): AppearanceSettings {
   const raw = (value ?? {}) as Partial<AppearanceSettings>
@@ -31,6 +38,15 @@ export const settingsService: ToolService = {
         const settings = sanitizeAppearance(payload)
         await setSection('appearance', settings)
         return settings
+      }
+      case 'locale:get': {
+        const saved = await getSection<LocaleSettings>('locale', DEFAULT_LOCALE_SETTINGS)
+        return setAppLocale(sanitizeLocaleSettings(saved).language)
+      }
+      case 'locale:set': {
+        const language = sanitizeAppLocale(payload)
+        await setSection<LocaleSettings>('locale', { language })
+        return setAppLocale(language)
       }
       default:
         throw new Error(`未知设置操作: ${action}`)

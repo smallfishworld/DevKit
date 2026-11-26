@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { usePanelMessage } from '@renderer/composables/panelOverlays'
 import { usePanelDocument } from '@renderer/composables/usePanelWindow'
 import {
@@ -38,6 +39,7 @@ import { useSidebarDrag } from '../composables/useSidebarDrag'
 import { useTabStore } from '@renderer/stores/tabs'
 
 const ElMessage = usePanelMessage()
+const { t, locale } = useI18n()
 const panelDocument = usePanelDocument()
 
 const props = defineProps<{ panelId: string }>()
@@ -87,7 +89,7 @@ const sessionPluginStatuses = computed(() => pluginStatuses.value.filter(status 
 const pluginBusy = computed(() => !!pluginExecuting.value || sessionPluginStatuses.value.some(status => status.bound && status.state === 'running'))
 async function pluginApi<T>(action: string, payload?: unknown): Promise<T> {
   const result = await window.api.invoke('plugins', action, props.panelId, payload) as T & { ok: boolean; error?: string }
-  if (!result.ok) throw new Error(result.error || '插件操作失败')
+  if (!result.ok) throw new Error(result.error || t('serialUi.pluginOpFailed'))
   return result
 }
 async function refreshPluginStatus(): Promise<void> {
@@ -114,18 +116,18 @@ function onPluginsChanged(): void {
   void refreshPluginStatus()
 }
 async function runPluginAction(action: PluginActionReference): Promise<void> {
-  if (!open.value) throw new Error('串口未打开')
-  if (pluginBusy.value) throw new Error('本串口正在执行动作')
+  if (!open.value) throw new Error(t('serialUi.portNotOpen'))
+  if (pluginBusy.value) throw new Error(t('serialUi.pluginBusy'))
   const generation = connectionGeneration
   pluginExecuting.value = action.instanceId
   stopLoop()
   try {
     const runtime = await pluginApi<{ statuses: PluginRuntimeStatus[] }>('status')
     const status = runtime.statuses.find(item => item.instanceId === action.instanceId)
-    if (status?.bound && status.panelId !== props.panelId) throw new Error('此插件配置已绑定到其他串口，请先解除绑定')
-    if (!open.value || generation !== connectionGeneration) throw new Error('串口连接已变化，请重新运行')
+    if (status?.bound && status.panelId !== props.panelId) throw new Error(t('serialUi.pluginBoundOther'))
+    if (!open.value || generation !== connectionGeneration) throw new Error(t('serialUi.connChangedRetry'))
     await pluginApi('bind', { instanceId: action.instanceId })
-    if (!open.value || generation !== connectionGeneration) throw new Error('串口连接已变化，已取消动作')
+    if (!open.value || generation !== connectionGeneration) throw new Error(t('serialUi.connChangedCancelled'))
     await pluginApi('run', action)
   } finally {
     pluginExecuting.value = ''
@@ -145,7 +147,7 @@ let guardNotified = false
 function onGuard(stats: VtGuardStats): void {
   if (guardNotified) return
   guardNotified = true
-  const note = stats.eraseScrollback > 0 ? '静默保护终端历史：拦截设备清回滚序列' : '静默保护终端历史：拦截设备硬复位序列'
+  const note = stats.eraseScrollback > 0 ? t('serialUi.guardEraseScrollback') : t('serialUi.guardHardReset')
   void window.api.invoke('serial', 'log:note', props.panelId, { text: note }).catch(() => {})
 }
 let altScreenNoted = false
@@ -153,7 +155,7 @@ function onAltScreen(): void {
   if (altScreenNoted) return
   altScreenNoted = true
   void window.api.invoke('serial', 'log:note', props.panelId, {
-    text: '设备进入备用屏模式，重开串口时自动恢复正常终端状态'
+    text: t('serialUi.altScreenNote')
   }).catch(() => {})
 }
 function syncViewVisibility(): void {
@@ -163,6 +165,7 @@ function syncViewVisibility(): void {
   }).catch(() => {})
 }
 watch(() => tabStore.sessionVisible(props.panelId), syncViewVisibility)
+watch(locale, () => syncTabTitle(displayedParams.value.path))
 watch(panelDocument, (current, previous) => {
   previous.removeEventListener('visibilitychange', syncViewVisibility)
   current.addEventListener('visibilitychange', syncViewVisibility)
@@ -255,10 +258,10 @@ let signalTimer: ReturnType<typeof setInterval> | null = null
 
 const sessions = computed(() => config.value?.sessions ?? [])
 /** 顶栏标题：端口号（COM3）；未选端口时显示「串口」 */
-const portHeading = computed(() => normalizePortPath(displayedParams.value.path) || '串口')
+const portHeading = computed(() => normalizePortPath(displayedParams.value.path) || t('serialUi.portFallback'))
 /** 标签页标题：显示端口号；未选端口时回退工具名 */
 function syncTabTitle(path: string): void {
-  tabStore.rename(props.panelId, path ? normalizePortPath(path) : '串口助手')
+  tabStore.rename(props.panelId, path ? normalizePortPath(path) : t('serialUi.toolFallback'))
 }
 
 // ---------- 快捷命令宏（全局共享，见 composables/useTermMacros） ----------
@@ -339,12 +342,12 @@ async function startXfer(): Promise<void> {
   }
   const protoName = xferProtocol.value.toUpperCase()
   if (xferKind.value === 'send') {
-    termView.value?.info(`开始 ${protoName} 发送：${xferPath.value}（设备端需先运行接收程序）`)
+    termView.value?.info(t('serialUi.xferSendStart', { proto: protoName, path: xferPath.value }))
     window.api
       .invoke('serial', 'file:send', props.panelId, { protocol: xferProtocol.value, path: xferPath.value })
       .catch(() => {})
   } else {
-    termView.value?.info(`开始 ${protoName} 接收（设备端需先运行发送程序）`)
+    termView.value?.info(t('serialUi.xferRecvStart', { proto: protoName }))
     window.api
       .invoke('serial', 'file:recv', props.panelId, { protocol: xferProtocol.value, dir: xferPath.value })
       .catch(() => {})
@@ -356,19 +359,19 @@ function cancelTransfer(): void {
 }
 
 function onTransferEvt(p: unknown): void {
-  const t = p as SerialTransferEvt
-  transfer.value = t
+  const evt = p as SerialTransferEvt
+  transfer.value = evt
   clearTimeout(transferNoticeTimer)
-  if (t.state === 'start' || t.state === 'progress') return
-  if (t.state === 'done') {
-    const msg = t.dir === 'send' ? `文件发送完成：${t.name}` : `接收完成：${t.name || '(无文件)'}`
+  if (evt.state === 'start' || evt.state === 'progress') return
+  if (evt.state === 'done') {
+    const msg = evt.dir === 'send' ? t('serialUi.xferSendDone', { name: evt.name }) : t('serialUi.xferRecvDone', { name: evt.name || t('serialUi.noFile') })
     ElMessage.success(msg)
     termView.value?.info(msg)
-  } else if (t.state === 'error') {
-    ElMessage.error(`传输失败：${t.error}`)
-    termView.value?.info(`传输失败：${t.error}`)
-  } else if (t.state === 'cancel') {
-    termView.value?.info('传输已取消')
+  } else if (evt.state === 'error') {
+    ElMessage.error(t('serialUi.xferFailed', { error: evt.error ?? '' }))
+    termView.value?.info(t('serialUi.xferFailed', { error: evt.error ?? '' }))
+  } else if (evt.state === 'cancel') {
+    termView.value?.info(t('serialUi.xferCancelled'))
   }
   transferNoticeTimer = setTimeout(() => { transfer.value = null }, 1600)
 }
@@ -396,11 +399,11 @@ onMounted(async () => {
         rtsOn.value = false
         signals.value = null
         stopSignalPoll()
-        if (s.error) ElMessage.error(`串口已断开：${s.error}`)
+        if (s.error) ElMessage.error(t('serialUi.disconnectedError', { error: s.error }))
       }
     }),
     window.api.on('serial', props.panelId, 'error', (p) => {
-      ElMessage.warning(`串口错误：${(p as { message: string }).message}`)
+      ElMessage.warning(t('serialUi.serialError', { message: (p as { message: string }).message }))
     }),
     window.api.on('plugins', props.panelId, 'changed', onPluginsChanged),
     window.api.on('plugins', props.panelId, 'status', (payload) => {
@@ -424,7 +427,7 @@ onMounted(async () => {
   encoding.value = config.value.encoding ?? 'utf8'
   if (config.value.sidebarWidth) sidebarWidth.value = config.value.sidebarWidth
   sidebarHidden.value = config.value.sidebarHidden === true
-  termView.value?.info('就绪。选择串口后点击「连接」，终端内可直接输入命令。')
+  termView.value?.info(t('serialUi.readyInfo'))
   await refreshPorts()
   // 恢复上次端口时标签标题同步为端口号
   syncTabTitle(params.path)
@@ -471,7 +474,7 @@ async function saveConnection(reconnect: boolean): Promise<void> {
   if (connectionSaving.value || opening.value) return
   const next = normalizeSerialParams(connectionDraft)
   if (!next) {
-    connectionError.value = '请选择串口，波特率须为 1–12000000 的整数。'
+    connectionError.value = t('serialUi.invalidParams')
     return
   }
   connectionSaving.value = true
@@ -494,7 +497,7 @@ async function saveConnection(reconnect: boolean): Promise<void> {
 // ---------- 开关串口 ----------
 async function openPort(): Promise<void> {
   if (!params.path) {
-    ElMessage.warning('请选择串口')
+    ElMessage.warning(t('serialUi.selectPortFirst'))
     return
   }
   if (opening.value || open.value) return
@@ -520,13 +523,13 @@ async function openPort(): Promise<void> {
     // 真正拉高 DTR/RTS（仅改 UI 状态不下发时，部分需要复位才能工作的设备会卡住）
     await window.api.invoke('serial', 'dtr', props.panelId, { on: true }).catch(() => {})
     await window.api.invoke('serial', 'rts', props.panelId, { on: true }).catch(() => {})
-    termView.value?.info(`已打开 ${params.path} @ ${params.baudRate}，终端内可直接输入`)
+    termView.value?.info(t('serialUi.openedInfo', { path: params.path, baudRate: params.baudRate }))
     syncTabTitle(params.path)
     void persistConfig().catch((error: unknown) => ElMessage.warning(String(error)))
     startSignalPoll()
     termView.value?.focus()
   } else {
-    ElMessage.error(`打开失败：${res.error}`)
+    ElMessage.error(t('serialUi.openFailed', { error: res.error ?? '' }))
   }
 }
 
@@ -537,7 +540,7 @@ async function closePort(): Promise<void> {
   open.value = false
   activeParams.value = undefined
   syncTabTitle(params.path)
-  termView.value?.info('已断开')
+  termView.value?.info(t('serialUi.disconnected'))
 }
 
 function startSignalPoll(): void {
@@ -575,11 +578,11 @@ async function toggleRts(): Promise<void> {
 // ---------- 发送 ----------
 function doSend(text: string, mode: 'ascii' | 'hex', newline: 'none' | 'crlf' | 'lf' | 'cr'): void {
   if (pluginBusy.value) {
-    ElMessage.warning('插件动作正在使用此串口')
+    ElMessage.warning(t('serialUi.pluginUsingPort'))
     return
   }
   if (!open.value) {
-    ElMessage.warning('串口未打开')
+    ElMessage.warning(t('serialUi.portNotOpen'))
     return
   }
   // 录制：发送栏整条发送记为一个命令步骤
@@ -616,7 +619,7 @@ function send(): void {
 function startLoop(): void {
   if (loopOn.value || pluginBusy.value) return
   if (!sendText.value.trim()) {
-    ElMessage.warning('请先填写发送内容')
+    ElMessage.warning(t('serialUi.enterSendContent'))
     return
   }
   loopOn.value = true
@@ -650,9 +653,9 @@ function saveLog(): void {
   void window.api
     .invoke('serial', 'log:mem-save', props.panelId)
     .then((res) => {
-      const r = res as { ok: boolean; error?: string }
-      if (r.ok) ElMessage.success('日志已保存')
-      else if (r.error && r.error !== '已取消') ElMessage.warning(`存日志失败：${r.error}`)
+      const r = res as { ok: boolean; code?: string; error?: string }
+      if (r.ok) ElMessage.success(t('serialUi.logSaved'))
+      else if (r.code !== 'CANCELLED' && r.error) ElMessage.warning(t('serialUi.logSaveFailed', { error: r.error }))
     })
     .catch(() => {})
 }
@@ -687,9 +690,9 @@ async function saveLogRetention(): Promise<void> {
     const result = await window.api.invoke('serial', 'log:retention:set', props.panelId, { ...retention }) as {
       ok: boolean; error?: string; settings: LogRetentionSettings
     }
-    if (!result.ok) throw new Error(result.error || '保存失败')
+    if (!result.ok) throw new Error(result.error || t('serialUi.saveFailed'))
     retentionSaved.value = result.settings
-    ElMessage.success('清理规则已保存')
+    ElMessage.success(t('serialUi.retentionSaved'))
   } catch (e) { retentionError.value = (e as Error).message }
   finally { retentionBusy.value = false }
 }
@@ -708,7 +711,7 @@ async function setLogDir(): Promise<void> {
   if (res.ok && res.dir) {
     logDirectory.value = res.dir
     if (config.value) config.value.logDir = res.dir
-    ElMessage.success(`日志保存目录已设为：${res.dir}（新会话生效）`)
+    ElMessage.success(t('serialUi.logDirSet', { dir: res.dir }))
   }
 }
 
@@ -734,7 +737,7 @@ async function savePreset(): Promise<void> {
   if (!config.value) return
   const next = normalizeSerialParams(connectionDraft)
   if (!next) {
-    connectionError.value = '请选择串口，波特率须为 1–12000000 的整数。'
+    connectionError.value = t('serialUi.invalidParams')
     return
   }
   const name = newPresetName.value.trim() || `${next.path} @ ${next.baudRate}`
@@ -744,7 +747,7 @@ async function savePreset(): Promise<void> {
   presetName.value = name
   newPresetName.value = ''
   await persistConfig()
-  ElMessage.success(`预设「${name}」已保存`)
+  ElMessage.success(t('serialUi.presetSaved', { name }))
 }
 
 /** 第一次点击进入待确认状态，再点一次才真正删除 */
@@ -764,7 +767,7 @@ async function deletePreset(): Promise<void> {
   config.value.sessions = config.value.sessions.filter((item) => item.name !== name)
   presetName.value = ''
   await persistConfig()
-  ElMessage.success(`预设「${name}」已删除`)
+  ElMessage.success(t('serialUi.presetDeleted', { name }))
 }
 
 </script>
@@ -776,97 +779,97 @@ async function deletePreset(): Promise<void> {
         <h1 :title="displayedParams.path">{{ portHeading }}</h1>
         <el-popover v-model:visible="connectionSettings" placement="bottom-start" :width="440" trigger="click" @before-enter="resetConnectionDraft">
           <template #reference>
-            <el-button size="small" :aria-expanded="connectionSettings" aria-label="连接参数" :disabled="opening || connectionSaving">
+            <el-button size="small" :aria-expanded="connectionSettings" :aria-label="t('serialUi.connParams')" :disabled="opening || connectionSaving">
               {{ displayedParams.baudRate }} · {{ displayedParams.dataBits }}{{ parityCode }}{{ displayedParams.stopBits }} ▾
             </el-button>
           </template>
-          <section class="connection-editor" aria-label="连接参数" @keydown.esc="!connectionSaving && (connectionSettings = false)">
-            <h2>连接参数</h2>
-            <p class="hint">{{ open ? '保存并重连会结束当前连接。仅保存会在下次连接时使用新参数。' : '选择串口并确认连接参数。' }}</p>
+          <section class="connection-editor" :aria-label="t('serialUi.connParams')" @keydown.esc="!connectionSaving && (connectionSettings = false)">
+            <h2>{{ t('serialUi.connParams') }}</h2>
+            <p class="hint">{{ open ? t('serialUi.connHintOpen') : t('serialUi.connHintClosed') }}</p>
             <fieldset class="conn-fields" :disabled="connectionSaving || opening">
-              <div class="conn-field conn-preset-field"><span>已存预设</span>
+              <div class="conn-field conn-preset-field"><span>{{ t('serialUi.savedPresets') }}</span>
                 <div class="conn-preset-row">
                   <el-select v-model="presetName" :teleported="false" size="small" filterable
-                    clearable placeholder="选择已存预设套用参数" aria-label="已存预设"
+                    clearable :placeholder="t('serialUi.pickPresetPlaceholder')" :aria-label="t('serialUi.savedPresets')"
                     @change="(name: string) => name && applyPreset(name)">
                     <el-option v-for="preset in sessions" :key="preset.name" :value="preset.name"
                       :label="`${preset.name}（${preset.params.path} @ ${preset.params.baudRate}）`" />
                   </el-select>
                   <el-button size="small" :type="presetDeleteArmed ? 'danger' : undefined"
                     :icon="presetDeleteArmed ? undefined : Delete"
-                    :aria-label="presetDeleteArmed ? '确认删除所选预设' : '删除所选预设'"
-                    :title="presetDeleteArmed ? '再点一次确认删除' : '删除所选预设'"
+                    :aria-label="presetDeleteArmed ? t('sshExtra.confirmDeletePreset') : t('sshExtra.deletePreset')"
+                    :title="presetDeleteArmed ? t('sshExtra.clickAgainDelete') : t('sshExtra.deletePreset')"
                     :disabled="!presetName" @click="requestDeletePreset">
-                    <span v-if="presetDeleteArmed">确认</span>
+                    <span v-if="presetDeleteArmed">{{ t('serialUi.confirm') }}</span>
                   </el-button>
                 </div>
               </div>
-              <div class="conn-field conn-save-as-field"><span>保存为预设</span>
+              <div class="conn-field conn-save-as-field"><span>{{ t('serialUi.saveAsPreset') }}</span>
                 <div class="conn-port-field">
                   <el-input v-model="newPresetName" size="small" maxlength="24" clearable
-                    :placeholder="`留空则用 ${connectionDraft.path || '端口'} @ ${connectionDraft.baudRate}`"
-                    aria-label="新预设名" @keydown.enter.prevent="savePreset" />
-                  <el-button size="small" :icon="Plus" aria-label="保存预设" title="把上面的参数保存为预设（同名覆盖）"
+                    :placeholder="t('serialUi.presetNamePlaceholder', { port: connectionDraft.path || t('serialUi.portWord'), baudRate: connectionDraft.baudRate })"
+                    :aria-label="t('serialUi.newPresetNameAria')" @keydown.enter.prevent="savePreset" />
+                  <el-button size="small" :icon="Plus" :aria-label="t('serialUi.savePresetAria')" :title="t('serialUi.savePresetTitle')"
                     :disabled="!connectionDraft.path" @click="savePreset" />
                 </div>
               </div>
-              <div class="conn-field"><span>串口</span>
+              <div class="conn-field"><span>{{ t('serialUi.portFallback') }}</span>
                 <div class="conn-port-field">
-                  <el-select v-model="connectionDraft.path" :teleported="false" placeholder="选择串口" aria-label="串口" size="small">
+                  <el-select v-model="connectionDraft.path" :teleported="false" :placeholder="t('serialUi.selectPort')" :aria-label="t('serialUi.portFallback')" size="small">
                     <el-option v-for="port in ports" :key="port.path" :value="port.path"
                       :label="[port.path, port.friendlyName].filter(Boolean).join(' · ')" />
                   </el-select>
-                  <el-button size="small" :icon="Refresh" aria-label="刷新串口列表" @click="refreshPorts" />
+                  <el-button size="small" :icon="Refresh" :aria-label="t('serialUi.refreshPortsAria')" @click="refreshPorts" />
                 </div>
               </div>
-              <div class="conn-field"><span>波特率</span>
-                <el-select v-model="connectionDraft.baudRate" :teleported="false" aria-label="波特率" size="small"
+              <div class="conn-field"><span>{{ t('serialUi.baudRate') }}</span>
+                <el-select v-model="connectionDraft.baudRate" :teleported="false" :aria-label="t('serialUi.baudRate')" size="small"
                   filterable allow-create default-first-option>
                   <el-option v-for="baud in BAUD_RATES" :key="baud" :value="baud" :label="String(baud)" />
                 </el-select>
               </div>
-              <div class="conn-field"><span>数据位</span>
-                <el-select v-model="connectionDraft.dataBits" :teleported="false" aria-label="数据位" size="small">
-                  <el-option :value="7" label="7 位" />
-                  <el-option :value="8" label="8 位" />
+              <div class="conn-field"><span>{{ t('serialUi.dataBits') }}</span>
+                <el-select v-model="connectionDraft.dataBits" :teleported="false" :aria-label="t('serialUi.dataBits')" size="small">
+                  <el-option :value="7" :label="t('serialUi.bitsOption', { n: 7 })" />
+                  <el-option :value="8" :label="t('serialUi.bitsOption', { n: 8 })" />
                 </el-select>
               </div>
-              <div class="conn-field"><span>校验</span>
-                <el-select v-model="connectionDraft.parity" :teleported="false" aria-label="校验位" size="small">
-                  <el-option value="none" label="无校验" />
-                  <el-option value="even" label="偶校验" />
-                  <el-option value="odd" label="奇校验" />
+              <div class="conn-field"><span>{{ t('serialUi.parity') }}</span>
+                <el-select v-model="connectionDraft.parity" :teleported="false" :aria-label="t('serialUi.parityAria')" size="small">
+                  <el-option value="none" :label="t('serialUi.parityNone')" />
+                  <el-option value="even" :label="t('serialUi.parityEven')" />
+                  <el-option value="odd" :label="t('serialUi.parityOdd')" />
                 </el-select>
               </div>
-              <div class="conn-field"><span>停止位</span>
-                <el-select v-model="connectionDraft.stopBits" :teleported="false" aria-label="停止位" size="small">
-                  <el-option :value="1" label="1 停止" />
-                  <el-option :value="2" label="2 停止" />
+              <div class="conn-field"><span>{{ t('serialUi.stopBits') }}</span>
+                <el-select v-model="connectionDraft.stopBits" :teleported="false" :aria-label="t('serialUi.stopBits')" size="small">
+                  <el-option :value="1" :label="t('serialUi.stopOption', { n: 1 })" />
+                  <el-option :value="2" :label="t('serialUi.stopOption', { n: 2 })" />
                 </el-select>
               </div>
               <el-checkbox v-model="connectionDraft.rtscts" size="small">RTS/CTS</el-checkbox>
             </fieldset>
             <p v-if="connectionError" class="hint" role="alert">{{ connectionError }}</p>
             <div class="connection-footer">
-              <el-button :disabled="connectionSaving" @click="connectionSettings = false">取消</el-button>
-              <el-button :disabled="opening || connectionSaving" @click="saveConnection(false)">仅保存</el-button>
-              <el-button type="primary" :loading="connectionSaving" :disabled="opening" @click="saveConnection(true)">{{ open ? '保存并重连' : '保存并连接' }}</el-button>
+              <el-button :disabled="connectionSaving" @click="connectionSettings = false">{{ t('serialUi.cancel') }}</el-button>
+              <el-button :disabled="opening || connectionSaving" @click="saveConnection(false)">{{ t('serialUi.saveOnly') }}</el-button>
+              <el-button type="primary" :loading="connectionSaving" :disabled="opening" @click="saveConnection(true)">{{ open ? t('serialUi.saveReconnect') : t('serialUi.saveConnect') }}</el-button>
             </div>
           </section>
         </el-popover>
-        <span class="port-status" :class="{ online: open }">{{ open ? '已连接' : opening ? '连接中' : '未连接' }}</span>
-        <el-button v-if="open" size="small" :disabled="opening || connectionSaving" @click="closePort">断开</el-button>
-        <el-button v-else size="small" type="primary" :loading="opening" :disabled="connectionSaving" @click="params.path ? openPort() : (connectionSettings = true)">连接</el-button>
+        <span class="port-status" :class="{ online: open }">{{ open ? t('serialUi.connected') : opening ? t('serialUi.connecting') : t('serialUi.notConnected') }}</span>
+        <el-button v-if="open" size="small" :disabled="opening || connectionSaving" @click="closePort">{{ t('serialUi.disconnect') }}</el-button>
+        <el-button v-else size="small" type="primary" :loading="opening" :disabled="connectionSaving" @click="params.path ? openPort() : (connectionSettings = true)">{{ t('serialUi.connect') }}</el-button>
       </div>
       <div class="conn-group">
       <el-popover placement="bottom-end" :width="280" trigger="click">
         <template #reference><el-button text size="small" :icon="Operation">DTR · RTS</el-button></template>
         <div class="conn-group">
         <el-button size="small" :disabled="!open" :type="dtrOn ? 'warning' : 'default'" @click="toggleDtr">
-          DTR {{ dtrOn ? '高' : '低' }}
+          DTR {{ dtrOn ? t('serialUi.high') : t('serialUi.low') }}
         </el-button>
         <el-button size="small" :disabled="!open" :type="rtsOn ? 'warning' : 'default'" @click="toggleRts">
-          RTS {{ rtsOn ? '高' : '低' }}
+          RTS {{ rtsOn ? t('serialUi.high') : t('serialUi.low') }}
         </el-button>
         <span v-if="signals" class="sig">
           <el-tag size="small" :type="signals.cts ? 'success' : 'info'">CTS</el-tag>
@@ -897,8 +900,8 @@ async function deletePreset(): Promise<void> {
         </div>
 
         <!-- 拖动调整侧栏宽度（VS Code 式分隔条）；中央折叠把手，与 SSH 页一致 -->
-        <div v-if="!sidebarHidden && !sharedCmds" class="sidebar-split" title="拖动调整宽度" @mousedown="onSidebarResize">
-          <button class="split-toggle" title="折叠快捷命令栏" @mousedown.stop @click="toggleSidebar">
+        <div v-if="!sidebarHidden && !sharedCmds" class="sidebar-split" :title="t('sshExtra.resizeSidebar')" @mousedown="onSidebarResize">
+          <button class="split-toggle" :title="t('sshExtra.collapseCmds')" @mousedown.stop @click="toggleSidebar">
             <svg viewBox="0 0 8 12" width="7" height="10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
               <path d="M6.5 1L1.5 6l5 5" />
             </svg>
@@ -906,7 +909,7 @@ async function deletePreset(): Promise<void> {
         </div>
 
       <!-- 折叠后的细条：点击展开侧栏 -->
-      <div v-else-if="!sharedCmds" class="sidebar-collapsed" title="展开快捷命令栏" @click="toggleSidebar">
+      <div v-else-if="!sharedCmds" class="sidebar-collapsed" :title="t('sshExtra.expandCmds')" @click="toggleSidebar">
         <el-icon :size="16"><ArrowRight /></el-icon>
       </div>
 
@@ -916,25 +919,25 @@ async function deletePreset(): Promise<void> {
         @pointerdown="activateTermMacroTarget(props.panelId)"
         @focusin="activateTermMacroTarget(props.panelId)"
       >
-        <div class="term-opts" role="group" aria-label="终端操作">
-          <div class="term-group" role="group" aria-label="终端输出">
-            <el-button size="small" text :icon="Search" title="查找（Ctrl+F）" @click="openTermSearch">查找</el-button>
-            <el-button size="small" text @click="clearTerm">清屏</el-button>
+        <div class="term-opts" role="group" :aria-label="t('serialUi.termActionsAria')">
+          <div class="term-group" role="group" :aria-label="t('serialUi.termOutputAria')">
+            <el-button size="small" text :icon="Search" :title="t('serialUi.findTitle')" @click="openTermSearch">{{ t('serialUi.find') }}</el-button>
+            <el-button size="small" text @click="clearTerm">{{ t('serialUi.clear') }}</el-button>
           </div>
-          <div class="term-group" role="group" aria-label="日志">
-            <el-button size="small" text :icon="Download" @click="saveLog">保存日志</el-button>
+          <div class="term-group" role="group" :aria-label="t('serialUi.logGroupAria')">
+            <el-button size="small" text :icon="Download" @click="saveLog">{{ t('serialUi.saveLog') }}</el-button>
             <TerminalHistory tool="serial" :panel-id="props.panelId" />
-            <el-button size="small" text :icon="FolderOpened" @click="openLogSettings">日志设置</el-button>
+            <el-button size="small" text :icon="FolderOpened" @click="openLogSettings">{{ t('serialUi.logSettings') }}</el-button>
           </div>
-          <el-button size="small" text :icon="UploadFilled" :disabled="!open || transferring" @click="openTransfer">文件传输</el-button>
-          <el-button v-if="recording" class="stop-recording" size="small" text type="danger" @click="finishRecording">停止录制</el-button>
+          <el-button size="small" text :icon="UploadFilled" :disabled="!open || transferring" @click="openTransfer">{{ t('serialUi.fileTransfer') }}</el-button>
+          <el-button v-if="recording" class="stop-recording" size="small" text type="danger" @click="finishRecording">{{ t('serialUi.stopRecording') }}</el-button>
           <el-popover placement="bottom-end" :width="310" trigger="click">
             <template #reference>
-              <el-button class="display-action" size="small" text :icon="Setting">显示设置</el-button>
+              <el-button class="display-action" size="small" text :icon="Setting">{{ t('serialUi.displaySettings') }}</el-button>
             </template>
             <div class="display-settings">
-          <span>字体</span>
-          <el-tooltip content="终端字体（可手输系统内已安装的字体名）" placement="top">
+          <span>{{ t('serialUi.font') }}</span>
+          <el-tooltip :content="t('sshExtra.fontTooltip')" placement="top">
             <el-select
               v-model="termFont"
               size="small"
@@ -945,23 +948,23 @@ async function deletePreset(): Promise<void> {
               <el-option value="Consolas" label="Consolas" />
               <el-option value="Cascadia Mono" label="Cascadia Mono" />
               <el-option value="Courier New" label="Courier New" />
-              <el-option value="SimSun" label="宋体" />
+              <el-option value="SimSun" :label="t('sshExtra.fontSimSun')" />
             </el-select>
           </el-tooltip>
-          <span>字号</span>
-          <el-tooltip content="字号（Ctrl+滚轮 或 Ctrl+= / Ctrl+- / Ctrl+0 缩放）" placement="top">
+          <span>{{ t('serialUi.fontSize') }}</span>
+          <el-tooltip :content="t('sshExtra.fontSizeTooltip')" placement="top">
             <el-select v-model="termFontSize" size="small" filterable style="width: 74px">
               <el-option v-for="s in TERM_SIZES" :key="s" :value="s" :label="String(s)" />
             </el-select>
           </el-tooltip>
-          <el-tooltip content="设备不回显的裸模块勾选后，终端可看到自己敲入的字符" placement="top">
-            <el-checkbox v-model="localEcho" size="small">本地回显</el-checkbox>
+          <el-tooltip :content="t('serialUi.localEchoTooltip')" placement="top">
+            <el-checkbox v-model="localEcho" size="small">{{ t('serialUi.localEcho') }}</el-checkbox>
           </el-tooltip>
-          <el-tooltip content="每行前显示本地时间 [HH:MM:SS.mmm]，与日志落盘格式一致" placement="top">
-            <el-checkbox v-model="showTime" size="small" @change="persistConfig()">时间戳</el-checkbox>
+          <el-tooltip :content="t('sshExtra.timestampTooltip')" placement="top">
+            <el-checkbox v-model="showTime" size="small" @change="persistConfig()">{{ t('serialUi.timestamp') }}</el-checkbox>
           </el-tooltip>
-          <span>接收编码</span>
-          <el-tooltip content="串口线上字节的编码：多数嵌入式设备输出 GBK，选错时中文显示乱码 / ？；对打开中的会话即时生效" placement="top">
+          <span>{{ t('serialUi.rxEncoding') }}</span>
+          <el-tooltip :content="t('serialUi.rxEncodingTooltip')" placement="top">
             <el-select v-model="encoding" size="small" style="width: 88px" @change="onEncodingChange">
               <el-option value="utf8" label="UTF-8" />
               <el-option value="gbk" label="GBK" />
@@ -971,36 +974,36 @@ async function deletePreset(): Promise<void> {
           </el-popover>
         </div>
         <div v-if="transfer" class="transfer-strip">
-          <strong>{{ transfer.protocol.toUpperCase() }} · {{ transfer.dir === 'send' ? '发送' : '接收' }}</strong>
-          <span class="xfer-name" :title="transfer.name">{{ transfer.name || '等待设备端…' }}</span>
+          <strong>{{ transfer.protocol.toUpperCase() }} · {{ transfer.dir === 'send' ? t('serialUi.xferDirSend') : t('serialUi.xferDirRecv') }}</strong>
+          <span class="xfer-name" :title="transfer.name">{{ transfer.name || t('serialUi.waitingDevice') }}</span>
           <el-progress :percentage="transferPct" :indeterminate="transferring && !transfer.total"
             :status="transfer.state === 'error' ? 'exception' : transfer.state === 'done' ? 'success' : undefined" />
-          <span v-if="!transfer.total && transferring" class="hint">协商中…</span>
-          <el-button v-if="transferring" size="small" text type="danger" @click="cancelTransfer">取消传输</el-button>
+          <span v-if="!transfer.total && transferring" class="hint">{{ t('serialUi.negotiating') }}</span>
+          <el-button v-if="transferring" size="small" text type="danger" @click="cancelTransfer">{{ t('serialUi.cancelTransfer') }}</el-button>
         </div>
-        <el-dialog v-model="logSettings" title="会话日志设置" width="min(420px, 95vw)" append-to-body>
-          <el-checkbox v-model="autoLog" @change="persistConfig()">自动保存会话日志</el-checkbox>
-          <p class="hint">自动保存设置在新会话中生效。</p>
-          <el-input :model-value="logDirectory" readonly aria-label="自动日志目录" placeholder="读取日志目录…" />
+        <el-dialog v-model="logSettings" :title="t('serialUi.logSettingsTitle')" width="min(420px, 95vw)" append-to-body>
+          <el-checkbox v-model="autoLog" @change="persistConfig()">{{ t('serialUi.autoSaveLog') }}</el-checkbox>
+          <p class="hint">{{ t('serialUi.autoSaveHint') }}</p>
+          <el-input :model-value="logDirectory" readonly :aria-label="t('serialUi.autoLogDirAria')" :placeholder="t('serialUi.readingLogDir')" />
           <div class="panel-row log-dir-actions">
-            <el-button size="small" @click="setLogDir">设置保存路径</el-button>
-            <el-button size="small" @click="openLogDir">打开保存路径</el-button>
+            <el-button size="small" @click="setLogDir">{{ t('serialUi.setLogDir') }}</el-button>
+            <el-button size="small" @click="openLogDir">{{ t('serialUi.openLogDir') }}</el-button>
           </div>
           <section class="log-cleanup">
-            <h3>历史日志自动清理</h3>
-            <el-checkbox v-model="retention.enabled" :disabled="retentionBusy">自动清理过期归档日志</el-checkbox>
+            <h3>{{ t('serialUi.logCleanupTitle') }}</h3>
+            <el-checkbox v-model="retention.enabled" :disabled="retentionBusy">{{ t('serialUi.enableAutoCleanup') }}</el-checkbox>
             <el-form label-position="top" @submit.prevent="saveLogRetention">
-              <el-form-item label="保留最近月数（1–120）">
+              <el-form-item :label="t('serialUi.retentionMonthsLabel')">
                 <el-input-number v-model="retention.months" :min="1" :max="120" :step="1" step-strictly :disabled="retentionBusy || !retention.enabled" />
               </el-form-item>
-              <p class="hint">启动后及每 24 小时检查。按最后写入时间判断，正在使用的归档和手动导出文件会跳过。</p>
-              <p class="hint" role="status">{{ retentionSaved.enabled ? `已保存：保留最近 ${retentionSaved.months} 个月` : '已保存：关闭自动清理' }}</p>
-              <p v-if="retentionLast" class="hint">上次清理 {{ new Date(retentionLast.at).toLocaleString() }} · 移除 {{ retentionLast.removed }} 个 · 失败 {{ retentionLast.failed }} 个</p>
+              <p class="hint">{{ t('serialUi.retentionHint') }}</p>
+              <p class="hint" role="status">{{ retentionSaved.enabled ? t('serialUi.retentionSavedEnabled', { months: retentionSaved.months }) : t('serialUi.retentionSavedDisabled') }}</p>
+              <p v-if="retentionLast" class="hint">{{ t('serialUi.retentionLastRun', { time: new Date(retentionLast.at).toLocaleString(), removed: retentionLast.removed, failed: retentionLast.failed }) }}</p>
               <el-alert v-if="retentionError" :title="retentionError" type="error" :closable="false" role="alert" />
-              <el-button native-type="submit" size="small" :loading="retentionBusy" :disabled="!validLogRetention(retention)">保存清理规则</el-button>
+              <el-button native-type="submit" size="small" :loading="retentionBusy" :disabled="!validLogRetention(retention)">{{ t('serialUi.saveRetention') }}</el-button>
             </el-form>
           </section>
-          <template #footer><el-button type="primary" @click="logSettings = false">完成</el-button></template>
+          <template #footer><el-button type="primary" @click="logSettings = false">{{ t('serialUi.done') }}</el-button></template>
         </el-dialog>
         <TerminalView
           ref="termView"
@@ -1031,7 +1034,7 @@ async function deletePreset(): Promise<void> {
             style="width: 92px"
             :disabled="loopOn"
           >
-            <el-option value="none" label="无换行" />
+            <el-option value="none" :label="t('serialUi.noNewline')" />
             <el-option value="crlf" label="CRLF" />
             <el-option value="lf" label="LF" />
             <el-option value="cr" label="CR" />
@@ -1040,8 +1043,8 @@ async function deletePreset(): Promise<void> {
             v-model="sendText"
             size="small"
             class="send-input mono"
-            aria-label="发送内容"
-            :placeholder="sendMode === 'hex' ? 'HEX：AA BB 01' : '输入命令，Enter 发送 · ↑↓ 调取历史'"
+            :aria-label="t('serialUi.sendContentAria')"
+            :placeholder="sendMode === 'hex' ? t('serialUi.sendPlaceholderHex') : t('serialUi.sendPlaceholderAscii')"
             :disabled="loopOn"
             @input="historyIndex = -1"
             @keydown.up.exact="recallSendHistory($event, 1)"
@@ -1051,7 +1054,7 @@ async function deletePreset(): Promise<void> {
           >
             <template #suffix>
               <el-dropdown trigger="click" :disabled="!history.length || loopOn" @command="(cmd: string) => (sendText = cmd)">
-                <el-button text size="small" :icon="Clock" :disabled="!history.length || loopOn" aria-label="选择发送历史" />
+                <el-button text size="small" :icon="Clock" :disabled="!history.length || loopOn" :aria-label="t('serialUi.sendHistoryAria')" />
                 <template #dropdown>
                   <el-dropdown-menu>
                     <el-dropdown-item v-for="h in history" :key="h" :command="h">{{ h.slice(0, 60) }}</el-dropdown-item>
@@ -1060,15 +1063,15 @@ async function deletePreset(): Promise<void> {
               </el-dropdown>
             </template>
           </el-input>
-          <el-button type="primary" size="small" :disabled="!open || loopOn" @click="send">发送</el-button>
+          <el-button type="primary" size="small" :disabled="!open || loopOn" @click="send">{{ t('serialUi.send') }}</el-button>
           <!-- 定时发送：默认收起，点「定时」展开 -->
-          <el-tooltip content="定时循环发送（非常用功能，展开后可用）" placement="top">
+          <el-tooltip :content="t('serialUi.timedSendTooltip')" placement="top">
             <el-button
               size="small"
               :type="loopOn ? 'danger' : loopPanel ? 'warning' : 'default'"
               @click="loopOn ? stopLoop() : (loopPanel = !loopPanel)"
             >
-              {{ loopOn ? '停止循环' : '定时' }}
+              {{ loopOn ? t('serialUi.stopLoop') : t('serialUi.timed') }}
             </el-button>
           </el-tooltip>
           <template v-if="loopPanel && !loopOn">
@@ -1079,49 +1082,49 @@ async function deletePreset(): Promise<void> {
               size="small"
               style="width: 100px"
             />
-            <el-button size="small" @click="startLoop">循环</el-button>
+            <el-button size="small" @click="startLoop">{{ t('serialUi.loop') }}</el-button>
           </template>
         </div>
       </div>
     </div>
 
     <footer class="serial-status">
-      <span class="serial-status-summary">{{ displayedParams.path || '串口' }} · {{ open ? '已连接' : '未连接' }}</span>
+      <span class="serial-status-summary">{{ displayedParams.path || t('serialUi.portFallback') }} · {{ open ? t('serialUi.connected') : t('serialUi.notConnected') }}</span>
       <span>RX <b>{{ rxBytes }}</b> B</span>
       <span>TX <b>{{ txBytes }}</b> B</span>
-      <span>{{ autoLog ? '保留日志' : '临时日志' }}</span>
+      <span>{{ autoLog ? t('serialUi.keepLogBadge') : t('serialUi.tempLogBadge') }}</span>
     </footer>
 
-    <el-dialog v-model="xferDlg" title="串口文件传输" width="min(460px, 95vw)" append-to-body>
+    <el-dialog v-model="xferDlg" :title="t('serialUi.xferDialogTitle')" width="min(460px, 95vw)" append-to-body>
       <el-form label-position="top" size="small" class="transfer-form" @submit.prevent="startXfer">
-        <el-form-item label="传输协议">
-          <el-select v-model="xferProtocol" aria-label="传输协议">
+        <el-form-item :label="t('serialUi.xferProtocol')">
+          <el-select v-model="xferProtocol" :aria-label="t('serialUi.xferProtocol')">
             <el-option label="YMODEM" value="ymodem" />
             <el-option label="ZMODEM" value="zmodem" />
           </el-select>
         </el-form-item>
-        <el-form-item label="方向">
-          <el-select v-model="xferKind" aria-label="方向" @change="xferPath = ''">
-            <el-option label="发送到设备" value="send" />
-            <el-option label="从设备接收" value="recv" />
+        <el-form-item :label="t('serialUi.xferDirection')">
+          <el-select v-model="xferKind" :aria-label="t('serialUi.xferDirection')" @change="xferPath = ''">
+            <el-option :label="t('serialUi.sendToDevice')" value="send" />
+            <el-option :label="t('serialUi.recvFromDevice')" value="recv" />
           </el-select>
         </el-form-item>
-        <el-form-item class="transfer-path" :label="xferKind === 'send' ? '本地文件' : '接收保存目录'">
+        <el-form-item class="transfer-path" :label="xferKind === 'send' ? t('serialUi.localFile') : t('serialUi.recvSaveDir')">
           <el-input :model-value="xferPath" readonly>
-            <template #append><el-button @click="chooseTransferPath">{{ xferKind === 'send' ? '选择文件' : '选择目录' }}</el-button></template>
+            <template #append><el-button @click="chooseTransferPath">{{ xferKind === 'send' ? t('serialUi.chooseFile') : t('serialUi.chooseDir') }}</el-button></template>
           </el-input>
         </el-form-item>
       </el-form>
       <div class="hint">
         {{
           xferKind === 'send'
-            ? '电脑 → 设备：设备端需先运行接收程序（YMODEM 用 ry，ZMODEM 用 rz）'
-            : '设备 → 电脑：设备端需先运行发送程序（YMODEM 用 sy，ZMODEM 用 sz）'
+            ? t('serialUi.xferSendHint')
+            : t('serialUi.xferRecvHint')
         }}
       </div>
       <template #footer>
-        <el-button @click="xferDlg = false">取消</el-button>
-        <el-button type="primary" :disabled="!xferPath || !open || transferring" @click="startXfer">开始传输</el-button>
+        <el-button @click="xferDlg = false">{{ t('serialUi.cancel') }}</el-button>
+        <el-button type="primary" :disabled="!xferPath || !open || transferring" @click="startXfer">{{ t('serialUi.startTransfer') }}</el-button>
       </template>
     </el-dialog>
 

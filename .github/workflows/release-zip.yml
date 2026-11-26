@@ -106,46 +106,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $tag = "${{ steps.build_ref.outputs.tag }}"
-          $portableName = "DevKit-portable.exe"
-          $zipName = "DevKit-win-x64.zip"
-
           $body = gh release view "$tag" --json body --jq .body
-          $lines = $body -split "`r?`n"
-          $filtered = New-Object System.Collections.Generic.List[string]
-
-          foreach ($line in $lines) {
-            # 包名不带版本号；带版本号的旧写法也要能清掉，重跑时下载表才不会出现重复行
-            if ($line -match '^\|\s*DevKit-(?:[\w.]+-)?portable\.exe\s*\|' -or
-                $line -match '^\|\s*DevKit-(?:[\w.]+-)?win-x64\.zip\s*\|') {
-              continue
-            }
-            $filtered.Add($line)
-          }
-
-          $portableRow = "| $portableName | 单文件便携版，无需安装，下载后直接运行 |"
-          $zipRow = "| $zipName | Windows x64 解压版，解压后运行 DevKit.exe，推荐长期使用 |"
-          $inserted = $false
-          $result = New-Object System.Collections.Generic.List[string]
-
-          for ($i = 0; $i -lt $filtered.Count; $i++) {
-            $result.Add($filtered[$i])
-            if (-not $inserted -and $filtered[$i].Trim() -eq '|---|---|') {
-              $result.Add($portableRow)
-              $result.Add($zipRow)
-              $inserted = $true
-            }
-          }
-
-          if (-not $inserted) {
-            $result.Add("")
-            $result.Add("## 下载")
-            $result.Add("")
-            $result.Add("| 文件 | 说明 |")
-            $result.Add("|---|---|")
-            $result.Add($portableRow)
-            $result.Add($zipRow)
-          }
-
           $notesFile = Join-Path $env:RUNNER_TEMP "release-notes.md"
-          [System.IO.File]::WriteAllText($notesFile, ($result -join "`n"), [System.Text.UTF8Encoding]::new($false))
+          [System.IO.File]::WriteAllText($notesFile, $body, [System.Text.UTF8Encoding]::new($false))
+          node scripts/update-release-download-table.cjs "$notesFile"
           gh release edit "$tag" --notes-file "$notesFile"

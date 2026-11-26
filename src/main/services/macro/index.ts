@@ -22,6 +22,7 @@ import {
   unregisterHotkey
 } from './hotkeys'
 import { deleteMacro, listMacros, saveMacro } from './store'
+import { mainText } from '../../app-locale'
 
 let stepIdSeq = 1
 const nextStepId = (): string => `s${Date.now().toString(36)}-${stepIdSeq++}`
@@ -35,7 +36,7 @@ function rawToSteps(raw: { data: InputEventData; time: number }[]): MacroStep[] 
     last = item.time
     steps.push({
       id: nextStepId(),
-      segment: '录制',
+      segment: mainText('macroRecordSegment'),
       enabled: true,
       type: 'input',
       delayMs,
@@ -102,7 +103,7 @@ class MacroService implements ToolService {
   private beginRecord(): void {
     if (!this.settings || isRecording() || player.isPlaying()) return
     // 自身热键保持注册：录制器靠 matchesAnyHotkey 过滤其按键（注销反而会让它被录进宏）
-    const name = `录制 ${new Date().toLocaleTimeString()}`
+    const name = mainText('macroRecordDefaultName', { time: new Date().toLocaleTimeString() })
     this.currentMacro = {
       version: 1,
       meta: { name, hotkey: '', createdAt: Date.now(), updatedAt: Date.now() },
@@ -111,12 +112,12 @@ class MacroService implements ToolService {
     startRecording(this.settings, {
       onEvent: (count) => {
         this.emit('record', { recording: true, count })
-        showHud(`● 录制中  ${count} 个事件\n${this.settings?.hotkeyRecord} 停止`, true)
+        showHud(mainText('macroHudRecordingCount', { count, hotkey: this.settings?.hotkeyRecord ?? '' }), true)
       },
       onStop: () => {}
     })
     this.emit('record', { recording: true, count: 0 })
-    showHud(`● 录制中\n${this.settings.hotkeyRecord} 停止`, true)
+    showHud(mainText('macroHudRecording', { hotkey: this.settings.hotkeyRecord }), true)
   }
 
   private finishRecord(): void {
@@ -143,7 +144,7 @@ class MacroService implements ToolService {
         if (p.running) {
           this.emit('play', p)
           showHud(
-            `▶ 回放中  第 ${p.loop}${p.loops === 0 ? '∞' : `/${p.loops}`} 轮  ${p.index}/${p.total}\n${s?.hotkeyStop} 停止`
+            mainText('macroHudPlaying', { loop: p.loop, totalLoops: p.loops === 0 ? '∞' : `/${p.loops}`, index: p.index, total: p.total, hotkey: s?.hotkeyStop ?? '' })
           )
         } else {
           this.emit('play', p)
@@ -161,7 +162,7 @@ class MacroService implements ToolService {
       this.attachedPanel = panelId
       return { settings: this.settings }
     }
-    if (!this.settings) return { error: 'macro 服务未初始化' }
+    if (!this.settings) return { error: mainText('macroNotInit') }
 
     switch (action) {
       case 'settings:get':
@@ -185,8 +186,8 @@ class MacroService implements ToolService {
       case 'play:status':
         return { playing: player.isPlaying() }
       case 'play:start': {
-        if (isRecording()) return { error: '正在录制，请先停止录制' }
-        if (player.isPlaying()) return { error: '正在回放中' }
+        if (isRecording()) return { error: mainText('macroRecordingActive') }
+        if (player.isPlaying()) return { error: mainText('macroPlayingActive') }
         const { macro, speed, loops } = payload as {
           macro: MacroFile
           speed?: number
@@ -200,7 +201,7 @@ class MacroService implements ToolService {
             this.emit('play', progress)
             if (progress.running) {
               showHud(
-                `▶ 回放中  第 ${progress.loop}${progress.loops === 0 ? '∞' : `/${progress.loops}`} 轮  ${progress.index}/${progress.total}\n${this.settings?.hotkeyStop} 停止`
+                mainText('macroHudPlaying', { loop: progress.loop, totalLoops: progress.loops === 0 ? '∞' : `/${progress.loops}`, index: progress.index, total: progress.total, hotkey: this.settings?.hotkeyStop ?? '' })
               )
             } else {
               hideHud()
@@ -247,9 +248,9 @@ class MacroService implements ToolService {
         const { macro } = payload as { macro: MacroFile }
         return dialog
           .showSaveDialog({
-            title: '导出宏',
+            title: mainText('exportMacro'),
             defaultPath: `${macro.meta.name}.json`,
-            filters: [{ name: '宏文件', extensions: ['json'] }]
+            filters: [{ name: mainText('macroFiles'), extensions: ['json'] }]
           })
           .then(async ({ canceled, filePath }) => {
             if (canceled || !filePath) return { ok: false }
@@ -260,8 +261,8 @@ class MacroService implements ToolService {
       case 'macro:import': {
         return dialog
           .showOpenDialog({
-            title: '导入宏',
-            filters: [{ name: '宏文件', extensions: ['json'] }],
+            title: mainText('importMacro'),
+            filters: [{ name: mainText('macroFiles'), extensions: ['json'] }],
             properties: ['openFile']
           })
           .then(async ({ canceled, filePaths }) => {

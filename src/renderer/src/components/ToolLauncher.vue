@@ -5,11 +5,13 @@ import { TOOLS } from '@renderer/tools/registry'
 import { useTabStore } from '@renderer/stores/tabs'
 import { launcherIndex, matchesTool } from './workbench-navigation'
 import { isTerminalTool, memberTabIds } from './split-tab'
+import { useI18n } from 'vue-i18n'
 
 const props = defineProps<{ splitAnchorId?: string | null }>()
 const emit = defineEmits<{ closed: [] }>()
 
 const tabs = useTabStore()
+const { t } = useI18n()
 const dialog = ref<HTMLDialogElement>()
 const query = ref('')
 const selected = ref(0)
@@ -86,24 +88,24 @@ defineExpose({ open })
 
 <template>
   <Teleport to="body">
-    <dialog ref="dialog" class="tool-launcher" aria-label="快速打开工具" @close="emit('closed')">
+    <dialog ref="dialog" class="tool-launcher" :aria-label="t('launcher.aria')" @close="emit('closed')">
       <div class="launcher-search">
         <el-icon aria-hidden="true"><Search /></el-icon>
         <input v-model="query" type="search" role="combobox" aria-expanded="true" aria-controls="launcher-tools"
           :aria-activedescendant="entries[selected] ? 'launcher-option-' + selected : undefined"
-          aria-label="搜索工具或切换终端会话" placeholder="搜索工具或切换终端会话…" autofocus
+          :aria-label="t('launcher.searchAria')" :placeholder="t('launcher.searchPlaceholder')" autofocus
           @input="selected = 0" @keydown="onSearchKey" />
         <kbd>Esc</kbd>
       </div>
-      <ul id="launcher-tools" role="listbox" aria-label="工具和会话">
+      <ul id="launcher-tools" role="listbox" :aria-label="t('launcher.listAria')">
         <li v-for="(entry, index) in entries" :id="'launcher-option-' + index" :key="entry.key"
           role="option" :aria-selected="index === selected" @mousedown.prevent @click="activate(index)">
           <el-icon><component :is="entry.tool.icon" /></el-icon>
-          <strong>{{ entry.name }}</strong><small>{{ entry.tabId ? '已打开的会话' : entry.tool.description }}</small>
+          <strong>{{ entry.name }}</strong><small>{{ entry.tabId ? t('launcher.openSession') : entry.tool.description }}</small>
         </li>
       </ul>
-      <p v-if="!entries.length" class="launcher-empty">未找到匹配的工具</p>
-      <footer><span>↑↓ 选择 · Enter 打开</span><form method="dialog"><button type="submit">关闭</button></form></footer>
+      <p v-if="!entries.length" class="launcher-empty">{{ t('launcher.noMatch') }}</p>
+      <footer><span>{{ t('launcher.keyboardHint') }}</span><form method="dialog"><button type="submit">{{ t('launcher.close') }}</button></form></footer>
     </dialog>
   </Teleport>
 </template>

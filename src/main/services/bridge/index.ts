@@ -1,3 +1,4 @@
+import { mainText } from '../../app-locale'
 /**
  * 串口TCP桥接服务（多实例：panelId -> 会话；一个面板 = 8 路通道 + 远程管理）。
  * 服务端模式：本机串口 ⇄ TCP 透传 + 可选管理端口（远程客户端可连入管理）。
@@ -178,12 +179,12 @@ class BridgeService implements ToolService {
         if (s) void this.writeDiskLog(s, `CH${cid} ${text}`)
       },
       client: (addr) => {
-        this.emit(panelId, 'log', { cid, level: 'info', text: `CH${cid} 客户端连接 ${addr}` })
+        this.emit(panelId, 'log', { cid, level: 'info', text: mainText('bridgeClientConnected', { cid, addr }) })
         this.emit(panelId, 'clients', { cid, count: bridgeRef.v?.clientCount ?? 0 })
         this.scheduleRemoteBroadcast(panelId)
       },
       clientClose: (addr) => {
-        this.emit(panelId, 'log', { cid, level: 'log', text: `CH${cid} 客户端断开 ${addr}` })
+        this.emit(panelId, 'log', { cid, level: 'log', text: mainText('bridgeClientDisconnected', { cid, addr }) })
         this.emit(panelId, 'clients', { cid, count: bridgeRef.v?.clientCount ?? 0 })
         this.scheduleRemoteBroadcast(panelId)
       },
@@ -199,20 +200,20 @@ class BridgeService implements ToolService {
     silent = false
   ): Promise<true | string> {
     const s = sessions.get(panelId)
-    if (!s) return '面板未初始化'
-    if (s.identity.mode === 'client') return '客户端模式下本地不启动通道'
+    if (!s) return mainText('bridgeNotInit')
+    if (s.identity.mode === 'client') return mainText('bridgeClientNoLocal')
     if (s.channels[cid - 1]?.running) return true
     const ch = s.identity.channels[cid - 1] ?? {}
     const shared = s.identity.shared
-    if (!shared) return '共享串口格式缺失'
+    if (!shared) return mainText('bridgeSharedMissing')
     const params: BridgeChannelParams = {
       cid,
       port: portDeviceOf(String(overrides.port ?? ch.port ?? '')),
       baudRate: Number(overrides.baudRate ?? ch.baudRate ?? 0),
       tcpPort: Number(overrides.tcpPort ?? ch.tcpPort ?? 0)
     }
-    if (!params.port) return silent ? true : '请选择串口'
-    if (!(params.baudRate > 0)) return silent ? true : '波特率必须是正整数'
+    if (!params.port) return silent ? true : mainText('bridgeSelectSerial')
+    if (!(params.baudRate > 0)) return silent ? true : mainText('bridgeBaudInvalid')
     if (!(params.tcpPort >= 1 && params.tcpPort <= 65535)) return silent ? true : 'TCP 端口必须在 1-65535'
 
     // 冲突防护：TCP 端口重复 / 串口被占
@@ -221,10 +222,10 @@ class BridgeService implements ToolService {
       const other = s.channels[i]
       if (!other?.running || !other.config) continue
       if (other.config.tcpPort === params.tcpPort) {
-        return silent ? true : `TCP 端口 ${params.tcpPort} 已被 CH${i + 1} 占用`
+        return silent ? true : mainText('bridgeTcpPortInUse', { port: params.tcpPort, cid: i + 1 })
       }
       if (other.config.port === params.port) {
-        return silent ? true : `串口 ${params.port} 已被 CH${i + 1} 占用`
+        return silent ? true : mainText('bridgeSerialInUse', { port: params.port, cid: i + 1 })
       }
     }
 
@@ -355,15 +356,15 @@ class BridgeService implements ToolService {
 
   private async startRemoteServer(panelId: string, port: number): Promise<{ ok: boolean; error?: string }> {
     const s = sessions.get(panelId)
-    if (!s) return { ok: false, error: '面板未初始化' }
+    if (!s) return { ok: false, error: mainText('bridgeNotInit') }
     if (s.remoteServer?.running) return { ok: true }
     const srv = new RemoteServer(
       this.serverHostOf(panelId),
-      (text) => this.pushLog(panelId, 'info', `[远程] ${text}`),
-      (text) => this.pushLog(panelId, 'error', `[远程] ${text}`)
+      (text) => this.pushLog(panelId, 'info', mainText('bridgeRemotePrefix', { text })),
+      (text) => this.pushLog(panelId, 'error', mainText('bridgeRemotePrefix', { text }))
     )
     const ok = await srv.start(port)
-    if (!ok) return { ok: false, error: '管理端口监听失败' }
+    if (!ok) return { ok: false, error: mainText('bridgeMgmtListenFailed') }
     s.remoteServer = srv
     return { ok: true }
   }
@@ -384,7 +385,7 @@ class BridgeService implements ToolService {
       statusPush: (channels, shared) => this.emit(panelId, 'remote-status', { channels, shared }),
       portsPush: (ports) => this.emit(panelId, 'remote-ports', { ports }),
       response: (ok, message) =>
-        this.pushLog(panelId, ok ? 'info' : 'error', `[远程] ${ok ? '远程操作成功' : '远程操作失败'}: ${message}`),
+        this.pushLog(panelId, ok ? 'info' : 'error', mainText('bridgeRemotePrefix', { text: `${ok ? mainText('bridgeRemoteOpOk') : mainText('bridgeRemoteOpFail')}: ${message}` })),
       log: (text) => this.pushLog(panelId, 'info', `[远程] ${text}`),
       error: (text) => this.pushLog(panelId, 'error', `[远程] ${text}`)
     }

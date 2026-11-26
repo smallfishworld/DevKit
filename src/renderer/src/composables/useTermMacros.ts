@@ -4,8 +4,10 @@
  * 录制期间不弹窗；终端键入（回车确认）与命令间隔（自动延时）都记入
  */
 import { ref } from 'vue'
+import { i18n } from '../i18n'
 import type { QuickCmd, QuickCmdStep, QuickCmdsConfig, PluginActionReference } from '../../../shared/term-macro'
 import { DEFAULT_QUICKCMDS_CONFIG, migrateQuickCmd } from '../../../shared/term-macro'
+import type { IpcResultCode } from '../../../shared/ipc-result'
 
 // ---------- 模块级共享状态（所有面板实例共用） ----------
 const quickCmds = ref<QuickCmd[]>([])
@@ -251,22 +253,23 @@ export function useTermMacros() {
   }
 
   /** 导出宏库为 DevKit JSON（空库时导出无意义，返回 false 由调用方提示） */
-  async function exportCmds(): Promise<{ ok: boolean; count?: number; error?: string }> {
+  async function exportCmds(): Promise<{ ok: boolean; count?: number; code?: IpcResultCode; error?: string }> {
     const res = (await window.api.invoke('quickcmds', 'export', GLOBAL_PANEL, {
       list: JSON.parse(JSON.stringify(quickCmds.value))
-    })) as { ok: boolean; count?: number; error?: string }
+    })) as { ok: boolean; count?: number; code?: IpcResultCode; error?: string }
     return res
   }
 
   /** 导入：文件选择框自动识别 DevKit JSON / MobaXterm 宏文件；同名覆盖，其余追加 */
-  async function importCmds(): Promise<{ ok: boolean; count?: number; source?: string; error?: string }> {
+  async function importCmds(): Promise<{ ok: boolean; count?: number; source?: string; code?: IpcResultCode; error?: string }> {
     const res = (await window.api.invoke('quickcmds', 'import', GLOBAL_PANEL)) as {
       ok: boolean
       list?: QuickCmd[]
       source?: string
+      code?: IpcResultCode
       error?: string
     }
-    if (!res.ok || !res.list) return { ok: false, error: res.error ?? '导入失败' }
+    if (!res.ok || !res.list) return { ok: false, code: res.code, error: res.error ?? i18n.global.t('quickCmdUi.importFailed') }
     // 合并：同名（含分组）覆盖旧宏，其余追加到列表末尾
     const next = [...quickCmds.value]
     for (const c of res.list) {
@@ -295,7 +298,7 @@ export function useTermMacros() {
       for (const st of cmd.steps) {
         if (!enabled()) break
         if (st.type === 'plugin-action') {
-          if (!runPluginAction || !st.instanceId || !st.actionId) throw new Error('此处无法执行插件动作')
+          if (!runPluginAction || !st.instanceId || !st.actionId) throw new Error(i18n.global.t('quickCmdUi.pluginActionUnsupported'))
           await runPluginAction({ instanceId: st.instanceId, actionId: st.actionId })
         } else if (st.type === 'sleep') {
           await new Promise((r) => setTimeout(r, Math.max(0, st.ms ?? 0)))

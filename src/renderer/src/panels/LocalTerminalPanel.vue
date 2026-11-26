@@ -19,8 +19,10 @@ import {
   type LocalTerminalExitEvent,
   type ShellProfile
 } from '../../../shared/local-terminal'
+import { useI18n } from 'vue-i18n'
 
 const ElMessage = usePanelMessage()
+const { t } = useI18n()
 
 const props = defineProps<{ panelId: string }>()
 const tabStore = useTabStore()
@@ -108,7 +110,7 @@ async function start(clearFirst = false): Promise<void> {
   if (starting.value) return
   const profile = selectedProfile.value
   if (!profile?.available) {
-    ElMessage.warning(profile?.id === 'git-bash' ? '未检测到 Git for Windows / Git Bash' : '所选 Shell 不可用')
+    ElMessage.warning(t(profile?.id === 'git-bash' ? 'terminal.unavailableGitBash' : 'terminal.unavailableShell'))
     return
   }
   starting.value = true
@@ -122,7 +124,7 @@ async function start(clearFirst = false): Promise<void> {
     })) as { ok: boolean; error?: string; cwd?: string; profile?: ShellProfile }
     if (!result.ok) {
       running.value = false
-      ElMessage.error(`终端启动失败：${result.error ?? '未知错误'}`)
+      ElMessage.error(t('terminal.startFailed', { error: result.error ?? t('terminal.unknownError') }))
       return
     }
     running.value = true
@@ -198,7 +200,7 @@ onMounted(async () => {
       const evt = payload as LocalTerminalExitEvent
       running.value = false
       activeProfileId.value = undefined
-      termView.value?.info(`进程已退出，代码 ${evt.exitCode}`)
+      termView.value?.info(t('terminal.exited', { code: evt.exitCode }))
     }),
     window.api.on('local-terminal', props.panelId, 'status', (payload) => {
       const status = payload as { running?: boolean; profileId?: string; cwd?: string }
@@ -221,7 +223,7 @@ onMounted(async () => {
   profileId.value = running.value && activeProfileId.value ? activeProfileId.value : fallbackProfileId()
 
   if (availableProfiles.value.length === 0) {
-    termView.value?.info('当前系统没有检测到可用的 Windows Shell。')
+    termView.value?.info(t('terminal.noShell'))
     return
   }
   if (!running.value) await start(false)
@@ -238,7 +240,7 @@ onUnmounted(() => {
   <div class="panel local-terminal-panel">
     <div class="terminal-toolbar panel-section">
       <div class="toolbar-row">
-        <span class="label">终端</span>
+        <span class="label">{{ t('terminal.terminal') }}</span>
         <el-select v-model="profileId" size="small" style="width: 240px" @change="onProfileChanged">
           <el-option-group label="Windows Shell">
             <el-option
@@ -259,15 +261,15 @@ onUnmounted(() => {
           </el-option-group>
         </el-select>
 
-        <span class="label">工作目录</span>
+        <span class="label">{{ t('terminal.workingDirectory') }}</span>
         <el-input
           v-model="cwd"
           size="small"
           class="cwd-input"
-          placeholder="默认使用用户主目录"
+          :placeholder="t('terminal.defaultHome')"
           @change="persistConfig"
         />
-        <el-button size="small" :icon="FolderOpened" title="选择工作目录" @click="pickCwd" />
+        <el-button size="small" :icon="FolderOpened" :title="t('terminal.chooseDirectory')" @click="pickCwd" />
 
         <el-button
           v-if="!running"
@@ -276,18 +278,18 @@ onUnmounted(() => {
           :icon="VideoPlay"
           :loading="starting"
           @click="start(false)"
-        >启动</el-button>
+        >{{ t('terminal.start') }}</el-button>
         <el-button v-else size="small" :type="profileChanged ? 'primary' : ''" :icon="RefreshRight" :loading="starting" @click="restart">
-          {{ profileChanged ? '切换终端' : '重启' }}
+          {{ t(profileChanged ? 'terminal.switchShell' : 'terminal.restart') }}
         </el-button>
-        <el-button v-if="running" size="small" type="danger" plain :icon="SwitchButton" @click="stop">终止</el-button>
+        <el-button v-if="running" size="small" type="danger" plain :icon="SwitchButton" @click="stop">{{ t('terminal.stop') }}</el-button>
 
         <!-- 状态并入同一行：原先单独占一行，把操作条撑成两行且右对齐只剩一个词 -->
         <span v-if="profileChanged" class="switch-hint">
-          当前 {{ activeProfile?.name ?? activeProfileId }} → {{ selectedProfile?.name ?? profileId }}
+          {{ t('workbench.switchProfileHint', { from: activeProfile?.name ?? activeProfileId, to: selectedProfile?.name ?? profileId }) }}
         </span>
         <span class="status" :class="{ online: running }">
-          {{ running ? `运行中 · ${activeProfile?.name ?? activeProfileId ?? profileId}` : '已停止' }}
+          {{ running ? t('terminal.running', { name: activeProfile?.name ?? activeProfileId ?? profileId }) : t('terminal.stopped') }}
         </span>
       </div>
     </div>
@@ -299,8 +301,8 @@ onUnmounted(() => {
           <QuickCmdManager :enabled="running" :writer="macroWriter" />
         </div>
         <!-- 拖动调宽分隔条；中央折叠把手 -->
-        <div class="sidebar-split" title="拖动调整快捷命令栏宽度" @mousedown="onQuickCmdResize">
-          <button class="split-toggle" title="折叠快捷命令栏" @mousedown.stop @click="toggleQuickCmd">
+        <div class="sidebar-split" :title="t('terminal.resizeCommands')" @mousedown="onQuickCmdResize">
+          <button class="split-toggle" :title="t('terminal.collapseCommands')" @mousedown.stop @click="toggleQuickCmd">
             <svg viewBox="0 0 8 12" width="7" height="10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
               <path d="M6.5 1L1.5 6l5 5" />
             </svg>
@@ -309,7 +311,7 @@ onUnmounted(() => {
       </template>
 
       <!-- 折叠后的细条：点击展开（与串口/SSH 一致） -->
-      <div v-else-if="!sharedCmds" class="sidebar-collapsed" title="展开快捷命令栏" @click="toggleQuickCmd">
+      <div v-else-if="!sharedCmds" class="sidebar-collapsed" :title="t('terminal.expandCommands')" @click="toggleQuickCmd">
         <el-icon :size="16"><ArrowRight /></el-icon>
       </div>
 
@@ -322,11 +324,11 @@ onUnmounted(() => {
         <!-- 终端操作条压在终端上方通栏（与串口/SSH 一致）；
              原先 .terminal-host 是横向 flex，这条会变成一列竖排文字夹在快捷命令栏和终端之间 -->
         <div class="local-term-opts">
-          <el-button size="small" text :icon="Search" title="查找（Ctrl+F）" @click="openSearch">查找</el-button>
-          <el-button size="small" text @click="clearTerm">清屏</el-button>
+          <el-button size="small" text :icon="Search" :title="t('terminal.findTitle')" @click="openSearch">{{ t('terminal.find') }}</el-button>
+          <el-button size="small" text @click="clearTerm">{{ t('terminal.clear') }}</el-button>
           <TerminalHistory tool="local-terminal" :panel-id="props.panelId" />
           <el-popover placement="bottom-end" :width="250" trigger="click">
-            <template #reference><el-button size="small" class="local-display-button" text>显示设置</el-button></template>
+            <template #reference><el-button size="small" class="local-display-button" text>{{ t('terminal.display') }}</el-button></template>
             <div class="panel-row">
               <el-select v-model="font" size="small" filterable allow-create style="width: 132px" @change="onFontChanged">
                 <el-option value="Consolas" label="Consolas" />

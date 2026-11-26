@@ -7,6 +7,7 @@
  * - 行内悬停单项操作保留；「对比」跳文本/十六进制视图（父层传路径）
  */
 import { computed, onMounted, ref, shallowRef, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { usePanelMessage, usePanelMessageBox } from '@renderer/composables/panelOverlays'
 import { FolderOpened } from '@element-plus/icons-vue'
 import type { DiffEncoding, FolderEntry, FolderScanRes, FolderSyncRes } from '../../../../shared/diff'
@@ -16,6 +17,7 @@ import { buildTree, countDescendants, flattenTree, type FolderNode } from './fol
 
 const ElMessage = usePanelMessage()
 const ElMessageBox = usePanelMessageBox()
+const { t } = useI18n()
 
 const emit = defineEmits<{
   (e: 'compareFile', left: string, right: string, hex: boolean): void
@@ -42,14 +44,6 @@ const collapsed = ref(new Set<string>())
 const tree = computed<FolderNode[]>(() => (res.value?.ok ? buildTree(res.value.entries) : []))
 const shown = computed<FolderNode[]>(() => flattenTree(tree.value, collapsed.value, onlyDiff.value))
 
-const statusText: Record<string, string> = {
-  identical: '相同',
-  'only-left': '仅左侧',
-  'only-right': '仅右侧',
-  differ: '不同',
-  dir: '目录',
-  ignored: '已忽略'
-}
 
 function toggleCollapse(node: FolderNode): void {
   const next = new Set(collapsed.value)
@@ -109,16 +103,16 @@ async function batchSync(dir: 'left-to-right' | 'right-to-left', op: 'copy' | 'd
     return op === 'copy' ? (sourceIsLeft ? hasLeft : hasRight) : sourceIsLeft ? hasLeft : hasRight
   })
   if (!items.length) {
-    ElMessage.info('选中项不适用该操作')
+    ElMessage.info(t('diffUi.notApplicableBatch'))
     return
   }
-  const sideName = dir === 'left-to-right' ? '右侧' : '左侧'
-  const verb = op === 'copy' ? `复制到${sideName}` : `删除${sideName}副本`
+  const sideName = dir === 'left-to-right' ? t('diffUi.rightSide') : t('diffUi.leftSide')
+  const verb = op === 'copy' ? t('diffUi.copyToSide', { side: sideName }) : t('diffUi.deleteSideCopy', { side: sideName })
   let ok = false
   try {
-    await ElMessageBox.confirm(`将${verb} ${items.length} 个条目？`, '批量操作', {
+    await ElMessageBox.confirm(t('diffUi.batchConfirm', { verb, count: items.length }), t('diffUi.batchTitle'), {
       type: 'warning',
-      confirmButtonText: '执行'
+      confirmButtonText: t('diffUi.execute')
     })
     ok = true
   } catch {
@@ -142,9 +136,9 @@ async function batchSync(dir: 'left-to-right' | 'right-to-left', op: 'copy' | 'd
     busy.value = false
   }
   if (failures.length) {
-    ElMessage.warning(`${items.length - failures.length} 项成功，${failures.length} 项失败：${failures[0].rel}${failures[0].error ? `（${failures[0].error}）` : ''}${failures.length > 1 ? ' 等' : ''}`)
+    ElMessage.warning(t('diffUi.batchPartial', { ok: items.length - failures.length, fail: failures.length, first: failures[0].rel, err: failures[0].error ? ` (${failures[0].error})` : '', more: failures.length > 1 ? t('diffUi.batchMore') : '' }))
   } else {
-    ElMessage.success(`已${verb} ${items.length} 项`)
+    ElMessage.success(t('diffUi.batchDone', { verb, count: items.length }))
   }
   selected.value = new Set()
   await run()
@@ -156,13 +150,13 @@ async function syncEntry(
   dir: 'left-to-right' | 'right-to-left',
   op: 'copy' | 'delete'
 ): Promise<void> {
-  const sideName = dir === 'left-to-right' ? '右侧' : '左侧'
-  const verb = op === 'copy' ? `复制到${sideName}` : `删除${sideName}副本`
+  const sideName = dir === 'left-to-right' ? t('diffUi.rightSide') : t('diffUi.leftSide')
+  const verb = op === 'copy' ? t('diffUi.copyToSide', { side: sideName }) : t('diffUi.deleteSideCopy', { side: sideName })
   let ok = false
   try {
-    await ElMessageBox.confirm(`确定${verb}「${node.name}」？`, '确认操作', {
+    await ElMessageBox.confirm(t('diffUi.singleConfirm', { verb, name: node.name }), t('diffUi.confirmAction'), {
       type: 'warning',
-      confirmButtonText: '执行'
+      confirmButtonText: t('diffUi.execute')
     })
     ok = true
   } catch {
@@ -177,10 +171,10 @@ async function syncEntry(
     right: rightDir.value
   })) as FolderSyncRes
   if (!ret.ok) {
-    ElMessage.warning(`操作失败：${ret.error}`)
+    ElMessage.warning(t('diffUi.opFailed', { error: ret.error ?? '' }))
     return
   }
-  ElMessage.success('已执行')
+  ElMessage.success(t('diffUi.executed'))
   await run()
 }
 
@@ -194,7 +188,7 @@ async function compareEntry(node: FolderNode): Promise<void> {
     readFile({ path: rightPath, encoding: enc.value })
   ])
   if (!l.ok || !r.ok) {
-    ElMessage.warning('读取文件失败')
+    ElMessage.warning(t('diffUi.readFileFailed'))
     return
   }
   const hex = l.kind === 'binary' || r.kind === 'binary'
@@ -214,7 +208,7 @@ async function consumePending(): Promise<void> {
   if (p.left) leftDir.value = p.left
   if (p.right) rightDir.value = p.right
   if (leftDir.value && rightDir.value) await run()
-  else if (leftDir.value || rightDir.value) ElMessage.info('已填入一侧目录，再拖入或选择另一侧后点「扫描」')
+  else if (leftDir.value || rightDir.value) ElMessage.info(t('diffUi.oneDirFilled'))
 }
 watch(
   () => props.pending,
@@ -223,7 +217,7 @@ watch(
 onMounted(() => void consumePending())
 
 async function pick(side: 'left' | 'right'): Promise<void> {
-  const p = await pickDir(side === 'left' ? '选择左侧目录' : '选择右侧目录')
+  const p = await pickDir(side === 'left' ? t('diffUi.pickLeftDir') : t('diffUi.pickRightDir'))
   if (!p.ok) return
   if (side === 'left') leftDir.value = p.path!
   else rightDir.value = p.path!
@@ -234,7 +228,7 @@ const { overLeft, overRight, onDragOver: onDropOver, onDragLeave, onDrop: onDrop
   async (side, paths) => {
     const st = await statPath(paths[0])
     if (!st.ok || !st.isDir) {
-      ElMessage.warning('文件夹对比需拖入目录（不是文件）')
+      ElMessage.warning(t('diffUi.dropDirsOnly'))
       return
     }
     if (side === 'left') leftDir.value = paths[0]
@@ -253,7 +247,7 @@ const { overLeft, overRight, onDragOver: onDropOver, onDragLeave, onDrop: onDrop
 async function run(): Promise<void> {
   if (busy.value) return
   if (!leftDir.value || !rightDir.value) {
-    ElMessage.info('请先选择左右两侧目录')
+    ElMessage.info(t('diffUi.chooseBothDirsFirst'))
     return
   }
   busy.value = true
@@ -271,7 +265,7 @@ async function run(): Promise<void> {
     selected.value = new Set()
     if (!res.value.ok && res.value.error) ElMessage.warning(res.value.error)
   } catch (err) {
-    ElMessage.warning(`扫描失败：${err instanceof Error ? err.message : String(err)}`)
+    ElMessage.warning(t('diffUi.scanFailed', { error: err instanceof Error ? err.message : String(err) }))
   } finally {
     busy.value = false
   }
@@ -287,13 +281,13 @@ async function run(): Promise<void> {
       <el-input
         v-model="extIgnore"
         size="small"
-        placeholder="忽略扩展名，如 log,obj,tmp"
+        :placeholder="t('diffUi.extIgnorePlaceholder')"
         style="width: 200px"
         clearable
       />
-      <el-checkbox v-model="ignoreCase" size="small">忽略大小写</el-checkbox>
-      <el-checkbox v-model="onlyDiff" size="small">只看差异</el-checkbox>
-      <el-button type="primary" size="small" :loading="busy" @click="run">扫描</el-button>
+      <el-checkbox v-model="ignoreCase" size="small">{{ t('diffUi.ignoreCase') }}</el-checkbox>
+      <el-checkbox v-model="onlyDiff" size="small">{{ t('diffUi.onlyDiff') }}</el-checkbox>
+      <el-button type="primary" size="small" :loading="busy" @click="run">{{ t('diffUi.scan') }}</el-button>
     </div>
 
     <div class="path-row">
@@ -302,7 +296,7 @@ async function run(): Promise<void> {
         size="small"
         class="path-input"
         :class="{ 'drop-over': overLeft }"
-        placeholder="左侧目录路径（可输入、浏览或拖入文件夹）"
+        :placeholder="t('diffUi.leftDirPlaceholder')"
         clearable
         @dragover="onDropOver('left', $event)"
         @dragleave="onDragLeave('left')"
@@ -318,7 +312,7 @@ async function run(): Promise<void> {
         size="small"
         class="path-input"
         :class="{ 'drop-over': overRight }"
-        placeholder="右侧目录路径（可输入、浏览或拖入文件夹）"
+        :placeholder="t('diffUi.rightDirPlaceholder')"
         clearable
         @dragover="onDropOver('right', $event)"
         @dragleave="onDragLeave('right')"
@@ -331,22 +325,22 @@ async function run(): Promise<void> {
     </div>
 
     <div v-if="res?.ok" class="stats-row">
-      <el-tag v-if="res.counts.differ + res.counts['only-left'] + res.counts['only-right'] === 0 && res.counts.identical > 0" type="success" size="small">两目录内容相同</el-tag>
+      <el-tag v-if="res.counts.differ + res.counts['only-left'] + res.counts['only-right'] === 0 && res.counts.identical > 0" type="success" size="small">{{ t('diffUi.foldersIdentical') }}</el-tag>
       <template v-else>
-        <el-tag type="danger" size="small">不同 {{ res.counts.differ }}</el-tag>
-        <el-tag size="small" style="color: var(--dk-st-only-left)">仅左 {{ res.counts['only-left'] }}</el-tag>
-        <el-tag size="small" style="color: var(--dk-st-only-right)">仅右 {{ res.counts['only-right'] }}</el-tag>
-        <el-tag type="success" size="small">相同 {{ res.counts.identical }}</el-tag>
-        <el-tag v-if="res.counts.ignored" type="info" size="small" effect="plain">忽略 {{ res.counts.ignored }}</el-tag>
+        <el-tag type="danger" size="small">{{ t('diffUi.statDiffer', { count: res.counts.differ }) }}</el-tag>
+        <el-tag size="small" style="color: var(--dk-st-only-left)">{{ t('diffUi.statOnlyLeft', { count: res.counts['only-left'] }) }}</el-tag>
+        <el-tag size="small" style="color: var(--dk-st-only-right)">{{ t('diffUi.statOnlyRight', { count: res.counts['only-right'] }) }}</el-tag>
+        <el-tag type="success" size="small">{{ t('diffUi.statIdentical', { count: res.counts.identical }) }}</el-tag>
+        <el-tag v-if="res.counts.ignored" type="info" size="small" effect="plain">{{ t('diffUi.statIgnored', { count: res.counts.ignored }) }}</el-tag>
       </template>
       <span class="batch-bar">
-        <el-button size="small" text @click="selectAllDiff">全选差异</el-button>
-        <el-button v-if="selected.size > 0" size="small" text @click="clearSel">清空</el-button>
+        <el-button size="small" text @click="selectAllDiff">{{ t('diffUi.selectAllDiff') }}</el-button>
+        <el-button v-if="selected.size > 0" size="small" text @click="clearSel">{{ t('diffUi.clearSelection') }}</el-button>
         <template v-if="selected.size > 0">
-          <el-button size="small" type="primary" @click="batchSync('left-to-right', 'copy')">复制到右侧 ({{ selected.size }})</el-button>
-          <el-button size="small" type="primary" @click="batchSync('right-to-left', 'copy')">复制到左侧 ({{ selected.size }})</el-button>
-          <el-button size="small" type="danger" plain @click="batchSync('right-to-left', 'delete')">删除左侧副本 ({{ selected.size }})</el-button>
-          <el-button size="small" type="danger" plain @click="batchSync('left-to-right', 'delete')">删除右侧副本 ({{ selected.size }})</el-button>
+          <el-button size="small" type="primary" @click="batchSync('left-to-right', 'copy')">{{ t('diffUi.copyToRightCount', { count: selected.size }) }}</el-button>
+          <el-button size="small" type="primary" @click="batchSync('right-to-left', 'copy')">{{ t('diffUi.copyToLeftCount', { count: selected.size }) }}</el-button>
+          <el-button size="small" type="danger" plain @click="batchSync('right-to-left', 'delete')">{{ t('diffUi.deleteLeftCount', { count: selected.size }) }}</el-button>
+          <el-button size="small" type="danger" plain @click="batchSync('left-to-right', 'delete')">{{ t('diffUi.deleteRightCount', { count: selected.size }) }}</el-button>
         </template>
       </span>
     </div>
@@ -355,8 +349,8 @@ async function run(): Promise<void> {
       <!-- 表头 -->
       <div class="frow fhead">
         <span class="cb-spacer" />
-        <span class="f-name">{{ basename(leftDir) }}</span>
-        <span class="f-name">{{ basename(rightDir) }}</span>
+        <span class="f-name">{{ basename(leftDir) || t('diffUi.leftFallback') }}</span>
+        <span class="f-name">{{ basename(rightDir) || t('diffUi.rightSide') }}</span>
         <span class="f-ops" />
       </div>
       <div v-for="node in shown" :key="node.key" class="frow" :class="['st-' + node.status, node.isDir ? 'isdir' : '', selected.has(node.key) ? 'checked' : '']">
@@ -388,23 +382,23 @@ async function run(): Promise<void> {
         <span class="f-ops">
           <template v-if="!node.isDir && node.status !== 'ignored' && node.status !== 'identical'">
             <template v-if="node.status === 'differ' || node.status === 'only-left'">
-              <el-button link size="small" @click.stop="syncEntry(node, 'left-to-right', 'copy')">→右</el-button>
+              <el-button link size="small" @click.stop="syncEntry(node, 'left-to-right', 'copy')">{{ t('diffUi.toRight') }}</el-button>
             </template>
             <template v-if="node.status === 'differ' || node.status === 'only-right'">
-              <el-button link size="small" @click.stop="syncEntry(node, 'right-to-left', 'copy')">→左</el-button>
+              <el-button link size="small" @click.stop="syncEntry(node, 'right-to-left', 'copy')">{{ t('diffUi.toLeft') }}</el-button>
             </template>
             <template v-if="node.status === 'only-left'">
-              <el-button link type="danger" size="small" @click.stop="syncEntry(node, 'right-to-left', 'delete')">删左</el-button>
+              <el-button link type="danger" size="small" @click.stop="syncEntry(node, 'right-to-left', 'delete')">{{ t('diffUi.delLeft') }}</el-button>
             </template>
             <template v-else-if="node.status === 'only-right'">
-              <el-button link type="danger" size="small" @click.stop="syncEntry(node, 'left-to-right', 'delete')">删右</el-button>
+              <el-button link type="danger" size="small" @click.stop="syncEntry(node, 'left-to-right', 'delete')">{{ t('diffUi.delRight') }}</el-button>
             </template>
-            <el-button v-if="node.status === 'differ'" link size="small" @click.stop="compareEntry(node)">对比</el-button>
+            <el-button v-if="node.status === 'differ'" link size="small" @click.stop="compareEntry(node)">{{ t('diffUi.compare') }}</el-button>
           </template>
         </span>
       </div>
       <div v-if="shown.length === 0" class="hint" style="padding: 8px">
-        {{ onlyDiff ? '没有任何差异' : '（空）' }}
+        {{ onlyDiff ? t('diffUi.noFolderDiff') : t('diffUi.empty') }}
       </div>
     </div>
   </div>
@@ -412,7 +406,7 @@ async function run(): Promise<void> {
 
 <script lang="ts">
 function basename(p: string): string {
-  if (!p) return '（左）'
+  if (!p) return ''
   const t = p.replace(/[\\/]+$/, '')
   return t.slice(Math.max(t.lastIndexOf('/'), t.lastIndexOf('\\')) + 1) || p
 }

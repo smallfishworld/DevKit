@@ -16,14 +16,16 @@ import {
 } from '../composables/useTermMacroTargets'
 import type { QuickCmdStep } from '../../../shared/term-macro'
 import { SPLIT_CMDS_DEFAULT_WIDTH, readSplitCmdsPrefs, writeSplitCmdsPrefs } from './split-tab'
+import { useI18n } from 'vue-i18n'
 
 const props = defineProps<{ members: { id: string; title: string }[] }>()
+const { t } = useI18n()
 /** 折叠状态通知外层：收起时没有命令栏，选中终端的高亮线一并隐藏 */
 const emit = defineEmits<{ (e: 'hidden-change', hidden: boolean): void }>()
 
 const memberIds = computed(() => props.members.map((m) => m.id))
 const target = computed<TermMacroTarget | undefined>(() => pickTermMacroTarget(memberIds.value))
-const targetTitle = computed(() => props.members.find((m) => m.id === target.value?.panelId)?.title ?? '终端')
+const targetTitle = computed(() => props.members.find((m) => m.id === target.value?.panelId)?.title ?? t('terminal.terminal'))
 /** 各终端自带侧栏底部的提示（如 SSH 的明文密码提醒），换成共享栏后照常显示 */
 const footnotes = computed(() =>
   [...new Set(getTermMacroTargets(memberIds.value).map((t) => t.footnote?.()).filter((t): t is string => !!t))]
@@ -59,9 +61,9 @@ watchEffect((onCleanup) => onCleanup(
 <template>
   <aside v-if="!hidden" class="split-cmds" :style="{ width: width + 'px' }">
     <!-- 点进哪个终端，命令就发给哪个；这里标出当前是哪一个 -->
-    <div class="split-cmds-target" title="快捷命令发送到当前选中的终端（点进哪个终端就发给哪个）">
+    <div class="split-cmds-target" :title="t('terminal.sendToHint')">
       <i class="split-cmds-dot" aria-hidden="true"></i>
-      <span>发送到</span>
+      <span>{{ t('terminal.sendTo') }}</span>
       <b>{{ targetTitle }}</b>
     </div>
     <QuickCmdManager
@@ -77,8 +79,8 @@ watchEffect((onCleanup) => onCleanup(
     <p v-for="note in footnotes" :key="note" class="split-cmds-note">⚠ {{ note }}</p>
 
     <!-- 拖动调整宽度（与各终端自带栏一致）；中央折叠把手 -->
-    <div class="split-cmds-resize" title="拖动调整宽度" @mousedown="onResize">
-      <button class="split-cmds-toggle" title="折叠快捷命令栏" @mousedown.stop @click="toggle">
+    <div class="split-cmds-resize" :title="t('terminal.resize')" @mousedown="onResize">
+      <button class="split-cmds-toggle" :title="t('terminal.collapseCommands')" @mousedown.stop @click="toggle">
         <svg viewBox="0 0 8 12" width="7" height="10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
           <path d="M6.5 1L1.5 6l5 5" />
         </svg>
@@ -87,7 +89,7 @@ watchEffect((onCleanup) => onCleanup(
   </aside>
 
   <!-- 折叠后的细条：点击展开（与串口/SSH/本地终端自带栏一致） -->
-  <button v-else class="split-cmds-collapsed" title="展开快捷命令栏" @click="toggle">
+  <button v-else class="split-cmds-collapsed" :title="t('terminal.expandCommands')" @click="toggle">
     <el-icon :size="16"><ArrowRight /></el-icon>
   </button>
 </template>
