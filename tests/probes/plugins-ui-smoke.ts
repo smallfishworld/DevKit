@@ -163,20 +163,14 @@ async function main(): Promise<void> {
   const editor = '.el-dialog:has(.plugin-config-form)'
   await until(() => fill(editor + ' .el-form > .el-form-item input', configName), '实例名称')
   await until(() => click(editor + ' .el-checkbox input:not(:checked)'), '打开自动监听设置')
+  if (isRelay) {
+    // Fill the whole relay fixture through the editor's 完整 JSON tab, the same
+    // way a user pastes a config template; saving parses editorJson.
+    await until(() => click(editor + ' .el-tabs__item', '完整 JSON'), '打开完整 JSON 配置页签')
+    await until(() => fill(editor + ' textarea', JSON.stringify(relayConfig, null, 2)), '粘贴取数回传配置模板')
+  }
   await until(() => click(editor + ' .el-dialog__footer button', '保存配置'), '保存schema配置')
   await until(() => text('.instance-row', configName), '新实例')
-  if (isRelay) {
-    // The extension-center editor only exposes the schema form (no whole-config JSON field),
-    // so the full relay fixture is applied through the same instance:save IPC the app uses.
-    const listed = await plugins.invoke(panelId, 'instance:list', {}) as { instances: Array<{ id: string; pluginId: string; label: string }> }
-    const created = listed.instances.find(x => x.pluginId === manifest.id && x.label === configName)
-    assert.ok(created, 'schema-form instance was saved')
-    const updated = await plugins.invoke(panelId, 'instance:save', { instance: {
-      id: created.id, pluginId: manifest.id, label: configName,
-      enabled: true, autoEnabled: true, config: relayConfig
-    } }) as { ok: boolean; error?: string }
-    assert.equal(updated.ok, true, updated.error)
-  }
   const returnToSerial = () => js<boolean>(`(() => {
     const tab = [...document.querySelectorAll('.tab-select')].find(el => el.textContent.includes(${JSON.stringify(portName)}));
     if (!tab) return false; tab.click(); return true;
@@ -205,11 +199,16 @@ async function main(): Promise<void> {
     const openPopover = async () => {
       if (!await text('.plugin-title', '当前串口插件')) await until(() => click('.conn-bar [aria-label=设备插件]'), '打开当前串口插件')
     }
+    // The popover can close unpredictably between clicks; every popover step re-opens it first.
+    const popoverClick = (label: string, waitLabel = label) => until(async () => {
+      await openPopover()
+      return click('.bound-instance button, .plugin-actions button, .error-row button', waitLabel)
+    }, label)
     const sendFromUi = async (value: string) => {
       await until(() => fill('input[aria-label="发送内容"]', value), '填写用户发送内容')
       await until(() => click('.send-bar button', '发送'), '从会话发送用户内容')
     }
-    await until(() => click('.bound-instance button', actionLabel), '执行外置取数回传手动动作')
+    await popoverClick('执行外置取数回传手动动作', actionLabel)
     await until(() => sent.includes(relayReply + '\r'), '真实插件匹配设备输出并写入取回的内容')
     await settled()
     assert.equal(loginCalls, 1)
@@ -231,10 +230,10 @@ async function main(): Promise<void> {
     // Stop while a real plugin RPC is waiting; the stop button must stay usable.
     issueDelayMs = 1000
     await openPopover()
-    await until(() => click('.bound-instance button', actionLabel), '启动待取消取数回传动作')
+    await popoverClick('启动待取消取数回传动作', actionLabel)
     await until(() => issueCalls === 3, '取数请求在途')
     const beforeCancel = sent.length
-    await until(() => click('.bound-instance button', '停止插件'), 'UI 停止在途取数回传动作')
+    await popoverClick('UI 停止在途取数回传动作', '停止插件')
     await until(async () => !(await state()).statuses.some(status => status.bound), '停止并回收绑定')
     await delay(1200)
     assert.equal(sent.length, beforeCancel, '取消后不得发送迟到内容')
@@ -242,11 +241,11 @@ async function main(): Promise<void> {
     await until(() => sent.includes('USER\r\n'), '取消后回收串口控制权')
 
     await openPopover()
-    await until(() => click('.plugin-actions .el-select__wrapper'), '重新选择取数回传实例')
-    await until(() => click('.el-select-dropdown__item', configName), '选择取数回传配置')
-    await until(() => click('.plugin-actions button', '绑定到当前串口'), '重新绑定取数回传插件')
+    await until(async () => { await openPopover(); return click('.plugin-actions .el-select__wrapper') }, '重新选择取数回传实例')
+    await until(async () => { await openPopover(); return click('.el-select-dropdown__item', configName) }, '选择取数回传配置')
+    await until(async () => { await openPopover(); return click('.plugin-actions button', '绑定到当前串口') }, '重新绑定取数回传插件')
     await until(() => text('.conn-bar', '监听中'), '取数回传插件重新就绪')
-    await until(() => click('.bound-instance button', actionLabel), '启动待异常退出取数回传动作')
+    await popoverClick('启动待异常退出取数回传动作', actionLabel)
     await until(() => issueCalls === 4, '异常退出时持有事务')
     const beforeCrash = sent.length
     assert.ok(children.at(-1), 'relay plugin runs in a real utilityProcess')
@@ -257,9 +256,9 @@ async function main(): Promise<void> {
     await sendFromUi('RECOVER')
     await until(() => sent.includes('RECOVER\r\n'), '异常退出后回收独占事务与扣键')
     await openPopover()
-    await until(() => click('.error-row button', '一键重试绑定'), 'UI 重试异常退出的插件')
+    await popoverClick('UI 重试异常退出的插件', '一键重试绑定')
     await until(() => text('.conn-bar', '监听中'), '重试绑定成功')
-    await until(() => click('.bound-instance button', '停止插件'), '结束取数回传插件回归')
+    await popoverClick('结束取数回传插件回归', '停止插件')
     await writeFile(join(process.cwd(), 'out/plugins-relay-smoke.png'), (await win.capturePage()).toPNG())
     console.log('PASS Electron serial-url-relay plugin UI: API v2 JSON install, schema config, manual/automatic device-output match, secret write, input hold/replay, in-flight stop, process-exit cleanup and retry')
     return
@@ -271,7 +270,7 @@ async function main(): Promise<void> {
   port.emit('data', Buffer.from('NG\r\nPING\n'))
   await until(() => sent.length === 2, '跨批次与连续帧应答')
   assert.deepEqual(sent, ['PONG\r\n', 'PONG\r\n'])
-  await until(() => click('.bound-instance button', '发送配置的回复'), '手动插件动作')
+  await until(async () => { if (!await text('.plugin-title', '当前串口插件')) await click('.conn-bar [aria-label=设备插件]'); return click('.bound-instance button', '发送配置的回复') }, '手动插件动作')
   await until(() => sent.length === 3, '手动动作完成')
 
   await until(() => click('.conn-bar [aria-label=设备插件]'), '收起当前串口插件')
@@ -287,7 +286,7 @@ async function main(): Promise<void> {
   assert.deepEqual(sent.slice(-2), ['PONG\r\n', 'AFTER\r\n'])
 
   await until(() => click('.conn-bar [aria-label=设备插件]'), '重新打开插件入口')
-  await until(() => click('.bound-instance button', '停止插件'), '停止插件并回收资源')
+  await until(async () => { if (!await text('.plugin-title', '当前串口插件')) await click('.conn-bar [aria-label=设备插件]'); return click('.bound-instance button', '停止插件') }, '停止插件并回收资源')
   await delay(300)
   const before = sent.length
   port.emit('data', Buffer.from('PING\n'))

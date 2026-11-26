@@ -9,6 +9,7 @@ export interface ConfigField {
   description: string
   schema: Record<string, unknown>
   required: boolean
+  advanced: boolean
   widget: 'string' | 'number' | 'boolean' | 'enum' | 'array' | 'json'
   itemFields?: ConfigField[]
 }
@@ -46,6 +47,7 @@ export function configFields(schema: unknown): ConfigField[] {
         description: typeof field.description === 'string' ? field.description : '',
         schema: field,
         required: required.includes(key),
+        advanced: field['x-advanced'] === true,
         widget,
         ...(isObjectArray ? { itemFields: configFields(field.items) } : {})
       }

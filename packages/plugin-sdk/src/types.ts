@@ -29,6 +29,8 @@ export interface PluginConfigSchema {
   maxItems?: number
   pattern?: string
   'x-visibleWhen'?: VisibleWhenRule
+  /** Host form hint: collapse this field under an advanced section. Not validated. */
+  'x-advanced'?: boolean
   [key: string]: unknown
 }
 

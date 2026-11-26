@@ -3,7 +3,7 @@ import type { PluginConfigSchema, VisibleWhenRule } from './types'
 const supported = new Set([
   'type', 'title', 'description', 'default', 'enum', 'properties', 'required',
   'additionalProperties', 'items', 'minimum', 'maximum', 'minLength', 'maxLength',
-  'minItems', 'maxItems', 'pattern', '$schema', 'x-visibleWhen'
+  'minItems', 'maxItems', 'pattern', '$schema', 'x-visibleWhen', 'x-advanced'
 ])
 const forbiddenKeys = new Set(['__proto__', 'prototype', 'constructor'])
 
@@ -64,6 +64,7 @@ export function validateSchema(value: unknown, path = 'configSchema', depth = 0)
     try { new RegExp(value.pattern) } catch { fail(path, 'pattern不是有效正则') }
   }
   if (value['x-visibleWhen'] !== undefined) validateVisibleWhen(value['x-visibleWhen'], path + '.x-visibleWhen')
+  if (value['x-advanced'] !== undefined && typeof value['x-advanced'] !== 'boolean') fail(path, 'x-advanced 须为布尔值')
   if (value.enum !== undefined && (!Array.isArray(value.enum) || !value.enum.length || value.enum.length > 100)) {
     fail(path, 'enum须为1至100项数组')
   }
