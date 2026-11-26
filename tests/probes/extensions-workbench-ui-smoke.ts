@@ -170,16 +170,16 @@ async function main(): Promise<void> {
     await until(() => has('.ts-panel .result-grid', String(Date.UTC(2025, 3, 19, 10, 0, 12, 345))), '日期反查保留毫秒')
     await until(() => click('.ts-panel button', '填入左侧解析器'), '同步日期到左侧')
     await until(() => has('.ts-panel .result-grid', '2025-04-19T10:00:12.345Z'), '左侧验证带毫秒的日期')
-    // Find Settings by structure and state so translating its label does not break the probe.
-    const settingsTrigger = '.app-header button.header-action[aria-expanded]'
-    await until(() => click(`${settingsTrigger}[aria-expanded="false"]`), '打开无模态设置浮层')
-    await until(() => js('!!document.querySelector(".appearance-settings h2")?.getClientRects().length'), '设置浮层可见')
+    // Element Plus controls the trigger's ARIA attributes; use the supported header labels.
+    const settingsVisible = (): Promise<boolean> => js('!!document.querySelector(".appearance-settings h2")?.getClientRects().length')
+    await until(async () => await click('.app-header button', '设置') || await click('.app-header button', 'Settings'), '打开无模态设置浮层')
+    await until(settingsVisible, '设置浮层可见')
     await until(() => click('.theme-tile', 'Solarized Light'), '切换浅色')
     await until(() => js('document.documentElement.dataset.uiTheme === "term-solarized-light"'), '外观颜色即时生效')
     await until(() => click('.theme-tile', 'DevKit Default'), '恢复深色')
     await screenshot('appearance-popover.png')
     await until(() => click('.appearance-settings > header button[aria-label]'), '关闭设置浮层')
-    await until(() => js(`!!document.querySelector(${JSON.stringify(`${settingsTrigger}[aria-expanded="false"]`)})`), '设置浮层已关闭')
+    await until(async () => !await settingsVisible(), '设置浮层已关闭')
     await until(() => click('.app-header button', '扩展'), '打开扩展中心')
     await until(() => click('.extension-center button', '从文件安装…'), '本地安装入口')
     await until(() => click('.el-message-box button', '选择文件'), '选择 JSON 插件包')
