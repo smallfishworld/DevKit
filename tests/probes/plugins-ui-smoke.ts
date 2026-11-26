@@ -259,8 +259,22 @@ async function main(): Promise<void> {
     await popoverClick('UI 重试异常退出的插件', '一键重试绑定')
     await until(() => text('.conn-bar', '监听中'), '重试绑定成功')
     await popoverClick('结束取数回传插件回归', '停止插件')
+
+    // Instance deletion and plugin uninstall through the extension center UI.
+    await until(() => click('.app-header button', '扩展'), '重新打开全局扩展中心')
+    await until(() => text('.extension-layout article', manifest.name), '插件详情可见')
+    await until(() => click('.extension-layout .instance-row button', '删除'), '点击删除配置')
+    await until(() => click('.el-message-box button', '删除'), '确认删除配置')
+    await until(async () => !(await plugins.invoke(panelId, 'instance:list', {}) as {
+      instances: Array<{ label: string }>
+    }).instances.some(item => item.label === configName), '配置实例已删除')
+    await until(() => click('.extension-layout button', '卸载插件'), '点击卸载插件')
+    await until(() => click('.el-message-box button', '卸载'), '确认卸载插件')
+    await until(async () => !(await plugins.invoke(panelId, 'list', {}) as {
+      plugins: Array<{ id: string }>
+    }).plugins.some(item => item.id === manifest.id), '插件已卸载')
     await writeFile(join(process.cwd(), 'out/plugins-relay-smoke.png'), (await win.capturePage()).toPNG())
-    console.log('PASS Electron serial-url-relay plugin UI: API v2 JSON install, schema config, manual/automatic device-output match, secret write, input hold/replay, in-flight stop, process-exit cleanup and retry')
+    console.log('PASS Electron serial-url-relay plugin UI: API v2 JSON install, schema config, manual/automatic device-output match, secret write, input hold/replay, in-flight stop, process-exit cleanup and retry, instance delete and plugin uninstall')
     return
   }
 

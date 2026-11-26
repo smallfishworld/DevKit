@@ -54,6 +54,38 @@ function edit(plugin: PluginDescriptor, instance?: PluginInstance): void {
   editorOpen.value = true
 }
 
+async function removeInstance(plugin: PluginDescriptor, instance: PluginInstance): Promise<void> {
+  try {
+    await ElMessageBox.confirm(`删除配置「${instance.label}」？正在运行的实例会先停止；操作不可撤销。`, '删除插件配置', {
+      type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消'
+    })
+  } catch { return }
+  busy.value = true
+  error.value = ''
+  try {
+    await pluginRequest('instance:delete', { instanceId: instance.id })
+    await plugins.refresh()
+  } catch (e) { error.value = (e as Error).message }
+  finally { busy.value = false }
+}
+
+async function uninstallPlugin(plugin: PluginDescriptor): Promise<void> {
+  try {
+    await ElMessageBox.confirm(
+      `卸载插件「${plugin.name}」？其 ${instanceCount(plugin.id)} 份配置实例与安装文件将一并删除，操作不可撤销。`,
+      '卸载插件', { type: 'warning', confirmButtonText: '卸载', cancelButtonText: '取消' }
+    )
+  } catch { return }
+  busy.value = true
+  error.value = ''
+  try {
+    await pluginRequest('remove', { pluginId: plugin.id })
+    await plugins.refresh()
+    if (selected.value === 'plugin:' + plugin.id) selected.value = ''
+  } catch (e) { error.value = (e as Error).message }
+  finally { busy.value = false }
+}
+
 async function install(): Promise<void> {
   try {
     await ElMessageBox.confirm('外部插件在独立进程中运行，并具有本机文件和网络访问能力。请只选择你信任的 JSON 插件包。',
@@ -122,11 +154,15 @@ async function install(): Promise<void> {
               <div>
                 <el-button size="small" @click="edit(detail.plugin, instance)">编辑配置</el-button>
                 <el-button v-if="binding(instance)" size="small" :icon="TopRight" @click="tabs.activate(binding(instance)!.id)">前往会话</el-button>
+                <el-button size="small" type="danger" plain @click="removeInstance(detail.plugin, instance)">删除</el-button>
               </div>
             </div>
             <h3>能力边界与生命周期</h3>
             <div class="converter-row"><el-tag v-for="capability in detail.plugin.capabilities" :key="capability" size="small">{{ capability }}</el-tag></div>
             <p>在已连接的串口会话中绑定配置实例后，插件才会运行。</p>
+            <div class="converter-row">
+              <el-button v-if="!detail.plugin.builtin" size="small" type="danger" plain :loading="busy" @click="uninstallPlugin(detail.plugin)">卸载插件</el-button>
+            </div>
             <details v-if="!detail.plugin.builtin" class="extension-install-note">
               <summary>进程隔离与安装说明</summary>
               <p>插件在独立进程中运行，仍具有本机文件和网络访问能力。请只安装信任的代码。</p>
