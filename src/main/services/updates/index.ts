@@ -1,11 +1,11 @@
 import { app, dialog, net, shell } from 'electron'
 import { copyFile, mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { APP_UPDATES, APP_UPDATES_PANEL, createSpeedEstimator, type UpdateState } from '../../../shared/app-updates'
+import { APP_UPDATES, APP_UPDATES_PANEL, applyFailureMessage, createSpeedEstimator, type UpdateState } from '../../../shared/app-updates'
 import { emitToolEvent, getMainWindow, type ToolService } from '../../ipc'
 import { GitHubReleases, RELEASE_HOME, RateLimitError, packageName, readPendingUpdate, sanitizeMirrors, type ReleaseResult, type UpdatePackage } from './github'
 import { getSection } from '../macro/configStore'
-import { cleanUpdateHandoffs, getInstallTarget, prepareUpdate, verifyUpdateFile, type InstallTarget } from './install'
+import { cleanUpdateHandoffs, getInstallTarget, prepareUpdate, reportLeftoverFiles, verifyUpdateFile, type InstallTarget } from './install'
 
 // 12 小时一次：GitHub API 匿名配额按出口 IP 共享（企业 NAT 下尤甚），降频减少配额消耗
 const CHECK_INTERVAL = 12 * 60 * 60 * 1000
@@ -49,6 +49,8 @@ export class AppUpdateService implements ToolService {
 
   private schedule(delay: number): void {
     this.timer = setTimeout(() => {
+      // 等工作台出现之后再提示：上次更新没能放回程序目录的用户文件留在哪里
+      void reportLeftoverFiles(this.target)
       void this.check().finally(() => this.schedule(CHECK_INTERVAL))
     }, delay)
     this.timer.unref()
@@ -72,9 +74,10 @@ export class AppUpdateService implements ToolService {
       if (update && (await stat(this.path(update)).catch(() => undefined))?.size === update.bytes) {
         this.candidate = update
         const failed = await readFile(join(cache, 'apply-error'), 'utf8').catch(() => '')
+        const reason = failed ? (await readFile(join(cache, 'apply-detail'), 'utf8').catch(() => '')).trim() : ''
         this.setState({
           phase: 'ready', release: update,
-          message: failed ? '上次更新未完成。可重试或另存更新包。' : undefined
+          message: failed ? applyFailureMessage(reason) : undefined
         })
         return
       }
@@ -82,6 +85,7 @@ export class AppUpdateService implements ToolService {
       if (startedAfterUpdate) return
       await rm(join(cache, 'pending.json'), { force: true })
       await rm(join(cache, 'apply-error'), { force: true })
+      await rm(join(cache, 'apply-detail'), { force: true })
       const suffix = format === 'portable' ? '-portable.exe' : '-win-x64.zip'
       for (const name of directory) {
         if (name.startsWith('DevKit-') && (name.endsWith(suffix) || name.endsWith(suffix + '.part'))) {
@@ -131,7 +135,7 @@ export class AppUpdateService implements ToolService {
 
   private path(update: UpdatePackage): string {
     const target = this.target!
-    return join(target.cache, packageName(update.version, target.format))
+    return join(target.cache, packageName(target.format))
   }
 
   private async download(): Promise<UpdateState> {
@@ -223,7 +227,7 @@ export class AppUpdateService implements ToolService {
       }
     } catch (error) {
       this.setState({ phase: 'ready', release: update,
-        message: error instanceof Error && /^(解压目录|无法准备)/.test(error.message)
+        message: error instanceof Error && /^(程序目录|无法准备)/.test(error.message)
           ? error.message : '无法启动更新助手。可重试或另存更新包。'
       })
     } finally {
@@ -240,7 +244,7 @@ export class AppUpdateService implements ToolService {
     this.busy = true
     try {
       if (!await this.verified(update)) return this.state
-      const file = packageName(update.version, this.target.format)
+      const file = packageName(this.target.format)
       const { filePath, canceled } = await dialog.showSaveDialog(window, {
         title: '另存更新包', defaultPath: join(app.getPath('downloads'), file)
       })

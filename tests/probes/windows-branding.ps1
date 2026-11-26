@@ -136,8 +136,7 @@ try {
     Test-ApplicationBranding -Name 'unpacked' -Executable $unpacked -Arguments @() -ExpectedIcon $unpacked -ExpectedCommand @($unpacked)
 
     if ($Release) {
-        $version = (Get-Content (Join-Path $Root 'package.json') -Raw | ConvertFrom-Json).version
-        $source = Join-Path $Root "release/DevKit-$version-portable.exe"
+        $source = Join-Path $Root 'release/DevKit-portable.exe'
         $portableDir = Join-Path $temp 'portable with spaces 中文'
         [IO.Directory]::CreateDirectory($portableDir) | Out-Null
         $portable = Join-Path $portableDir 'DevKit portable.exe'

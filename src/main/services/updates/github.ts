@@ -104,8 +104,9 @@ export function isNewerVersion(candidate: string, current: string): boolean {
   return firstDifference >= 0 && proposed[firstDifference] > actual[firstDifference]
 }
 
-export function packageName(version: string, format: PackageFormat): string {
-  return format === 'portable' ? `DevKit-${version}-portable.exe` : `DevKit-${version}-win-x64.zip`
+/** 发布包文件名不带版本号：解压出来的目录名不随版本变，手动升级时不必每换一个版本就换一个目录 */
+export function packageName(format: PackageFormat): string {
+  return format === 'portable' ? 'DevKit-portable.exe' : 'DevKit-win-x64.zip'
 }
 
 // ---------- 下载源 ----------
@@ -278,7 +279,7 @@ export function parseRelease(value: unknown, current: string, format?: PackageFo
     if (tag !== version && tag !== `v${version}`) throw new Error('GitHub 返回了无法识别的发布信息。')
     return { status: 'available', update: { version, tag, notes, bytes: 0, hash: '' } }
   }
-  const asset = assets.map(record).find((entry) => entry.name === packageName(version, format) && entry.state === 'uploaded')
+  const asset = assets.map(record).find((entry) => entry.name === packageName(format) && entry.state === 'uploaded')
   const update = readPendingUpdate({
     version, tag, notes,
     bytes: asset?.size,
@@ -348,7 +349,7 @@ export class GitHubReleases {
     if (!format) {
       return { status: 'available', update: { version, tag: normalizedTag, notes, bytes: 0, hash: '' } }
     }
-    const assetUrl = `${RELEASE_HOME}/download/${normalizedTag}/${packageName(version, format)}`
+    const assetUrl = `${RELEASE_HOME}/download/${normalizedTag}/${packageName(format)}`
     const bytes = await this.probeContentLength(assetUrl)
     if (!bytes) return undefined
     const sidecar = await this.fetchAsset(`${assetUrl}.sha256`, AbortSignal.timeout(12_000))
@@ -379,7 +380,7 @@ export class GitHubReleases {
     progress: (received: number) => void,
     options: DownloadOptions = {}
   ): Promise<void> {
-    const official = `${RELEASE_HOME}/download/${update.tag}/${packageName(update.version, format)}`
+    const official = `${RELEASE_HOME}/download/${update.tag}/${packageName(format)}`
     const direct = await this.probe(official, update.bytes)
     const mirrors: Array<{ url: string; label: string; probe: SourceProbe }> = []
     // 官方直连够快就不去探测镜像：不联系任何第三方，也不白等测速窗口

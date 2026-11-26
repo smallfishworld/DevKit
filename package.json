@@ -25,6 +25,7 @@
     "icons:generate": "node scripts/generate-brand-icons.cjs",
     "icons:check": "node scripts/generate-brand-icons.cjs --check",
     "test:updates-smoke": "node scripts/app-updates-smoke.cjs",
+    "test:updater-harness": "node tests/probes/updater-harness.cjs",
     "test:branding-smoke": "node scripts/branding-smoke.cjs"
   },
   "dependencies": {
@@ -85,7 +86,7 @@
       "node_modules/node-pty/**"
     ],
     "win": {
-      "artifactName": "DevKit-${version}-win-${arch}.${ext}",
+      "artifactName": "DevKit-win-${arch}.${ext}",
       "target": [
         {
           "target": "dir",
@@ -109,11 +110,11 @@
       "icon": "resources/branding/devkit.ico"
     },
     "portable": {
-      "artifactName": "DevKit-${version}-portable.exe"
+      "artifactName": "DevKit-portable.exe"
     },
     "mac": {
       "category": "public.app-category.developer-tools",
-      "artifactName": "DevKit-${version}-mac-${arch}.${ext}",
+      "artifactName": "DevKit-mac-${arch}.${ext}",
       "target": [
         "dmg",
         "zip"
@@ -122,7 +123,7 @@
     },
     "linux": {
       "category": "Development",
-      "artifactName": "DevKit-${version}-linux-${arch}.${ext}",
+      "artifactName": "DevKit-linux-${arch}.${ext}",
       "target": [
         "AppImage",
         "tar.gz"

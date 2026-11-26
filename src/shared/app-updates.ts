@@ -78,3 +78,63 @@ export function updateNotice(state: UpdateState): string {
     default: return ''
   }
 }
+
+/**
+ * 预检拒绝原路径更新时的提示：原因与对策。reason 是更新助手写进交接目录的 ready 信号，
+ * detail 是它列出的具体条目（可能没有）；认不出的原因返回 undefined，由调用方落到通用提示。
+ */
+export function preflightRefusal(reason: string, detail: string): string | undefined {
+  const items = detail ? `（${detail}）` : ''
+  const elsewhere = '或将更新包另存并解压到新目录。'
+  switch (reason) {
+    case 'directory':
+      return `程序目录${detail ? `与 DevKit 安装清单不符${items}` : '无法核对（可能没有读取权限）'}，无法原路径更新。请将更新包另存并解压到新目录。`
+    case 'collision':
+      return `程序目录里有与新版本同名的文件${items}，无法原路径更新。请先将它们移出程序目录后重试，${elsewhere}`
+    case 'locked':
+      return `程序目录里有文件正被其他程序占用${items}，无法原路径更新。请关闭相关窗口或程序后重试，${elsewhere}`
+    default:
+      return undefined
+  }
+}
+
+/** 上次「重启并更新」没能完成时的提示；reason 是助手留下的原因码，没有更具体的原因时为空 */
+export function applyFailureMessage(reason: string): string {
+  return reason === 'locked'
+    ? '上次更新未完成：程序目录被其他程序占用。关闭相关窗口或程序后可重试，或另存更新包。'
+    : '上次更新未完成。可重试或另存更新包。'
+}
+
+export interface LeftoverFiles {
+  /** 保留这些文件的备份目录（完整路径） */
+  directory: string
+  /** 没能放回程序目录的条目：相对程序目录的路径，目录以 / 结尾 */
+  entries: string[]
+}
+
+/** 解析更新助手留下的 apply-leftover 标记：首行是备份目录，其后每行一个没放回的条目 */
+export function parseLeftover(marker: string): LeftoverFiles | undefined {
+  const [directory = '', ...rest] = marker.split(/\r?\n/).map((line) => line.trim())
+  const entries = rest.filter(Boolean)
+  return directory && entries.length > 0 ? { directory, entries } : undefined
+}
+
+/** 提示框里最多列出的条目数，其余合并成一行 */
+const LEFTOVER_LISTED = 8
+
+/** 遗留文件的提示框文案；第一个按钮打开备份目录 */
+export function leftoverNotice(leftover: LeftoverFiles): { message: string; detail: string; buttons: string[] } {
+  const listed = leftover.entries.slice(0, LEFTOVER_LISTED)
+  const hidden = leftover.entries.length - listed.length
+  return {
+    message: '更新已完成，但程序目录里有些文件没能放回原处',
+    detail: [
+      '它们已原样保留在下面的备份目录里，请手动移回程序目录；不再需要时删除该目录即可。',
+      leftover.directory,
+      '',
+      ...listed,
+      ...(hidden > 0 ? [`…另有 ${hidden} 项`] : [])
+    ].join('\n'),
+    buttons: ['打开备份目录', '确定']
+  }
+}

@@ -1,10 +1,10 @@
 const assert = require('node:assert/strict')
 const { execFileSync, spawn } = require('node:child_process')
 const { createHash } = require('node:crypto')
-const { createReadStream } = require('node:fs')
-const { copyFile, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } = require('node:fs/promises')
+const { closeSync, createReadStream, openSync } = require('node:fs')
+const { copyFile, mkdir, mkdtemp, readdir, readFile, rm, rmdir, stat, symlink, writeFile } = require('node:fs/promises')
 const { tmpdir } = require('node:os')
-const { join, resolve } = require('node:path')
+const { dirname, join, resolve } = require('node:path')
 const { setTimeout: delay } = require('node:timers/promises')
 
 const current = require('../../package.json').version
@@ -12,8 +12,8 @@ const next = process.argv[2]
 const nextRoot = resolve(process.argv[3] || 'release-update-next')
 const currentRoot = resolve('release')
 
-const name = (version, format) => format === 'portable'
-  ? 'DevKit-' + version + '-portable.exe' : 'DevKit-' + version + '-win-x64.zip'
+// 发布包不带版本号：当前包与下一个版本的包同名，只是所在目录不同
+const name = (format) => format === 'portable' ? 'DevKit-portable.exe' : 'DevKit-win-x64.zip'
 
 async function digest(filename) {
   const hash = createHash('sha256')
@@ -94,24 +94,35 @@ async function exercise(root, format, outcome) {
   await mkdir(install, { recursive: true })
   await mkdir(profile, { recursive: true })
   const exe = join(install, format === 'portable' ? 'DevKit renamed.exe' : 'DevKit.exe')
-  const originalPackage = join(currentRoot, name(current, format))
+  const originalPackage = join(currentRoot, name(format))
   if (format === 'portable') await copyFile(originalPackage, exe)
   // CreateProcess accepts a Unicode working directory even if tar's argument decoder uses a legacy code page.
   else execFileSync('tar.exe', ['-xf', originalPackage], { cwd: install, stdio: 'inherit', timeout: 90_000 })
   const oldHash = await digest(exe)
 
   const cache = join(profile, 'updates', createHash('sha256').update(exe.toLowerCase()).digest('hex').slice(0, 24))
-  const pending = join(cache, name(next, format))
+  const pending = join(cache, name(format))
   await mkdir(cache, { recursive: true })
   if (outcome === 'rollback') await writeFile(pending, 'Verified fixture that cannot be launched by Windows')
-  else await copyFile(join(nextRoot, name(next, format)), pending)
+  else await copyFile(join(nextRoot, name(format)), pending)
   const candidate = { version: next, tag: 'v' + next, notes: 'Windows packaged update smoke',
     bytes: (await stat(pending)).size, hash: await digest(pending) }
   await writeFile(join(cache, 'pending.json'), JSON.stringify(candidate))
   const dataMarker = join(profile, 'existing-config.txt')
   await writeFile(dataMarker, 'keep user data')
-  const extra = join(install, 'other project.txt')
-  if (outcome === 'refuse') await writeFile(extra, 'keep directory contents')
+  // What users leave next to the program: a shortcut and a folder of their own. An update keeps all of it.
+  const userFiles = format === 'zip'
+    ? { [join(install, 'DevKit.exe - 快捷方式.lnk')]: 'user shortcut', [join(install, '项目资料', 'notes.txt')]: 'keep user notes' }
+    : {}
+  if (outcome === 'shared') userFiles[join(install, 'other project.txt')] = 'keep directory contents'
+  for (const [file, content] of Object.entries(userFiles)) {
+    await mkdir(dirname(file), { recursive: true })
+    await writeFile(file, content)
+  }
+  // Two things the user has to clear first: a link inside the directory, and a file another program keeps open
+  const link = join(install, 'linked')
+  const held = outcome === 'shared' ? openSync(join(install, 'other project.txt'), 'r') : undefined
+  if (held !== undefined) await symlink(join(testRoot, 'elsewhere'), link, 'junction')
 
   const child = spawn(exe, ['--user-data-dir=' + profile, '--remote-debugging-port=0'], {
     cwd: install, stdio: 'ignore'
@@ -119,20 +130,30 @@ async function exercise(root, format, outcome) {
   child.on('error', (error) => console.error(error))
   child.unref()
   const { evaluate, close } = await connect(profile)
+  const again = () => evaluate('(() => { const restart = [...document.querySelectorAll(".update-actions button")]' +
+    '.find(button => button.textContent.trim() === "重启并更新"); if (!restart) return false; restart.click(); return true })()')
   try {
     await until('download-ready state', () =>
       evaluate('document.querySelector(".update-entry")?.textContent.includes("已下载")'))
     await evaluate('document.querySelector(".update-entry").click()')
-    assert.ok(await evaluate('(() => { const restart = [...document.querySelectorAll(".update-actions button")]' +
-      '.find(button => button.textContent.trim() === "重启并更新"); if (!restart) return false; restart.click(); return true })()'))
+    assert.ok(await again())
 
-    if (outcome === 'refuse') {
-      await until('ZIP refuses a shared directory', () =>
-        evaluate('document.querySelector(".update-message")?.textContent.includes("另存")'))
-      assert.equal(await readFile(extra, 'utf8'), 'keep directory contents')
-      assert.equal(await digest(exe), oldHash)
-      assert.equal(child.exitCode, null)
-    } else if (outcome === 'rollback') {
+    if (outcome === 'shared') {
+      const shown = () => evaluate('document.querySelector(".update-message")?.textContent')
+      const refused = async (reason) => {
+        await until('the update is refused: ' + reason, async () => (await shown()).includes(reason))
+        assert.ok((await shown()).includes('另存'), 'the user is told how to update anyway')
+        assert.equal(await digest(exe), oldHash)
+        assert.equal(child.exitCode, null, 'a refused update leaves the application running')
+      }
+      await refused('符号链接')
+      await rmdir(link)
+      assert.ok(await again())
+      await refused('占用')
+      closeSync(held)
+      assert.ok(await again())
+    }
+    if (outcome === 'rollback') {
       await until('rollback result', async () =>
         (await readFile(join(cache, 'apply-error'), 'utf8').catch(() => '')).length > 0)
       await until('old executable restored', async () => await digest(exe).catch(() => '') === oldHash, 5000)
@@ -141,11 +162,15 @@ async function exercise(root, format, outcome) {
       await until('new version starts', async () => {
         const failure = await readFile(join(cache, 'apply-error'), 'utf8').catch(() => '')
         if (failure) throw new Error(failure)
+        // The shared-directory scenario makes the first two attempts fail on purpose
+        const tolerated = outcome === 'shared' ? ['directory', 'locked'] : []
         for (const handoff of await handoffs(cache)) {
           const preflight = await readFile(join(handoff, 'ready'), 'utf8').catch(() => '')
-          if (preflight === 'failed' || preflight === 'directory') {
+          const deliberate = tolerated.indexOf(preflight)
+          if (deliberate >= 0) tolerated.splice(deliberate, 1)
+          else if (preflight !== 'ok' && preflight !== '') {
             const details = await readFile(join(handoff, 'error'), 'utf8').catch(() => preflight)
-            throw new Error('Update preparation failed: ' + details)
+            throw new Error('Update preparation failed (' + preflight + '): ' + details)
           }
           if (await readFile(join(handoff, 'started'), 'utf8').catch(() => '') === next) return true
         }
@@ -155,6 +180,9 @@ async function exercise(root, format, outcome) {
       if (format === 'portable') assert.equal(await digest(exe), candidate.hash)
       await until('old backup removed after new window opens', async () =>
         (await readdir(format === 'portable' ? install : testRoot)).every((entry) => !entry.startsWith('.devkit-backup-')))
+      for (const [file, content] of Object.entries(userFiles)) {
+        assert.equal(await readFile(file, 'utf8'), content, file + ' should come through the update unchanged')
+      }
     }
     assert.equal(await readFile(dataMarker, 'utf8'), 'keep user data')
     console.log('PASS Windows packaged ' + format + ' ' + outcome)
@@ -170,6 +198,7 @@ async function exercise(root, format, outcome) {
     throw error
   } finally {
     close()
+    await rm(link, { force: true }).catch(() => {})
   }
 }
 
@@ -184,7 +213,7 @@ async function main() {
   try {
     await exercise(root, 'portable', 'upgrade')
     await exercise(root, 'zip', 'upgrade')
-    await exercise(root, 'zip', 'refuse')
+    await exercise(root, 'zip', 'shared')
     await exercise(root, 'portable', 'rollback')
   } finally {
     // The hosted VM disposes its own processes and temporary files after this job.

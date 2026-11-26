@@ -2,10 +2,12 @@ import { createHash } from 'node:crypto'
 import { createReadStream, statSync } from 'node:fs'
 import { copyFile, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import { spawn } from 'node:child_process'
-import { basename, dirname, join, resolve } from 'node:path'
+import { basename, dirname, join, resolve, win32 } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
-import { app } from 'electron'
+import { app, dialog, shell } from 'electron'
+import { leftoverNotice, parseLeftover, preflightRefusal } from '../../../shared/app-updates'
 import { portableLauncher } from '../../../shared/windows-branding'
+import { getMainWindow } from '../../ipc'
 import { packageName, type PackageFormat, type UpdatePackage } from './github'
 
 const HELPER = 'DevKitUpdater.exe'
@@ -77,10 +79,11 @@ export async function prepareUpdate(target: InstallTarget, path: string, update:
         await writeFile(join(handoff, 'apply'), '', { flag: 'wx' })
         return
       }
-      if (ready === 'directory') {
-        const detail = (await readFile(join(handoff, 'directory-detail'), 'utf8').catch(() => '')).trim()
-        const suffix = detail ? `（${detail}）` : ''
-        throw new Error(`解压目录包含其他文件或已被修改${suffix}。请将更新包另存并解压到新目录。`)
+      // The helper explains why it cannot replace the directory in place while DevKit is still running
+      if (ready && ready !== 'ok') {
+        const refusal = preflightRefusal(ready,
+          (await readFile(join(handoff, 'directory-detail'), 'utf8').catch(() => '')).trim())
+        if (refusal) throw new Error(refusal)
       }
       if (ready === 'failed' || child.exitCode !== null) break
       await delay(125)
@@ -115,11 +118,38 @@ export async function confirmUpdatedLaunch(): Promise<void> {
     await writeFile(join(path, 'started'), version, { flag: 'wx' })
     const cache = dirname(path)
     await Promise.all((['portable', 'zip'] as const).map((format) =>
-      rm(join(cache, packageName(version, format)), { force: true })
+      rm(join(cache, packageName(format)), { force: true })
     ))
     await rm(join(cache, 'pending.json'), { force: true })
   } catch {
     // A successful launch can leave stale cache files for the next ordinary startup to remove.
+  }
+}
+
+/**
+ * When user files cannot return to the installation, the helper keeps the old directory as a backup and
+ * leaves a marker. Say once where the files are; the directory itself stays until the user deals with it.
+ */
+export async function reportLeftoverFiles(target: InstallTarget | undefined): Promise<void> {
+  if (!target) return
+  try {
+    const marker = join(target.cache, 'apply-leftover')
+    const leftover = parseLeftover(await readFile(marker, 'utf8').catch(() => ''))
+    if (!leftover) return
+    const backup = win32.resolve(leftover.directory)
+    // Only a directory the helper could have created is offered: next to the installation and named its way
+    const trusted = /^\.devkit-backup-[a-f0-9]{32}$/i.test(win32.basename(backup)) &&
+      win32.dirname(backup).toLowerCase() === win32.dirname(win32.resolve(target.executable)).toLowerCase()
+    const window = trusted ? getMainWindow() : null
+    // The marker goes once the files were pointed out — or once it is clear that it never could.
+    if (!trusted || (window && !window.isDestroyed())) await rm(marker, { force: true })
+    if (!window || window.isDestroyed()) return
+    const { response } = await dialog.showMessageBox(window, {
+      type: 'warning', title: 'DevKit 应用更新', noLink: true, cancelId: 1, ...leftoverNotice(leftover)
+    })
+    if (response === 0) await shell.openPath(backup)
+  } catch {
+    // A notice must never stand in the way of using the application.
   }
 }
 

@@ -67,8 +67,9 @@ jobs:
           if ($tag -ne "v$version" -and $tag -ne $version) {
             throw "Release tag $tag does not match package version $version"
           }
-          $portable = Join-Path "release" "DevKit-$version-portable.exe"
-          $zip = Join-Path "release" "DevKit-$version-win-x64.zip"
+          # 发布包不带版本号：解压工具按包名建目录，目录名才不会每升一个版本就变一次
+          $portable = Join-Path "release" "DevKit-portable.exe"
+          $zip = Join-Path "release" "DevKit-win-x64.zip"
 
           if (-not (Test-Path $portable)) {
             throw "Portable package was not generated: $portable"
@@ -105,17 +106,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $tag = "${{ steps.build_ref.outputs.tag }}"
-          $version = "${{ steps.package_info.outputs.version }}"
-          $portableName = "DevKit-$version-portable.exe"
-          $zipName = "DevKit-$version-win-x64.zip"
+          $portableName = "DevKit-portable.exe"
+          $zipName = "DevKit-win-x64.zip"
 
           $body = gh release view "$tag" --json body --jq .body
           $lines = $body -split "`r?`n"
           $filtered = New-Object System.Collections.Generic.List[string]
 
           foreach ($line in $lines) {
-            if ($line -match '^\|\s*DevKit-.*-portable\.exe\s*\|' -or
-                $line -match '^\|\s*DevKit-.*-win-x64\.zip\s*\|') {
+            # 包名不带版本号；带版本号的旧写法也要能清掉，重跑时下载表才不会出现重复行
+            if ($line -match '^\|\s*DevKit-(?:[\w.]+-)?portable\.exe\s*\|' -or
+                $line -match '^\|\s*DevKit-(?:[\w.]+-)?win-x64\.zip\s*\|') {
               continue
             }
             $filtered.Add($line)

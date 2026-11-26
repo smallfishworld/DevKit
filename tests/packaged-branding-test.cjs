@@ -12,12 +12,12 @@ const { readBranding, checkPeIcon, checkUnpacked, checkRelease } = require('../s
 
 const root = path.resolve(__dirname, '..')
 const branding = readBranding(root)
-const version = require('../package.json').version
 const arrayBuffer = (bytes) => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)
 
 function temporary(t) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'devkit-branding-test-'))
-  t.after(() => fs.rmSync(directory, { recursive: true, force: true }))
+  // Defender 或索引器会短暂握住刚写完的文件，删目录要带重试
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }))
   return directory
 }
 function icons() {
@@ -94,12 +94,12 @@ function zip(entries) {
 async function release(t, options = {}) {
   const directory = temporary(t)
   await bundle(path.join(directory, 'win-unpacked'))
-  fs.writeFileSync(path.join(directory, 'DevKit-' + version + '-portable.exe'), options.portable || pe(103))
+  fs.writeFileSync(path.join(directory, 'DevKit-portable.exe'), options.portable || pe(103))
   const zipped = await bundle(path.join(directory, 'zip-fixture'), options.zip)
   const entries = ['DevKit.exe', 'resources/app.asar'].map((name) =>
     [name, fs.readFileSync(path.join(zipped, ...name.split('/')))])
   if (options.editZip) options.editZip(entries)
-  fs.writeFileSync(path.join(directory, 'DevKit-' + version + '-win-x64.zip'), zip(entries))
+  fs.writeFileSync(path.join(directory, 'DevKit-win-x64.zip'), zip(entries))
   return directory
 }
 function corruptFrame(entries) {
@@ -161,7 +161,7 @@ test('rejects stale runtime PNG', async (t) => {
 })
 
 test('release validation reads the actual portable and ZIP payloads', async (t) => {
-  const result = await checkRelease(await release(t), branding, version)
+  const result = await checkRelease(await release(t), branding)
   assert.equal(result.length, 5)
   assert.ok(result.some((line) => line.startsWith('portable:') && line.includes('group #103')))
   assert.equal(result.filter((line) => line.startsWith('ZIP:')).length, 2)
@@ -169,23 +169,23 @@ test('release validation reads the actual portable and ZIP payloads', async (t) 
 
 test('rejects stale portable icon despite correct unpacked and ZIP assets', async (t) => {
   const directory = await release(t, { portable: pe(103, corruptFrame) })
-  await assert.rejects(checkRelease(directory, branding, version), /portable.exe: icon frames differ/)
+  await assert.rejects(checkRelease(directory, branding), /portable.exe: icon frames differ/)
 })
 
 test('rejects stale ZIP executable despite correct unpacked and portable assets', async (t) => {
   const directory = await release(t, { zip: { executable: pe(1, corruptFrame) } })
-  await assert.rejects(checkRelease(directory, branding, version), /DevKit.exe: icon frames differ/)
+  await assert.rejects(checkRelease(directory, branding), /DevKit.exe: icon frames differ/)
 })
 
 test('rejects a stale ZIP ASAR even when unpacked runtime assets are correct', async (t) => {
   const directory = await release(t, { zip: { ico: Buffer.from('old ZIP icon') } })
-  await assert.rejects(checkRelease(directory, branding, version), /runtime devkit.ico differs/)
+  await assert.rejects(checkRelease(directory, branding), /runtime devkit.ico differs/)
 })
 
 test('rejects missing and duplicate ZIP payload entries', async (t) => {
   for (const editZip of [(entries) => entries.pop(), (entries) => entries.push(entries[0])]) {
     const directory = await release(t, { editZip })
-    await assert.rejects(checkRelease(directory, branding, version), /expected exactly one/)
+    await assert.rejects(checkRelease(directory, branding), /expected exactly one/)
   }
 })
 

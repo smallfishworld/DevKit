@@ -1,18 +1,20 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { readFile, writeFile } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
-import { app, BrowserWindow, ipcMain } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, type MessageBoxOptions } from 'electron'
 import { registerService, registerToolIpc, setMainWindow } from '../../src/main/ipc'
 import { APP_UPDATES } from '../../src/shared/app-updates'
 import { AppUpdateService } from '../../src/main/services/updates'
 import { GitHubReleases, packageName } from '../../src/main/services/updates/github'
+import { reportLeftoverFiles } from '../../src/main/services/updates/install'
 
 const root = process.env.DEVKIT_SMOKE_USER_DATA!
 const version = '99.1.2'
 const data = Buffer.alloc(1024 * 1024, 3)
-const name = packageName(version, 'zip')
+const name = packageName('zip')
 const target = {
   format: 'zip' as const,
   cache: join(root, 'updates'),
@@ -91,8 +93,36 @@ async function main(): Promise<void> {
   try {
     await window.loadFile(join(process.cwd(), 'out/renderer/index.html'))
     await evaluate('document.querySelector(".update-entry")')
+
+    // 上次更新没能放回程序目录的用户文件：助手留下标记，工作台出现后提示一次（对话框由替身接住）
+    const marker = join(target.cache, 'apply-leftover')
+    const backup = join(root, '.devkit-backup-' + '0f'.repeat(16))
+    await mkdir(backup)
+    await mkdir(target.cache, { recursive: true })
+    await writeFile(marker, backup + '\r\n项目资料/\r\n')
+    const shown: MessageBoxOptions[] = []
+    const showMessageBox = dialog.showMessageBox
+    dialog.showMessageBox = (async (...args: unknown[]) => {
+      shown.push(args.at(-1) as MessageBoxOptions)
+      return { response: 1, checkboxChecked: false }
+    }) as unknown as typeof dialog.showMessageBox
+
     service.start()
     await evaluate('document.querySelector(".update-entry")?.textContent.includes("发现新版本")')
+    // 遗留文件的提示排在同一轮定时任务里、检查更新之前
+    for (let count = 0; shown.length === 0 && count < 200; count++) await delay(50)
+    assert.equal(shown.length, 1)
+    assert.equal(shown[0].message, '更新已完成，但程序目录里有些文件没能放回原处')
+    assert.deepEqual(shown[0].buttons, ['打开备份目录', '确定'])
+    assert.match(shown[0].detail ?? '', /项目资料\//)
+    assert.equal(existsSync(marker), false, 'the notice is given once')
+    // 不是助手会建的那种目录（不在程序目录旁）：不提示，标记作废
+    await writeFile(marker, join(root, 'System32') + '\r\nexplorer.exe\r\n')
+    await reportLeftoverFiles(target)
+    assert.equal(shown.length, 1)
+    assert.equal(existsSync(marker), false)
+    dialog.showMessageBox = showMessageBox
+    console.log('PASS user files kept behind by an update are reported once, and only from a helper backup')
     assert.equal(await js('document.querySelector(".update-dialog").open'), false)
     await open()
     await evaluate('document.querySelector(".update-dialog")?.matches(":modal")')

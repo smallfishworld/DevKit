@@ -73,12 +73,12 @@ function checkUnpacked(directory, branding) {
   return result
 }
 
-async function checkRelease(directory, branding, version) {
+async function checkRelease(directory, branding) {
   const result = checkUnpacked(path.join(directory, 'win-unpacked'), branding).map((line) => 'unpacked: ' + line)
-  const portable = path.join(directory, 'DevKit-' + version + '-portable.exe')
+  const portable = path.join(directory, 'DevKit-portable.exe')
   // electron-builder writes group #1 in Electron; NSIS uses IDI_ICON2 (#103) in the launcher.
   result.push('portable: ' + checkPeIcon(portable, branding, 103))
-  const zipPath = path.join(directory, 'DevKit-' + version + '-win-x64.zip')
+  const zipPath = path.join(directory, 'DevKit-win-x64.zip')
   const archive = await require('unzipper').Open.file(zipPath)
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'devkit-branding-'))
   try {
@@ -103,7 +103,7 @@ async function main(args) {
   if (args.length > (release ? 2 : 1) || (!release && args[0]?.startsWith('-'))) throw new Error(usage)
   const branding = readBranding(root)
   const result = release
-    ? await checkRelease(path.resolve(args[1] || path.join(root, 'release')), branding, require('../package.json').version)
+    ? await checkRelease(path.resolve(args[1] || path.join(root, 'release')), branding)
     : checkUnpacked(path.resolve(args[0] || path.join(root, 'release/win-unpacked')), branding)
   for (const line of result) console.log('PASS packaged branding: ' + line)
 }

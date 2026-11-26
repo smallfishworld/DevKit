@@ -48,18 +48,20 @@ npm run dev
 
 ```bash
 npm run dist:dir   # 目录版 → release/win-unpacked/DevKit.exe
-npm run dist:zip   # ZIP 解压版 → release/DevKit-<版本>-win-x64.zip
+npm run dist:zip   # ZIP 解压版 → release/DevKit-win-x64.zip
 npm run dist       # 同时生成 portable 单文件、ZIP 解压版和目录版
 ```
 
-发布包说明：
+发布包说明（文件名不带版本号，解压出来的目录名不会随版本变化）：
 
-- `DevKit-<版本>-portable.exe`：单文件便携版，下载后直接运行。
-- `DevKit-<版本>-win-x64.zip`：Windows x64 解压版，解压后运行 `DevKit.exe`，推荐长期使用。
+- `DevKit-portable.exe`：单文件便携版，下载后直接运行。
+- `DevKit-win-x64.zip`：Windows x64 解压版，解压后运行 `DevKit.exe`，推荐长期使用。
 
 ### 应用更新
 
 Windows x64 发布版启动后会在后台检查官方 GitHub Releases，标题栏的「应用更新」也可手工检查。有新版本时点击提示即可查看更新内容并下载。进度完成后可选择「重启并更新」或「稍后」。等待期间可以继续调试，重启会结束正在运行的工具会话。
+
+解压版在原目录原地更新，程序目录里自己放的文件（例如快捷方式、资料文件夹）更新后会原样保留。如果其中有文件正被其他程序打开，或与新版本自带的文件同名，DevKit 会在重启前列出是哪些文件，处理后再点一次「重启并更新」即可，不用手工解压。
 
 下载更新包时先测官方直连的速度：够快就直接从 GitHub 下载，不经过任何第三方；明显偏慢时自动改用加速镜像，界面会标出所用镜像。无论来自哪个来源，下载结果都按官方公布的 SHA-256 校验，不通过会自动换源重试；中途断开则从已下载的位置续传。下载期间标题栏右上角的更新入口显示百分比，更新窗口里点「后台下载」可关掉窗口继续手头的工作。
 

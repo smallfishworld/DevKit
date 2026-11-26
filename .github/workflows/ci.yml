@@ -33,6 +33,10 @@ jobs:
       - name: Unit tests
         run: npm test
 
+      # 更新助手对程序目录的处理规则：不需要打包，几秒跑完
+      - name: Updater directory rules
+        run: npm run test:updater-harness
+
       - name: Verify generated brand icon assets
         run: npm run icons:check
 
@@ -83,7 +87,7 @@ jobs:
         with:
           name: DevKit-Windows-${{ github.sha }}
           path: |
-            release/DevKit-*-portable.exe
-            release/DevKit-*-win-x64.zip
+            release/DevKit-portable.exe
+            release/DevKit-win-x64.zip
           if-no-files-found: error
           retention-days: 7

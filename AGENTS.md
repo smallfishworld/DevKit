@@ -65,7 +65,7 @@
 
 ## 打包与发布流程（走 GitHub CI，不在本机构建上传）
 
-正式发布由 `.github/workflows/release-zip.yml` 完成：**发布 GitHub Release 即自动触发**，GitHub 的 Windows runner 上执行 `npm run dist`，并把 `DevKit-<版本>-portable.exe` 与 `DevKit-<版本>-win-x64.zip` 上传回该 Release（`--clobber` 覆盖），同时刷新发布说明里的下载表。
+正式发布由 `.github/workflows/release-zip.yml` 完成：**发布 GitHub Release 即自动触发**，GitHub 的 Windows runner 上执行 `npm run dist`，并把 `DevKit-portable.exe` 与 `DevKit-win-x64.zip`（文件名不带版本号）上传回该 Release（`--clobber` 覆盖），同时刷新发布说明里的下载表。
 
 ```bash
 # 0. typecheck + npm test 全绿（push 后 ci.yml 会再自动验一遍：typecheck/test/build/pty 冒烟）
@@ -81,6 +81,7 @@ gh run watch $(gh run list --workflow=release-zip.yml --limit 1 --json databaseI
 - **不要 `gh release create` 时携带产物文件**：本机直传 GitHub 大文件易超时（v0.1.10 实测 104MB 上传 408，且上传失败会把整个 Release 回滚掉）；产物一律由 CI 挂载。
 - 产物缺失/需重传时手工补跑：`gh workflow run release-zip.yml -f tag=v<版本> -f ref=<分支或tag>`（默认 ref 为 main）。
 - 本地构建仅用于开发自测：`npm run dist:dir`（win-unpacked，产物在 `release/`）。运行前确认 DevKit.exe 未运行（`tasklist | grep -i devkit`），运行中先请用户关闭。
+- 改了更新助手 `resources/updater/DevKitUpdater.cs`：先跑 `npm run test:updater-harness`（用替身 DevKit.exe 驱动真实助手，不用打包，CI 每次都跑）；真实产物的升级 / 回滚流程由 `tests/probes/windows-updates.cjs` 覆盖，它需要 `release/` 与 `release-update-next/` 两份构建（做法见 ci.yml）。
 
 ## 网络环境备注
 

@@ -7,25 +7,30 @@ using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
+using Microsoft.Win32.SafeHandles;
 
 internal static class DevKitUpdater
 {
     private const string Inventory = "resources/devkit-update-files.txt";
     private const long MaxExpandedBytes = 2L * 1024 * 1024 * 1024;
     private static readonly StringComparer PathComparer = StringComparer.OrdinalIgnoreCase;
-    private static readonly HashSet<string> IgnoredSystemFiles = new HashSet<string>(PathComparer)
-    {
-        "desktop.ini",
-        "thumbs.db"
-    };
 
+    /** The installation cannot be replaced where it is. Reason is reported through the "ready" signal. */
     private sealed class DirectoryChanged : Exception
     {
+        public readonly string Reason;
         public readonly string Detail;
-        public DirectoryChanged(string detail = null) : base(detail ?? "Managed directory changed.")
+        public DirectoryChanged(string reason, string detail) : base(detail ?? "Managed directory changed.")
         {
+            Reason = reason;
             Detail = detail;
         }
+    }
+
+    /** The swap kept failing although everything was checked beforehand: something else holds the directory. */
+    private sealed class SwapBlocked : Exception
+    {
+        public SwapBlocked(Exception inner) : base("Managed directory could not be replaced.", inner) { }
     }
 
     private static int Main(string[] args)
@@ -36,11 +41,14 @@ internal static class DevKitUpdater
         string target = portable ? executable : Path.GetDirectoryName(executable);
         string parent = Path.GetDirectoryName(target);
         string handoff = Path.GetFullPath(args[7]);
+        string cache = Path.GetDirectoryName(handoff);
         string nonce = Guid.NewGuid().ToString("N");
         string stage = Path.Combine(parent, ".devkit-stage-" + nonce);
         string backup = Path.Combine(parent, ".devkit-backup-" + nonce + (portable ? ".exe" : ""));
-        string result = Path.Combine(Path.GetDirectoryName(handoff), "apply-error");
+        string result = Path.Combine(cache, "apply-error");
         string userData = Path.GetFullPath(args[8]);
+        // What the user put next to the program. It travels with the old directory and is returned afterwards.
+        List<string> extras = null;
         bool applying = false;
         try
         {
@@ -48,8 +56,13 @@ internal static class DevKitUpdater
             using (Process launcher = portable ? OpenProcess(args[6], executable, true) : null)
             {
                 AssertLocalPath(target);
-                if (!portable) AssertManagedDirectory(target, true);
+                if (!portable) extras = ReadUnmanaged(target, true);
                 StagePackage(args[2], args[3], portable, stage);
+                if (!portable)
+                {
+                    AssertNoCollision(stage, extras);
+                    AssertNotHeld(target, extras);
+                }
                 WriteSignal(handoff, "ready", "ok");
                 if (!electron.WaitForExit(120000)) throw new IOException("DevKit is still shutting down.");
                 if (launcher != null && !launcher.WaitForExit(20000)) throw new IOException("Portable launcher is still in use.");
@@ -58,14 +71,17 @@ internal static class DevKitUpdater
             if (File.Exists(Path.Combine(handoff, "cancel")) || !File.Exists(Path.Combine(handoff, "apply"))) return 1;
             applying = true;
             AssertLocalPath(target);
-            if (!portable) AssertManagedDirectory(target, true);
-            ReplaceWithRetry(portable, stage, target, backup);
+            // The directory may have changed while DevKit was shutting down.
+            if (!portable) extras = ReadUnmanaged(target, true);
+            try { ReplaceWithRetry(portable, stage, target, backup); }
+            catch (IOException error) { throw new SwapBlocked(error); }
+            catch (UnauthorizedAccessException error) { throw new SwapBlocked(error); }
             using (Process started = StartDevKit(executable, userData, handoff, args[4]))
             {
                 if (WaitForStartup(started, handoff, args[4]))
                 {
                     if (portable) DeleteStage(backup, true);
-                    else TryDeleteManagedBackup(backup);
+                    else ReturnExtras(backup, target, extras, cache);
                     return 0;
                 }
                 if (!started.HasExited)
@@ -85,11 +101,15 @@ internal static class DevKitUpdater
                 var dirError = error as DirectoryChanged;
                 if (dirError != null && !string.IsNullOrEmpty(dirError.Detail))
                     TryWriteSignal(handoff, "directory-detail", dirError.Detail);
-                TryWriteSignal(handoff, "ready", dirError != null ? "directory" : "failed");
+                TryWriteSignal(handoff, "ready", dirError != null ? dirError.Reason : "failed");
             }
             bool committed = File.Exists(Path.Combine(handoff, "apply"));
             if (committed)
             {
+                // Always rewritten, so a reason never outlives the failure that caused it.
+                try { File.WriteAllText(Path.Combine(cache, "apply-detail"), error is SwapBlocked ? "locked" : ""); }
+                catch (IOException) { }
+                catch (UnauthorizedAccessException) { }
                 try
                 {
                     if (applying) RestoreBackup(portable, target, backup, stage);
@@ -159,6 +179,9 @@ internal static class DevKitUpdater
 
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern uint GetLongPathName(string path, StringBuilder longPath, uint capacity);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern SafeFileHandle CreateFile(string name, uint access, uint share, IntPtr security, uint creation, uint flags, IntPtr template);
 
     private static string LongPath(string path)
     {
@@ -234,7 +257,7 @@ internal static class DevKitUpdater
                     }
                 }
             }
-            AssertManagedDirectory(stage, false);
+            ReadUnmanaged(stage, false);
         }
     }
 
@@ -254,7 +277,12 @@ internal static class DevKitUpdater
         return true;
     }
 
-    private static void AssertManagedDirectory(string root, bool existing)
+    /**
+     * Compares a DevKit directory with the inventory written at packaging time and returns what the package
+     * does not own. An existing installation may hold anything the user put next to it — and may lack files,
+     * which the new version brings back — while a freshly staged package has to match its inventory exactly.
+     */
+    private static List<string> ReadUnmanaged(string root, bool existing)
     {
         root = FileSystemPath(root);
         try
@@ -262,57 +290,186 @@ internal static class DevKitUpdater
             string inventory = Path.Combine(root, Inventory.Replace('/', Path.DirectorySeparatorChar));
             if (!File.Exists(Path.Combine(root, "DevKit.exe")) ||
                 !File.Exists(Path.Combine(root, "resources", "app.asar")) ||
+                !File.Exists(inventory) ||
                 (File.GetAttributes(inventory) & FileAttributes.ReparsePoint) != 0)
-                throw new DirectoryChanged("缺少核心程序文件或清单异常");
+                throw new DirectoryChanged("directory", "缺少核心程序文件或清单异常");
             var expected = new HashSet<string>(File.ReadAllLines(inventory), PathComparer);
+            // An inventory that does not list the application would turn every program file into a user file.
+            if (!expected.Contains("DevKit.exe")) throw new DirectoryChanged("directory", "缺少核心程序文件或清单异常");
             expected.Add(Inventory);
-            var unexpected = new List<string>();
-            VerifyDirectory(root, "", expected, existing, unexpected);
-            if (unexpected.Count > 0 || expected.Count > 0)
-            {
-                var parts = new List<string>();
-                if (unexpected.Count > 0) parts.Add("多出: " + string.Join(", ", unexpected));
-                if (expected.Count > 0)
-                {
-                    var missing = new List<string>();
-                    foreach (string item in expected)
-                    {
-                        missing.Add(item);
-                        if (missing.Count == 3) break;
-                    }
-                    parts.Add("缺失: " + string.Join(", ", missing));
-                }
-                throw new DirectoryChanged(string.Join("; ", parts));
-            }
+            var unmanaged = new List<string>();
+            VerifyDirectory(root, "", expected, unmanaged);
+            if (!existing && unmanaged.Count + expected.Count > 0)
+                throw new DirectoryChanged("directory", Describe(unmanaged, expected));
+            return unmanaged;
         }
         catch (IOException)
         {
-            if (existing) throw new DirectoryChanged();
+            if (existing) throw new DirectoryChanged("directory", null);
             throw;
         }
     }
 
-    private static void VerifyDirectory(string root, string prefix, HashSet<string> expected, bool existing, List<string> unexpected)
+    /** Files as "a/b.txt", directories as "a/b/" */
+    private static void VerifyDirectory(string root, string prefix, HashSet<string> expected, List<string> unmanaged)
     {
         foreach (string path in Directory.EnumerateFileSystemEntries(root))
         {
             string name = Path.GetFileName(path);
             string relative = prefix + name;
             var attributes = File.GetAttributes(path);
-            if ((attributes & FileAttributes.ReparsePoint) != 0) throw new DirectoryChanged("符号链接: " + relative);
+            if ((attributes & FileAttributes.ReparsePoint) != 0) throw new DirectoryChanged("directory", "符号链接: " + relative);
             if ((attributes & FileAttributes.Directory) == 0)
             {
-                if (existing && IgnoredSystemFiles.Contains(name)) continue;
-                if (!expected.Remove(relative) && unexpected.Count < 3) unexpected.Add(relative);
+                if (!expected.Remove(relative)) unmanaged.Add(relative);
+            }
+            else if (!expected.Remove(relative + "/"))
+            {
+                unmanaged.Add(relative + "/");
             }
             else
             {
-                if (!expected.Remove(relative + "/"))
-                {
-                    if (unexpected.Count < 3) unexpected.Add(relative + "/");
-                    continue;
-                }
-                VerifyDirectory(path, relative + "/", expected, existing, unexpected);
+                VerifyDirectory(path, relative + "/", expected, unmanaged);
+            }
+        }
+    }
+
+    private static string Describe(List<string> unmanaged, HashSet<string> expected)
+    {
+        var parts = new List<string>();
+        if (unmanaged.Count > 0) parts.Add("多出: " + Names(unmanaged));
+        if (expected.Count > 0)
+        {
+            var missing = new List<string>();
+            foreach (string item in expected) missing.Add(item);
+            parts.Add("缺失: " + Names(missing));
+        }
+        return string.Join("; ", parts);
+    }
+
+    private static string Names(List<string> items)
+    {
+        int shown = Math.Min(items.Count, 3);
+        var leading = new string[shown];
+        for (int index = 0; index < shown; index++) leading[index] = items[index];
+        return string.Join(", ", leading) + (items.Count > shown ? " 等共 " + items.Count + " 项" : "");
+    }
+
+    /** A user file cannot give way to a file the new version ships, so refuse before DevKit quits. */
+    private static void AssertNoCollision(string stage, List<string> extras)
+    {
+        var colliding = new List<string>();
+        foreach (string extra in extras)
+        {
+            string path = Path.Combine(FileSystemPath(stage), Relative(extra));
+            if (File.Exists(path) || Directory.Exists(path)) colliding.Add(extra);
+        }
+        if (colliding.Count > 0) throw new DirectoryChanged("collision", Names(colliding));
+    }
+
+    /**
+     * Windows cannot rename the installation directory while anything inside it is open, so a user file held
+     * elsewhere would only fail once DevKit had already quit. Find out while the application is still running.
+     */
+    private static void AssertNotHeld(string target, List<string> extras)
+    {
+        for (int attempt = 0; ; attempt++)
+        {
+            var held = new List<string>();
+            foreach (string extra in extras) CollectHeld(target, extra.TrimEnd('/'), held);
+            if (held.Count == 0) return;
+            // A scanner or an indexer may have a file only for a moment.
+            if (attempt == 7) throw new DirectoryChanged("locked", Names(held));
+            Thread.Sleep(250);
+        }
+    }
+
+    private static void CollectHeld(string root, string relative, List<string> held)
+    {
+        string path = Path.Combine(FileSystemPath(root), Relative(relative));
+        var attributes = File.GetAttributes(path);
+        if ((attributes & FileAttributes.Directory) == 0)
+        {
+            if (IsHeld(path, false) && held.Count < 3) held.Add(relative);
+            return;
+        }
+        if (IsHeld(path, true) && held.Count < 3) held.Add(relative + "/");
+        // A link inside the user's own folder is moved as a link and never followed.
+        if ((attributes & FileAttributes.ReparsePoint) != 0) return;
+        foreach (string entry in Directory.EnumerateFileSystemEntries(path))
+            CollectHeld(root, relative + "/" + Path.GetFileName(entry), held);
+    }
+
+    private const uint DeleteAccess = 0x00010000, OpenExisting = 3, BackupSemantics = 0x02000000;
+
+    /**
+     * Asks for delete access while sharing nothing: the open fails with a sharing violation for exactly as long as
+     * another process has the entry open, whatever that process lets others do.
+     */
+    private static bool IsHeld(string path, bool directory)
+    {
+        using (SafeFileHandle handle = CreateFile(path, DeleteAccess, 0, IntPtr.Zero, OpenExisting,
+            directory ? BackupSemantics : 0, IntPtr.Zero))
+        {
+            if (!handle.IsInvalid) return false;
+            int error = Marshal.GetLastWin32Error();
+            // Sharing and lock violations, and a mapped section, each block the directory rename as well.
+            // Anything else (access denied, an entry that disappeared meanwhile) is left to the update itself.
+            return error == 32 || error == 33 || error == 1224;
+        }
+    }
+
+    private static string Relative(string extra)
+    {
+        return extra.Replace('/', Path.DirectorySeparatorChar);
+    }
+
+    /**
+     * Puts the user's files back into the new version. Whatever cannot return stays in the backup directory,
+     * which is then kept and reported instead of deleted. Nothing here may fail the update: the new version
+     * is already running.
+     */
+    private static void ReturnExtras(string backup, string target, List<string> extras, string cache)
+    {
+        try
+        {
+            foreach (string extra in extras) ReturnEntry(backup, target, extra);
+            List<string> kept = ReadUnmanaged(backup, true);
+            if (kept.Count == 0) DeleteStage(backup, false);
+            else
+            {
+                var notice = new StringBuilder(backup);
+                foreach (string extra in kept) notice.AppendLine().Append(extra);
+                TryWriteSignal(cache, "apply-leftover", notice.ToString());
+            }
+        }
+        catch (Exception) { }
+    }
+
+    /** Moves one unmanaged entry back; false when it has to stay behind. */
+    private static bool ReturnEntry(string backup, string target, string extra)
+    {
+        string relative = Relative(extra.TrimEnd('/'));
+        string source = Path.Combine(FileSystemPath(backup), relative);
+        string destination = Path.Combine(FileSystemPath(target), relative);
+        for (int attempt = 0; ; attempt++)
+        {
+            try
+            {
+                bool moved = Directory.Exists(source);
+                if (!moved && !File.Exists(source)) return true;
+                // A same-named entry in the new version was refused before DevKit quit.
+                if (File.Exists(destination) || Directory.Exists(destination)) return false;
+                Directory.CreateDirectory(Path.GetDirectoryName(destination));
+                if (moved) Directory.Move(source, destination);
+                else File.Move(source, destination);
+                return true;
+            }
+            catch (Exception error)
+            {
+                // A scanner or an indexer may hold the freshly renamed entry for a moment.
+                if (!(error is IOException || error is UnauthorizedAccessException) || attempt == 19) return false;
+                Thread.Sleep(250);
             }
         }
     }
@@ -401,26 +558,18 @@ internal static class DevKitUpdater
         return false;
     }
 
-    private static void WriteSignal(string handoff, string name, string value)
+    private static void WriteSignal(string directory, string name, string value)
     {
-        string destination = Path.Combine(handoff, name);
+        string destination = Path.Combine(directory, name);
         File.WriteAllText(destination + ".tmp", value);
         File.Move(destination + ".tmp", destination);
     }
 
-    private static void TryWriteSignal(string handoff, string name, string value)
+    private static void TryWriteSignal(string directory, string name, string value)
     {
-        try { WriteSignal(handoff, name, value); }
+        try { WriteSignal(directory, name, value); }
         catch (IOException) { }
         catch (UnauthorizedAccessException) { }
-    }
-
-    private static void TryDeleteManagedBackup(string path)
-    {
-        try { AssertManagedDirectory(path, true); }
-        catch (DirectoryChanged) { return; }
-        catch (UnauthorizedAccessException) { return; }
-        DeleteStage(path, false);
     }
 
     private static void DeleteStage(string path, bool portable)

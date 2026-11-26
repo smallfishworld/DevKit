@@ -9,12 +9,14 @@ const {
   rankDownloadSources, readPendingUpdate, sanitizeMirrors
 } = require('../src/main/services/updates/github')
 const {
-  createSpeedEstimator, downloadPercent, downloadSourceLabel, formatMegabytes, formatSpeed, updateNotice
+  applyFailureMessage, createSpeedEstimator, downloadPercent, downloadSourceLabel, formatMegabytes, formatSpeed,
+  leftoverNotice, parseLeftover, preflightRefusal, updateNotice
 } = require('../src/shared/app-updates')
 
 const data = Buffer.from('fixture Windows update')
 const hash = createHash('sha256').update(data).digest('hex')
-const entry = 'https://github.com/smallfishworld/DevKit/releases/download/v0.12.0/DevKit-0.12.0-win-x64.zip'
+// 发布包文件名不带版本号（解压出来的目录名才不会随版本变）；版本只出现在发布 tag 的路径里
+const entry = 'https://github.com/smallfishworld/DevKit/releases/download/v0.12.0/DevKit-win-x64.zip'
 /** 测试用短时序：测速窗口 30ms，无数据上限 500ms */
 const quick = { probeMs: 30, probeBytes: 8 * 1024 * 1024, idleMs: 500 }
 // 2 MiB 的确定性数据：够大，才能在测速窗口里分出「快」与「慢」
@@ -60,7 +62,7 @@ function stalled(buffer) {
   }), { headers: { 'content-length': String(buffer.length) } })
 }
 const fixtures = ['portable', 'zip'].map((format) => ({
-  name: packageName('0.12.0', format), size: data.length, digest: 'sha256:' + hash, state: 'uploaded'
+  name: packageName(format), size: data.length, digest: 'sha256:' + hash, state: 'uploaded'
 }))
 const release = {
   tag_name: 'v0.12.0', draft: false, prerelease: false,
@@ -361,13 +363,13 @@ test('update entry exposes notices for a newer version and verified download', (
 test('rate-limited API falls back to the quota-free release page channel', async () => {
   const api = 'https://api.github.com/repos/smallfishworld/DevKit/releases/latest'
   const page = 'https://github.com/smallfishworld/DevKit/releases/latest'
-  const downloadUrl = 'https://github.com/smallfishworld/DevKit/releases/download/v0.12.0/DevKit-0.12.0-win-x64.zip'
+  const downloadUrl = 'https://github.com/smallfishworld/DevKit/releases/download/v0.12.0/DevKit-win-x64.zip'
   // release/latest 跳转后的 tag 页（仿 GitHub 结构）：head 里 canonical/og:url 带 tag，
   // 正文是 data-test-selector="body-content" 的 markdown-body div（含嵌套 div 与实体），其后是 Assets 区
   // body: 'normal'=完整页面 / 'empty'=正文容器为空 / 'none'=没有正文容器（结构变化）
   const tagPage = (tag, body = 'normal') => {
     const content = body === 'normal'
-      ? '<h1>DevKit v0.12.0</h1> <h2>工作台</h2> <ul> <li><strong>新增分屏</strong>：标题 &quot;A | B&quot;、单个关闭按钮</li> <li>分隔条默认严格均分</li> </ul> <div class="Box mt-3"> <p>内嵌说明块</p> </div> <h2>下载</h2> <table><tr><td>DevKit-0.12.0-portable.exe</td></tr></table>'
+      ? '<h1>DevKit v0.12.0</h1> <h2>工作台</h2> <ul> <li><strong>新增分屏</strong>：标题 &quot;A | B&quot;、单个关闭按钮</li> <li>分隔条默认严格均分</li> </ul> <div class="Box mt-3"> <p>内嵌说明块</p> </div> <h2>下载</h2> <table><tr><td>DevKit-portable.exe</td></tr></table>'
       : ''
     const section = body === 'none'
       ? `<h2 class="sr-only">Assets</h2>`
@@ -387,7 +389,7 @@ test('rate-limited API falls back to the quota-free release page channel', async
     if (url === downloadUrl) return new Response(data, { headers: { 'content-length': String(data.length) } })
     if (url === downloadUrl + '.sha256') {
       if (sidecar === null) return new Response(null, { status: 404 })
-      return new Response(sidecar ?? `${hash}  DevKit-0.12.0-win-x64.zip\n`)
+      return new Response(sidecar ?? `${hash}  DevKit-win-x64.zip\n`)
     }
     throw new Error('unexpected fetch ' + url)
   }
@@ -443,4 +445,49 @@ test('read-only release check works without Windows package format', () => {
   assert.equal(result.update.notes, '## 更新内容\n\n- Windows 修复')
   assert.equal(result.update.bytes, 0)
   assert.equal(parseRelease({ ...release, assets: [] }, '0.12.0').status, 'current')
+})
+
+test('release packages are named without the version', () => {
+  // 解压工具按包名建目录：名字里带版本，每升级一次目录名就变一次
+  assert.deepEqual(['portable', 'zip'].map((format) => packageName(format)), ['DevKit-portable.exe', 'DevKit-win-x64.zip'])
+  const versioned = { ...release, assets: release.assets.map((asset) => ({ ...asset, name: asset.name.replace('DevKit-', 'DevKit-0.12.0-') })) }
+  assert.equal(parseRelease(versioned, '0.9.0', 'zip').status, 'publishing')
+})
+
+test('the preflight says what keeps the installation from being updated in place', () => {
+  assert.equal(preflightRefusal('locked', '项目资料/, a.txt'),
+    '程序目录里有文件正被其他程序占用（项目资料/, a.txt），无法原路径更新。请关闭相关窗口或程序后重试，或将更新包另存并解压到新目录。')
+  assert.equal(preflightRefusal('collision', 'NEW.txt'),
+    '程序目录里有与新版本同名的文件（NEW.txt），无法原路径更新。请先将它们移出程序目录后重试，或将更新包另存并解压到新目录。')
+  assert.equal(preflightRefusal('directory', '符号链接: linked'),
+    '程序目录与 DevKit 安装清单不符（符号链接: linked），无法原路径更新。请将更新包另存并解压到新目录。')
+  assert.equal(preflightRefusal('directory', ''),
+    '程序目录无法核对（可能没有读取权限），无法原路径更新。请将更新包另存并解压到新目录。')
+  assert.equal(preflightRefusal('failed', ''), undefined)
+  // 每种拒绝都以「程序目录」开头（主进程据此认定这是给用户看的原因），并且都给出另存这条路
+  for (const reason of ['directory', 'collision', 'locked']) {
+    assert.match(preflightRefusal(reason, ''), /^程序目录.*另存/)
+  }
+})
+
+test('a restart that could not finish says why once the helper knows', () => {
+  assert.equal(applyFailureMessage(''), '上次更新未完成。可重试或另存更新包。')
+  assert.equal(applyFailureMessage('locked'),
+    '上次更新未完成：程序目录被其他程序占用。关闭相关窗口或程序后可重试，或另存更新包。')
+})
+
+test('user files an update could not put back are read from the helper marker', () => {
+  const backup = String.raw`D:\software\.devkit-backup-0123456789abcdef0123456789abcdef`
+  assert.deepEqual(parseLeftover(`${backup}\r\n项目资料/\r\nnotes.txt\r\n`), {
+    directory: backup, entries: ['项目资料/', 'notes.txt']
+  })
+  // 没有目录行，或没有任何没放回的条目：没什么可提示的
+  for (const marker of ['', '\r\n\r\n', backup, backup + '\r\n \r\n']) assert.equal(parseLeftover(marker), undefined)
+
+  const notice = leftoverNotice({ directory: backup, entries: ['项目资料/'] })
+  assert.deepEqual(notice.buttons, ['打开备份目录', '确定'])
+  assert.ok(notice.detail.includes(backup + '\n\n项目资料/'))
+  const many = leftoverNotice({ directory: backup, entries: Array.from({ length: 12 }, (_, index) => 'file' + index) })
+  assert.equal(many.detail.split('\n').filter((line) => line.startsWith('file')).length, 8)
+  assert.ok(many.detail.endsWith('…另有 4 项'))
 })
