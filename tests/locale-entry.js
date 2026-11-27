@@ -9,6 +9,7 @@ import {
 } from '../src/shared/locale.ts'
 import { i18n, messages } from '../src/renderer/src/i18n/index.ts'
 import { getAppLocale, mainMessages, mainText, setAppLocale } from '../src/main/app-locale.ts'
+import { createI18n } from 'vue-i18n'
 
 // 1. Supported locales, default fallback, and settings sanitization
 assert.deepEqual(APP_LOCALES, ['zh-CN', 'en'])
@@ -103,5 +104,40 @@ const readmeZh = fs.readFileSync(path.join(root, 'README.md'), 'utf8')
 const readmeEn = fs.readFileSync(path.join(root, 'README.en.md'), 'utf8')
 assert.ok(readmeZh.includes('(README.en.md)'), 'README.md must link to README.en.md')
 assert.ok(readmeEn.includes('(README.md)'), 'README.en.md must link to README.md')
+
+// 6. Message syntax: vue-i18n treats a bare @ as linked-message syntax and a bare | as a plural separator.
+// Both break messages only in production builds (the error is logged as a bare code, e.g. "SyntaxError: 10"),
+// while dev mode compiles them leniently — so scan every catalog entry for characters outside {'X'} literals.
+function assertNoBareSyntax(tree, label) {
+  const offenders = []
+  const walk = (value, path) => {
+    if (value && typeof value === 'object') {
+      for (const [key, child] of Object.entries(value)) walk(child, `${path}.${key}`)
+      return
+    }
+    if (typeof value !== 'string') return
+    const withoutLiterals = value.replace(/\{'@'\}/g, '').replace(/\{'\|'\}/g, '')
+    if (/[@|]/.test(withoutLiterals)) {
+      offenders.push(`${path}: ${value}`)
+      return
+    }
+    const opens = (withoutLiterals.match(/\{/g) || []).length
+    const closes = (withoutLiterals.match(/\}/g) || []).length
+    assert.equal(opens, closes, `Unbalanced message braces at ${path}: ${value}`)
+  }
+  walk(tree, label)
+  assert.deepEqual(offenders, [])
+}
+assertNoBareSyntax(messages, 'renderer')
+assertNoBareSyntax(mainMessages, 'main')
+
+// 7. The literal escapes compile to their visible characters and leave linked messages working
+// （用全新实例：共享实例被测试过程切换过 locale，不适合再改消息）
+const scratch = createI18n({
+  legacy: false, locale: 'zh-CN', fallbackLocale: 'zh-CN',
+  messages: { 'zh-CN': { sample: { at: "a {'@'} b", pipe: "c {'|'} d" } } }
+})
+assert.equal(scratch.global.t('sample.at'), 'a @ b')
+assert.equal(scratch.global.t('sample.pipe'), 'c | d')
 
 console.log(`locale tests passed (${Object.keys(zhRenderer).length} renderer keys, ${Object.keys(zhMain).length} main keys)`)

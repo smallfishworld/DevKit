@@ -96,7 +96,7 @@ export const toolUiMessages = {
     },
     sshPanel: {
       disconnectedError: 'SSH 已断开：{error}', closed: '连接已关闭', error: 'SSH 错误：{error}',
-      ready: '就绪。填写主机信息后点击「连接」，终端内直接输入命令。', hostRequired: '请填写主机地址', connected: '已连接 {user}@{host}:{port}', connectFailed: '连接失败：{error}', disconnected: '已断开',
+      ready: '就绪。填写主机信息后点击「连接」，终端内直接输入命令。', hostRequired: '请填写主机地址', connected: "已连接 {user}{'@'}{host}:{port}", connectFailed: '连接失败：{error}', disconnected: '已断开',
       logSaved: '日志已保存', logSaveFailed: '存日志失败：{error}', logDirectory: '日志保存目录已设为：{dir}（新会话生效）', hostFirst: '请先填写主机', presetSaved: '预设「{name}」已保存',
       hostPlaceholder: '主机 IP 或主机名', username: '用户名', password: '密码', key: '私钥', keyPath: '私钥文件路径', connect: '连接', disconnect: '断开', preset: '套用已存预设', savePreset: '存为预设', presetName: '预设名', save: '保存', cancel: '取消', confirm: '确认',
       logSettings: '日志设置', saveLog: '保存日志', keepLog: '保留日志', setLogPath: '设置保存路径', openLogPath: '打开保存路径', timestamp: '时间戳'
@@ -199,7 +199,7 @@ export const toolUiMessages = {
     },
     sshPanel: {
       disconnectedError: 'SSH disconnected: {error}', closed: 'Connection closed', error: 'SSH error: {error}',
-      ready: 'Ready. Enter host details and connect; type commands directly in the terminal.', hostRequired: 'Enter a host address', connected: 'Connected to {user}@{host}:{port}', connectFailed: 'Connection failed: {error}', disconnected: 'Disconnected',
+      ready: 'Ready. Enter host details and connect; type commands directly in the terminal.', hostRequired: 'Enter a host address', connected: "Connected to {user}{'@'}{host}:{port}", connectFailed: 'Connection failed: {error}', disconnected: 'Disconnected',
       logSaved: 'Log saved', logSaveFailed: 'Could not save log: {error}', logDirectory: 'Log directory set to {dir} (applies to new sessions)', hostFirst: 'Enter a host first', presetSaved: 'Preset “{name}” saved',
       hostPlaceholder: 'Host IP or name', username: 'Username', password: 'Password', key: 'Private key', keyPath: 'Private-key file path', connect: 'Connect', disconnect: 'Disconnect', preset: 'Apply a saved preset', savePreset: 'Save as preset', presetName: 'Preset name', save: 'Save', cancel: 'Cancel', confirm: 'Confirm',
       logSettings: 'Log settings', saveLog: 'Save log', keepLog: 'Keep logs', setLogPath: 'Set save location', openLogPath: 'Open save location', timestamp: 'Timestamps'

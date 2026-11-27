@@ -22,7 +22,7 @@ export const extraToolMessages = {
       title: '键鼠输入测试', subtitle: '全局键鼠事件捕获与 SendInput 注入自检', nativeStatus: '原生模块状态', loaded: '加载正常', loadFailed: '加载失败', available: '可用', unavailable: '不可用', expectedSize: '（x64 应为 40）',
       captureTitle: '全局事件捕获', startCapture: '开始捕获', stopCapture: '停止捕获', ignoreMoves: '忽略鼠标移动（只记录点击/按键）', total: '累计 {count} 个事件', capturingHint: '正在捕获全局键鼠，切到任意窗口按键盘试试', type: '类型', event: '事件', interval: '间隔',
       injectionTitle: '事件注入', injectionHint: '注入目标是当前拥有焦点的窗口。建议先打开一个记事本，再把本窗口摆在旁边点击按钮。', moveCursor: '移动光标', leftClick: '左键点击', rightClick: '右键点击', tapKey: '轻敲按键', injectText: '注入文本', typeText: '打字', up: '方向上', down: '方向下',
-      pressed: '↓按下', released: '↑抬起', leftButton: '左键', rightButton: '右键', middleButton: '中键', move: '移动 ({x}, {y})', mouseAction: '{action} {button} @({x}, {y})', wheel: '滚轮 {direction} ({x}, {y})', wheelUp: '↑上', wheelDown: '↓下', rejected: '失败（SendInput 被拒绝）'
+      pressed: '↓按下', released: '↑抬起', leftButton: '左键', rightButton: '右键', middleButton: '中键', move: '移动 ({x}, {y})', mouseAction: "{action} {button} {'@'}({x}, {y})", wheel: '滚轮 {direction} ({x}, {y})', wheelUp: '↑上', wheelDown: '↓下', rejected: '失败（SendInput 被拒绝）'
     },
     diffShell: { text: '文本对比', hex: '十六进制', folder: '文件夹', inaccessible: '路径不存在或无法访问' }
   },
@@ -49,7 +49,7 @@ export const extraToolMessages = {
       title: 'Keyboard & Mouse Input Test', subtitle: 'Test global input capture and SendInput injection', nativeStatus: 'Native module status', loaded: 'Loaded', loadFailed: 'Failed to load', available: 'Available', unavailable: 'Unavailable', expectedSize: ' (expected 40 on x64)',
       captureTitle: 'Global event capture', startCapture: 'Start capture', stopCapture: 'Stop capture', ignoreMoves: 'Ignore mouse movement (record clicks and keys only)', total: '{count} events', capturingHint: 'Global keyboard and mouse capture is active. Switch to any window and try pressing keys.', type: 'Type', event: 'Event', interval: 'Interval',
       injectionTitle: 'Event injection', injectionHint: 'Input is sent to the window that currently has focus. Open a text editor and place it beside this window before using the buttons.', moveCursor: 'Move cursor', leftClick: 'Left click', rightClick: 'Right click', tapKey: 'Tap key', injectText: 'Inject text', typeText: 'Type', up: 'Arrow Up', down: 'Arrow Down',
-      pressed: '↓Down', released: '↑Up', leftButton: 'Left button', rightButton: 'Right button', middleButton: 'Middle button', move: 'Move ({x}, {y})', mouseAction: '{action} {button} @({x}, {y})', wheel: 'Wheel {direction} ({x}, {y})', wheelUp: '↑Up', wheelDown: '↓Down', rejected: 'Failed (SendInput rejected the request)'
+      pressed: '↓Down', released: '↑Up', leftButton: 'Left button', rightButton: 'Right button', middleButton: 'Middle button', move: 'Move ({x}, {y})', mouseAction: "{action} {button} {'@'}({x}, {y})", wheel: 'Wheel {direction} ({x}, {y})', wheelUp: '↑Up', wheelDown: '↓Down', rejected: 'Failed (SendInput rejected the request)'
     },
     diffShell: { text: 'Text compare', hex: 'Hex', folder: 'Folders', inaccessible: 'The path does not exist or cannot be accessed' }
   }
