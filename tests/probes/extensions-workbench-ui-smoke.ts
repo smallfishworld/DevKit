@@ -170,12 +170,16 @@ async function main(): Promise<void> {
     await until(() => has('.ts-panel .result-grid', String(Date.UTC(2025, 3, 19, 10, 0, 12, 345))), '日期反查保留毫秒')
     await until(() => click('.ts-panel button', '填入左侧解析器'), '同步日期到左侧')
     await until(() => has('.ts-panel .result-grid', '2025-04-19T10:00:12.345Z'), '左侧验证带毫秒的日期')
-    await until(() => click('.app-header button', '外观'), '打开无模态外观浮层')
+    // Element Plus controls the trigger's ARIA attributes; use the supported header labels.
+    const settingsVisible = (): Promise<boolean> => js('!!document.querySelector(".appearance-settings h2")?.getClientRects().length')
+    await until(async () => await click('.app-header button', '设置') || await click('.app-header button', 'Settings'), '打开无模态设置浮层')
+    await until(settingsVisible, '设置浮层可见')
     await until(() => click('.theme-tile', 'Solarized Light'), '切换浅色')
     await until(() => js('document.documentElement.dataset.uiTheme === "term-solarized-light"'), '外观颜色即时生效')
     await until(() => click('.theme-tile', 'DevKit Default'), '恢复深色')
     await screenshot('appearance-popover.png')
-    await until(() => click('[aria-label="关闭外观浮层"]'), '关闭外观')
+    await until(() => click('.appearance-settings > header button[aria-label]'), '关闭设置浮层')
+    await until(async () => !await settingsVisible(), '设置浮层已关闭')
     await until(() => click('.app-header button', '扩展'), '打开扩展中心')
     await until(() => click('.extension-center button', '从文件安装…'), '本地安装入口')
     await until(() => click('.el-message-box button', '选择文件'), '选择 JSON 插件包')
@@ -244,15 +248,59 @@ async function main(): Promise<void> {
       if (!tool) return false;
       tool.click(); return true;
     })()`), '打开串口')
+    const connectionTrigger = '.serial-panel .conn-bar button[aria-label="连接参数"]'
+    const connectionEditor = '.connection-editor'
+    const connectionPopupState = () => js(`({
+      buttons: [...document.querySelectorAll(${JSON.stringify(connectionTrigger)})].map((button) => ({
+        text: button.textContent.trim(), expanded: button.getAttribute('aria-expanded'),
+        disabled: button.disabled, visible: !!button.getClientRects().length
+      })),
+      editors: [...document.querySelectorAll(${JSON.stringify(connectionEditor)})].map((editor) => ({
+        heading: editor.querySelector('h2')?.textContent, visible: !!editor.getClientRects().length,
+        hidden: editor.closest('[aria-hidden]')?.getAttribute('aria-hidden')
+      }))
+    })`)
+    const openConnectionEditor = async (): Promise<void> => {
+      let point: { x: number; y: number } | undefined
+      await until(async () => {
+        point = await js<typeof point>(`(() => {
+          for (const button of document.querySelectorAll(${JSON.stringify(connectionTrigger)})) {
+            if (button.disabled || !button.getClientRects().length) continue;
+            const rect = button.getBoundingClientRect();
+            const x = rect.left + rect.width / 2, y = rect.top + rect.height / 2;
+            if (button.contains(document.elementFromPoint(x, y))) return { x, y };
+          }
+        })()`)
+        return point !== undefined
+      }, '连接参数按钮可点击')
+      // Browser input works on this hidden fixture without depending on OS window focus.
+      const cdp = win.webContents.debugger
+      cdp.attach('1.3')
+      try {
+        const pointer = { ...point!, button: 'left', clickCount: 1 }
+        await cdp.sendCommand('Input.dispatchMouseEvent', { type: 'mousePressed', ...pointer, buttons: 1 })
+        await cdp.sendCommand('Input.dispatchMouseEvent', { type: 'mouseReleased', ...pointer, buttons: 0 })
+      } finally {
+        cdp.detach()
+      }
+      await until(() => has(connectionEditor, '连接参数'), '连接参数浮层可见')
+    }
+    const baudSelect = connectionEditor + ' .conn-field:has([aria-label="波特率"]) .el-select__wrapper'
     const editBaud = async (value: string): Promise<void> => {
-      await until(() => click('.conn-bar [aria-label="连接参数"]'), '打开连接参数')
-      // 按字段名定位而不是 nth-child：连接参数浮层顶部还有「已存预设 / 保存为预设」两行
-      await until(() => js(`(() => {
-        const field = [...document.querySelectorAll('.connection-editor .conn-field')]
-          .find(f => f.querySelector(':scope > span')?.textContent.trim() === '波特率');
+      // Let the prior close transition settle before toggling the reference again.
+      await until(async () => !await has(connectionEditor, '连接参数'), '连接参数浮层已收起')
+      try {
+        await openConnectionEditor()
+      } catch (cause) {
+        throw new Error('未能打开连接参数：' + JSON.stringify(await connectionPopupState()), { cause })
+      }
+      await until(async () => await click(baudSelect) || await js(`(() => {
+        const field = [...document.querySelectorAll('.connection-editor .conn-field')].find((element) =>
+          element.getClientRects().length && element.querySelector('span')?.textContent.trim() === '波特率');
         const wrapper = field?.querySelector('.el-select__wrapper');
-        if (!wrapper) return false;
-        wrapper.click(); return true;
+        if (!wrapper?.getClientRects().length) return false;
+        wrapper.click();
+        return true;
       })()`), '打开波特率选项')
       await until(() => click('.connection-editor .el-select-dropdown__item', value), '选择波特率 ' + value)
       await until(async () => !await has('.connection-editor .el-select-dropdown__item', value), '选择后收起波特率菜单')
