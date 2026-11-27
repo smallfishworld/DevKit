@@ -1,3 +1,6 @@
+<div align="center">
+<img src="resources/branding/app-256.png" width="128" alt="DevKit app icon: the blue-purple gradient DK monogram on a dark-purple rounded plate">
+
 # DevKit Embedded Development Suite
 
 **Language:** **English** | [简体中文](README.md)
@@ -5,7 +8,11 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 ![Platform](https://img.shields.io/badge/platform-Windows-blue) ![Stack](https://img.shields.io/badge/Electron%20%2B%20Vue3%20%2B%20TS-44.x-green)
 
-DevKit is an all-in-one desktop toolbox built for embedded software development (Windows, Electron + Vue 3 + TypeScript). It brings everyday debugging utilities into a single tabbed workbench with two signature capabilities: a **Mouse & Keyboard Macro Recorder** to automate repetitive UI tasks, and **Terminal Quick-Command Macros** — a multi-step command library shared across the Serial and SSH terminals with in-terminal recording, grouping, and one-click playback.
+**An all-in-one desktop toolbox for embedded software development** — Windows, Electron + Vue 3 + TypeScript
+
+</div>
+
+It brings everyday debugging utilities into a single tabbed workbench with two signature capabilities: a **Mouse & Keyboard Macro Recorder** to automate repetitive UI tasks, and **Terminal Quick-Command Macros** — a multi-step command library shared across the Serial and SSH terminals with in-terminal recording, grouping, and one-click playback.
 
 DevKit supports **Simplified Chinese (`zh-CN`, default)** and **English (`en`)** in **Settings**. Switching languages takes effect immediately across all built-in tools and native dialogs without reloading the workbench or interrupting active serial, SSH, local terminal, network, or file transfer sessions.
 
