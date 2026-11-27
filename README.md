@@ -1,3 +1,6 @@
+<div align="center">
+<img src="resources/branding/app-256.png" width="128" alt="DevKit 应用图标：深紫圆角底板上的蓝紫渐变 DK 连体标识">
+
 # DevKit 嵌入式开发套件
 
 **语言 / Language:** **简体中文** | [English](README.en.md)
@@ -5,7 +8,11 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 ![平台](https://img.shields.io/badge/platform-Windows-blue) ![技术栈](https://img.shields.io/badge/Electron%20%2B%20Vue3%20%2B%20TS-44.x-green)
 
-面向嵌入式软件开发的集成工具箱：一个程序，面板化集成日常零散小工具。两大特色功能：**键鼠操作录制回放**（把重复的界面操作自动化）与**终端快捷命令宏**（串口 / SSH 共享的多步骤命令宏库，支持录制、分组、一键回放）。应用内置 `简体中文（默认）` 与 `English` 双语界面，可在「设置」中实时切换而不中断现有会话。
+**面向嵌入式软件开发的集成工具箱**：一个程序，面板化集成日常零散小工具
+
+</div>
+
+两大特色功能：**键鼠操作录制回放**（把重复的界面操作自动化）与**终端快捷命令宏**（串口 / SSH 共享的多步骤命令宏库，支持录制、分组、一键回放）。应用内置 `简体中文（默认）` 与 `English` 双语界面，可在「设置」中实时切换而不中断现有会话。
 
 > 截图待补：主界面 / 键鼠宏回放 / 串口终端（欢迎在 PR 中补充）
 
