@@ -16,8 +16,8 @@ const arrayBuffer = (bytes) => bytes.buffer.slice(bytes.byteOffset, bytes.byteOf
 
 function temporary(t) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'devkit-branding-test-'))
-  // Defender 或索引器会短暂握住刚写完的文件，删目录要带重试
-  t.after(() => fs.rmSync(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }))
+  // Defender 或索引器会短暂握住刚写完的文件，删目录要带重试（实测握住可超过 2 秒）
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true, maxRetries: 30, retryDelay: 300 }))
   return directory
 }
 function icons() {

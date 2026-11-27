@@ -97,7 +97,9 @@ async function exercise(root, format, outcome) {
   const originalPackage = join(currentRoot, name(format))
   if (format === 'portable') await copyFile(originalPackage, exe)
   // CreateProcess accepts a Unicode working directory even if tar's argument decoder uses a legacy code page.
-  else execFileSync('tar.exe', ['-xf', originalPackage], { cwd: install, stdio: 'inherit', timeout: 90_000 })
+  // Git Bash puts GNU tar on PATH (it cannot read ZIPs); the bundled bsdtar handles them.
+  else execFileSync(join(process.env.SystemRoot, 'System32', 'tar.exe'), ['-xf', originalPackage],
+    { cwd: install, stdio: 'inherit', timeout: 90_000 })
   const oldHash = await digest(exe)
 
   const cache = join(profile, 'updates', createHash('sha256').update(exe.toLowerCase()).digest('hex').slice(0, 24))
@@ -140,16 +142,17 @@ async function exercise(root, format, outcome) {
 
     if (outcome === 'shared') {
       const shown = () => evaluate('document.querySelector(".update-message")?.textContent')
+      // 断言文件名等语言无关的详情：界面语言随系统走，CI runner 上可能是英文提示
       const refused = async (reason) => {
         await until('the update is refused: ' + reason, async () => (await shown()).includes(reason))
-        assert.ok((await shown()).includes('另存'), 'the user is told how to update anyway')
+        assert.ok(/另存|save the/i.test(await shown()), 'the user is told how to update anyway')
         assert.equal(await digest(exe), oldHash)
         assert.equal(child.exitCode, null, 'a refused update leaves the application running')
       }
-      await refused('符号链接')
+      await refused('linked')
       await rmdir(link)
       assert.ok(await again())
-      await refused('占用')
+      await refused('other project.txt')
       closeSync(held)
       assert.ok(await again())
     }
@@ -187,6 +190,9 @@ async function exercise(root, format, outcome) {
     assert.equal(await readFile(dataMarker, 'utf8'), 'keep user data')
     console.log('PASS Windows packaged ' + format + ' ' + outcome)
   } catch (error) {
+    try {
+      console.error('Update dialog: ' + JSON.stringify(await evaluate('document.querySelector(".update-dialog")?.innerText ?? null')))
+    } catch { /* the debugger may already be gone */ }
     for (const handoff of await handoffs(cache).catch(() => [])) {
       const files = await readdir(handoff).catch(() => [])
       const failure = await readFile(join(handoff, 'error'), 'utf8').catch(() => '')

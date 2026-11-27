@@ -46,7 +46,8 @@ const notice = computed(() => {
 const message = computed(() => {
   if (invocationError.value) return invocationError.value
   if (!('message' in state.value)) return ''
-  return state.value.messageCode ? t(`updater.messages.${state.value.messageCode}`) : state.value.message
+  // 具体消息优先（预检拒绝会带被挡的文件名等动态内容）；没有具体消息才落翻译目录的通用文案
+  return state.value.message || (state.value.messageCode ? t(`updater.messages.${state.value.messageCode}`) : '')
 })
 /** 下载中关掉窗口，下载照常在后台进行——所以叫「后台下载」而不是「稍后」 */
 const dismissLabel = computed(() =>
